@@ -12,7 +12,7 @@ in the canonical labor-economics application, but applicable to any matched
 bipartite structure &mdash; and exposes prior and posterior variance
 decompositions plus covariance-block extraction over the latent field.
 
-The parameter `rho` governs the *local conditional dependence* between
+The parameter $\rho$ governs the *local conditional dependence* between
 adjacent nodes in the graph and admits an interpretation as local,
 edge-level assortative matching. It is **not** the AKM/KSS-style sorting
 parameter (the population correlation between fitted firm and worker fixed
@@ -33,26 +33,29 @@ structures.
 
 ## Background
 
-Let `i` index left nodes (e.g. firms) and `m` index right nodes (e.g.
-workers/managers). For each observed edge spell `k`, the outcome `y_{im}` is
+Let $i$ index firms and $m$ index workers (or, generically, the two sides of
+a bipartite pairing). For each observed spell $k$, the outcome $y_{im}$ is
 modeled as
 
-```text
-y_{im} = a_i + z_m + epsilon_{im}
-```
+$$
+y_{im} = a_i + z_m + \varepsilon_{im},
+$$
 
-with `a_i` and `z_m` jointly Gaussian on the bipartite graph and parametrized
-by `(rho, sigma_a, sigma_z, sigma_epsilon)`. The latent field
-`x = (a_1, ..., a_{N_f}, z_1, ..., z_{N_m})` has precision matrix
+with $a_i$ and $z_m$ jointly Gaussian on the bipartite graph and
+parametrized by $(\rho, \sigma_a, \sigma_z, \sigma_\varepsilon)$. Stacking
+the latent effects as
+$\mathbf{x} = (a_1, \ldots, a_{N_f}, z_1, \ldots, z_{N_m})^\top$, the prior
+precision matrix is
 
-```text
-Q = S^{-1} (D - rho * A) S^{-1}
-```
+$$
+\mathbf{Q} = \mathbf{S}^{-1}\!\left(\mathbf{D} - \rho\,\mathbf{A}\right)\mathbf{S}^{-1},
+$$
 
-where `A` is the bipartite adjacency matrix, `D` is the degree matrix, and
-`S = diag(sigma_a * 1_{N_f}, sigma_z * 1_{N_m})`. The parameter
-`rho in (-1, 1)` governs the strength and sign of sorting between linked left
-and right nodes.
+where $\mathbf{A}$ is the bipartite adjacency matrix, $\mathbf{D}$ is the
+diagonal degree matrix, and
+$\mathbf{S} = \operatorname{diag}(\sigma_a \mathbf{1}_{N_f}, \sigma_z \mathbf{1}_{N_m})$
+is the variance-scaling matrix. The parameter $\rho \in (-1, 1)$ governs the
+strength and sign of local dependence between linked nodes.
 
 Replacing hundreds of thousands of latent effects with four distributional
 parameters has three practical consequences:
@@ -62,21 +65,23 @@ parameters has three practical consequences:
    random-effects approach side-steps this by estimating variance components
    from the full covariance structure rather than from point estimates of
    individual effects.
-2. **Likelihood-based estimation scales.** The precision matrix `Q` is sparse,
-   so its log-determinant and quadratic forms can be evaluated with sparse
-   Cholesky, or, for very large networks, with the Hutchinson trace
-   estimator and stochastic Lanczos quadrature on sparse matrix-vector
-   products.
+2. **Likelihood-based estimation scales.** The precision matrix $\mathbf{Q}$
+   is sparse, so its log-determinant and quadratic forms can be evaluated
+   with sparse Cholesky, or, for very large networks, with the Hutchinson
+   trace estimator and stochastic Lanczos quadrature on sparse
+   matrix-vector products.
 3. **Uses the full network.** Disconnected components, leaves, and high-degree
    hubs all contribute likelihood-information rather than being dropped.
 
 Applied to the universe of Hungarian CEO&ndash;firm spells, 1990&ndash;2018
-(`N_f = 530,213`, `N_m = 617,613`, `K = 1,131,996`), the baseline estimate is
-`rho_hat = 0.706` &mdash; strong positive sorting. The corresponding two-way
-fixed-effects estimate on the same sample is `rho_hat = -0.64`; the
-leave-one-out (Kline&ndash;Saggio&ndash;S&oslash;lvsten) correction reduces
-the magnitude to `-0.39` but does not resolve the sign. See the paper for
-details and counterfactuals.
+($N_f = 530{,}213$, $N_m = 617{,}613$, $K = 1{,}131{,}996$), the baseline
+local-dependence estimate is $\hat{\rho} = 0.706$ &mdash; strong positive
+local sorting in the GMRF prior, not an AKM/KSS-style sorting correlation.
+For comparison, the corresponding two-way fixed-effects estimate on the same
+sample is $\hat{\rho}_{\text{TWFE}} = -0.64$; the leave-one-out
+(Kline&ndash;Saggio&ndash;S&oslash;lvsten) correction reduces the magnitude
+to $\hat{\rho}_{\text{KSS}} = -0.39$ but does not resolve the sign. See the
+paper for details and counterfactuals.
 
 ## Installation
 
@@ -113,7 +118,7 @@ result = gmrf_mle(
     seed       = 42,
 )
 
-result.rho           # sorting parameter
+result.rho           # local dependence parameter; local sorting, not AKM/KSS sorting
 result.sigma_a       # firm effect SD
 result.sigma_z       # worker effect SD
 result.sigma_epsilon # match-specific noise SD
@@ -129,17 +134,19 @@ and posterior decompositions. Accessors `coef`, `nll`, `converged`, and
 
 ## Priors and Solvers
 
-The library separates the **prior precision model** (the shape of `Q`) from
-the **numerical solver** (how the likelihood is evaluated and optimized).
+The library separates the **prior precision model** (the shape of
+$\mathbf{Q}$) from the **numerical solver** (how the likelihood is evaluated
+and optimized).
 
 Prior models:
 
 - `NormalizedPrior()` &mdash; degree-normalized Laplacian (default).
-- `UnnormalizedPrior()` &mdash; the `D - rho*A` precision used in the paper.
-- `SpectralPrior()` &mdash; spectral normalization by `sigma_1(A)`.
-- `VarianceStablePrior()` &mdash; variance-stable `Q` with diagonal
-  `[1 + rho^2 (d_i - 1)] / sigma_i^2`, intended for spanning-tree subgraphs
-  where it gives degree-independent marginal variances.
+- `UnnormalizedPrior()` &mdash; the $\mathbf{D} - \rho\mathbf{A}$ precision
+  used in the paper.
+- `SpectralPrior()` &mdash; spectral normalization by $\sigma_1(\mathbf{A})$.
+- `VarianceStablePrior()` &mdash; variance-stable $\mathbf{Q}$ with diagonal
+  $[1 + \rho^2 (d_i - 1)] / \sigma_i^2$, intended for spanning-tree
+  subgraphs where it gives degree-independent marginal variances.
 
 Solvers:
 
@@ -205,13 +212,14 @@ application-only packages such as `Parquet2`, `CSV`, or `JSON`.
 
 ## Performance
 
-`HutchSLQ` is designed for networks where dense `Q^{-1}` is infeasible. On
-the baseline CEO&ndash;firm sample (`N_f + N_m approx 1.15M`,
-`K approx 1.13M`), one likelihood evaluation under `HutchSLQ` takes a few
-seconds on a single core; full Nelder-Mead optimization converges in a few
-hundred evaluations. `ExactCholesky` is preferred when the bipartite graph is
-small enough that CHOLMOD fill-in is tolerable; switch to `HutchSLQ` when
-factorization memory becomes the bottleneck.
+`HutchSLQ` is designed for networks where dense $\mathbf{Q}^{-1}$ is
+infeasible. On the baseline CEO&ndash;firm sample
+($N_f + N_m \approx 1.15$ million, $K \approx 1.13$ million), one
+likelihood evaluation under `HutchSLQ` takes a few seconds on a single core;
+full Nelder-Mead optimization converges in a few hundred evaluations.
+`ExactCholesky` is preferred when the bipartite graph is small enough that
+CHOLMOD fill-in is tolerable; switch to `HutchSLQ` when factorization memory
+becomes the bottleneck.
 
 For typical workloads, set `BLAS.set_num_threads(1)` at the start of your
 session. The library does not mutate global BLAS state itself.
