@@ -44,8 +44,12 @@ $$
 with $a_i$ and $z_m$ jointly Gaussian on the bipartite graph and
 parametrized by $(\rho, \sigma_a, \sigma_z, \sigma_\varepsilon)$. Stacking
 the latent effects as
-$\mathbf{x} = (a_1, \ldots, a_{N_f}, z_1, \ldots, z_{N_m})^\top$, the prior
-precision matrix is
+
+$$
+\mathbf{x} = (a_1, \ldots, a_{N_f}, z_1, \ldots, z_{N_m})^\top,
+$$
+
+the prior precision matrix is
 
 $$
 \mathbf{Q} = \mathbf{S}^{-1}\!\left(\mathbf{D} - \rho\,\mathbf{A}\right)\mathbf{S}^{-1},
@@ -78,10 +82,9 @@ Applied to the universe of Hungarian CEO&ndash;firm spells, 1990&ndash;2018
 local-dependence estimate is $\hat{\rho} = 0.706$ &mdash; strong positive
 local sorting in the GMRF prior, not an AKM/KSS-style sorting correlation.
 For comparison, the corresponding two-way fixed-effects estimate on the same
-sample is $\hat{\rho}_{\text{TWFE}} = -0.64$; the leave-one-out
-(Kline&ndash;Saggio&ndash;S&oslash;lvsten) correction reduces the magnitude
-to $\hat{\rho}_{\text{KSS}} = -0.39$ but does not resolve the sign. See the
-paper for details and counterfactuals.
+sample is $-0.64$; the leave-one-out (Kline&ndash;Saggio&ndash;S&oslash;lvsten)
+bias correction reduces the magnitude to $-0.39$ but does not resolve the
+sign. See the paper for details and counterfactuals.
 
 ## Installation
 
