@@ -22,9 +22,6 @@
 #   julia --project=. src/post_estimation/mc_postestimation.jl
 # ============================================================
 
-using Pkg
-Pkg.activate(".")
-
 using DataFrames
 using CSV
 using Printf: @printf, @sprintf

@@ -1,5 +1,6 @@
 #!/usr/bin/env julia
 
+using Logging
 using Printf: @sprintf
 
 function parse_number(str::AbstractString)
@@ -433,7 +434,7 @@ function main()
 
     mkpath(dirname(out_path))
     write(out_path, render_markdown(akm, gmrfs))
-    println("Wrote: $out_path")
+    @info "Wrote output" out_path
     return 0
 end
 

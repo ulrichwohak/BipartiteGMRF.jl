@@ -37,9 +37,6 @@
 #   dirname(<out_path>)/metadata.txt                         (truth values)
 # ============================================================
 
-using Pkg
-Pkg.activate(".")
-
 using SparseArrays
 using LinearAlgebra
 using Random

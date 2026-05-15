@@ -2,20 +2,7 @@
 
 module GMRFCovDistanceDecay
 
-using Pkg
-
 const PROJECT_ROOT = realpath(normpath(joinpath(@__DIR__, "..", "..")))
-
-function activate_decay_project_once!(project_root::AbstractString)
-    active = Base.active_project()
-    active_root = active === nothing ? nothing : (isfile(active) ? dirname(active) : active)
-    if active_root === nothing || realpath(active_root) != project_root
-        Pkg.activate(project_root)
-    end
-    return nothing
-end
-
-activate_decay_project_once!(PROJECT_ROOT)
 
 using CSV
 using JSON

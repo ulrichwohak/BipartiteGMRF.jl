@@ -30,9 +30,6 @@
 #   output/gmrfmle-vs_maxdeg<N>/<chunk>/<sample>/estimates.txt  (with --maxdeg)
 # ============================================================
 
-using Pkg
-Pkg.activate(".")
-
 using Parquet2
 using DataFrames
 using Optim

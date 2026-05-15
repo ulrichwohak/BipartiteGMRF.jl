@@ -6,16 +6,9 @@
 # Fixed target: years=2016-2018 (full sample), outcome=lnR
 # No weights.
 
-using Pkg
-# Uncomment to auto-add deps into the active environment:
-# Pkg.activate(".")
-# Pkg.add(["Parquet","DataFrames","Optim","FiniteDiff","SparseArrays","LinearAlgebra","Statistics","Random","Printf"])
-
 using Parquet2
 using DataFrames
 using Optim
-import Pkg;
-Pkg.add("FiniteDiff")
 using FiniteDiff
 using SparseArrays
 using LinearAlgebra

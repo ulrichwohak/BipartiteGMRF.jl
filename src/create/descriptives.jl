@@ -7,6 +7,7 @@
 ENV["GKSwstype"] = get(ENV, "GKSwstype", "100")
 
 using DataFrames
+using Logging
 using Parquet2
 using SparseArrays
 using Graphs
@@ -166,7 +167,7 @@ function save_ccdf_plot(vals::AbstractVector;
                         xname::Symbol)
     x, y = ccdf_xy(vals; drop_nonpositive=true)
     if isempty(x)
-        println("No positive values for CCDF plot: ", fig_path, " (skipping).")
+        @warn "No positive values for CCDF plot; skipping" fig_path
         return
     end
 
@@ -185,7 +186,7 @@ function save_ccdf_plot(vals::AbstractVector;
 
     ensure_dir(dirname(fig_path))
     savefig(plt, fig_path)
-    println("Wrote CCDF plot ", fig_path)
+    @info "Wrote CCDF plot" fig_path
 end
 
 function component_sizes(A::SparseMatrixCSC{Bool,Int})
@@ -196,13 +197,13 @@ end
 
 function run_snapshot_plots(df_snap::DataFrame; label::String)
     if nrow(df_snap) == 0
-        println("Snapshot $(label): empty, skipping.")
+        @warn "Snapshot is empty; skipping" label
         return
     end
 
     pairs = unique(df_snap[:, [PERSON_COL, FIRM_COL]])
     if nrow(pairs) == 0
-        println("Snapshot $(label): no unique pairs, skipping.")
+        @warn "Snapshot has no unique pairs; skipping" label
         return
     end
 
@@ -286,7 +287,7 @@ function save_multiwindow_plot(df::DataFrame, degree_type::String;
                            deg_filter(row.degree) &&
                            (!xlog || row.degree > 0), df)
     if nrow(df_sub) == 0
-        println("No positive variance values for $(degree_type) across all windows; skipping combined plot.")
+        @warn "No positive variance values across all windows; skipping combined plot" degree_type
         return
     end
 
@@ -324,7 +325,7 @@ function save_multiwindow_plot(df::DataFrame, degree_type::String;
     end
 
     savefig(plt, png_path)
-    println("Wrote variance plot ", png_path)
+    @info "Wrote variance plot" png_path
 end
 
 # ============================================================
@@ -370,7 +371,7 @@ function run_descriptives()
     for (w_start, w_end) in windows
         df_w = df[(df.year .>= w_start) .& (df.year .<= w_end), :]
         if nrow(df_w) == 0
-            println("Skipping window $w_start-$w_end (no data).")
+            @warn "Skipping empty window" window_start=w_start window_end=w_end
             continue
         end
 
@@ -435,7 +436,7 @@ function run_descriptives()
     Parquet2.writefile(joinpath(DESC_DIR, "descriptives_components.parquet"), components_rows)
     Parquet2.writefile(joinpath(DESC_DIR, "descriptives_manager_var_by_degree.parquet"), mgr_var_rows)
     Parquet2.writefile(joinpath(DESC_DIR, "descriptives_firm_var_by_degree.parquet"), firm_var_rows)
-    println("Wrote parquet tables to ", DESC_DIR)
+    @info "Wrote parquet tables" output_dir=DESC_DIR
 
     # Variance plots (existing + log–log versions)
     var_fig_dir = joinpath(FIG_DIR, "variance_by_degree")
@@ -457,7 +458,7 @@ function run_descriptives()
     run_snapshot_plots(df[(df.year .>= 1990) .& (df.year .<= 1998), :]; label="1990_1998")
     run_snapshot_plots(df[(df.year .>= 2010) .& (df.year .<= 2018), :]; label="2010_2018")
 
-    println("All figures written under ", FIG_DIR)
+    @info "All figures written" output_dir=FIG_DIR
 end
 
 run_descriptives()

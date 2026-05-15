@@ -25,9 +25,6 @@
 #   OR output/gmrfmle/<chunk>/<sample>/estimates.txt
 # ============================================================
 
-using Pkg
-Pkg.activate(".")
-
 using Parquet2
 using DataFrames
 using Optim
