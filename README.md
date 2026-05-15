@@ -53,7 +53,7 @@ $$
 
 where $\mathbf{A}$ is the bipartite adjacency matrix, $\mathbf{D}$ is the
 diagonal degree matrix, and
-$\mathbf{S} = \operatorname{diag}(\sigma_a \mathbf{1}_{N_f}, \sigma_z \mathbf{1}_{N_m})$
+$ \mathbf{S} = \operatorname{diag}(\sigma_a \mathbf{1}_{N_f}, \sigma_z \mathbf{1}_{N_m}) $
 is the variance-scaling matrix. The parameter $\rho \in (-1, 1)$ governs the
 strength and sign of local dependence between linked nodes.
 
