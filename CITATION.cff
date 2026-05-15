@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+message: "If you use BipartiteGMRF, please cite the package and associated research."
+title: "BipartiteGMRF.jl"
+version: "0.1.0"
+authors:
+  - family-names: "BipartiteGMRF contributors"
+date-released: 2026-05-15
+license: MIT

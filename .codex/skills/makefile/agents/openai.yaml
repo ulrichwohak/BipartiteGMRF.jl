@@ -1,0 +1,7 @@
+interface:
+  display_name: "Makefile"
+  short_description: "Makefile pattern and rule conventions"
+  default_prompt: "Use $makefile to write or review Makefile rules for this repository."
+
+policy:
+  allow_implicit_invocation: true
