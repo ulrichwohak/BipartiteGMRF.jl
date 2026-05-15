@@ -6,9 +6,19 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Julia tools for fitting bipartite-graph Gaussian Markov random-field
-random-effects models with `rho`-coupled left/right node effects. The library
-exposes prior and posterior variance decompositions and covariance-block
-extraction over the latent firm/worker (or, more generally, left/right) field.
+random-effects models. The library places a joint Gaussian prior on two sets
+of latent node effects on a bipartite graph &mdash; firm and worker effects
+in the canonical labor-economics application, but applicable to any matched
+bipartite structure &mdash; and exposes prior and posterior variance
+decompositions plus covariance-block extraction over the latent field.
+
+The parameter `rho` governs the *local conditional dependence* between
+adjacent nodes in the graph and admits an interpretation as local,
+edge-level assortative matching. It is **not** the AKM/KSS-style sorting
+parameter (the population correlation between fitted firm and worker fixed
+effects), with which it coincides only under restrictive network conditions
+and from which it can diverge sharply in sparse mobility networks. See the
+paper for the contrast.
 
 The package was developed as the computational backbone of
 
