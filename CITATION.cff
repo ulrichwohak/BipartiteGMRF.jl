@@ -1,8 +1,60 @@
 cff-version: 1.2.0
-message: "If you use BipartiteGMRF, please cite the package and associated research."
-title: "BipartiteGMRF.jl"
+message: >-
+  If you use BipartiteGMRF.jl in academic work, please cite both the software
+  and the underlying paper.
+type: software
+title: "BipartiteGMRF.jl: Bipartite-graph GMRF random-effects estimation in Julia"
 version: "0.1.0"
-authors:
-  - family-names: "BipartiteGMRF contributors"
 date-released: 2026-05-15
 license: MIT
+doi: 10.5281/zenodo.19048278
+url: "https://zenodo.org/records/19048278"
+repository-code: "https://github.com/ulrichwohak/BipartiteGMRF.jl"
+keywords:
+  - Gaussian Markov random field
+  - bipartite graph
+  - random effects
+  - variance decomposition
+  - matched employer-employee data
+  - Julia language
+authors:
+  - family-names: Wohak
+    given-names: Ulrich
+    email: ulrich@wohak.eu
+    affiliation: >-
+      Department of Economics and Business, Central European University,
+      Vienna, Austria
+  - family-names: Koren
+    given-names: Miklós
+    affiliation: >-
+      Department of Economics and Business, Central European University,
+      Vienna, Austria; Institute of Economics, ELTE Centre for Economic
+      and Regional Studies, Budapest, Hungary
+  - family-names: Orbán
+    given-names: Krisztina
+    affiliation: >-
+      Institute of Economics, ELTE Centre for Economic and Regional Studies,
+      Budapest, Hungary
+  - family-names: Telegdy
+    given-names: Álmos
+    affiliation: >-
+      Institute of Economics, ELTE Centre for Economic and Regional Studies,
+      Budapest, Hungary; Department of Economics and Business, Central
+      European University, Vienna, Austria
+preferred-citation:
+  type: article
+  title: >-
+    A Random-Effects Model Reveals Strong Positive Sorting in CEO Labor
+    Markets
+  year: 2026
+  month: 3
+  notes: "Working paper, manuscript compiled March 16, 2026"
+  authors:
+    - family-names: Koren
+      given-names: Miklós
+    - family-names: Wohak
+      given-names: Ulrich
+    - family-names: Orbán
+      given-names: Krisztina
+    - family-names: Telegdy
+      given-names: Álmos
