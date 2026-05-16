@@ -52,7 +52,7 @@ $$
 the prior precision matrix is
 
 $$
-\mathbf{Q} = \mathbf{S}^{-1}\!\left(\mathbf{D} - \rho\,\mathbf{A}\right)\mathbf{S}^{-1},
+\mathbf{Q} = \mathbf{S}^{-1}\\left(\mathbf{D} - \rho\mathbf{A}\right)\mathbf{S}^{-1},
 $$
 
 where $\mathbf{A}$ is the bipartite adjacency matrix, $\mathbf{D}$ is the
