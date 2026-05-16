@@ -208,10 +208,9 @@ src/
 └── api.jl                 # gmrf_mle, solve, accessors
 ```
 
-The scripts under `src/estimate`, `src/create`, and `src/post_estimation` are
-legacy project and reproducibility utilities preserved from the original
-research codebase. They are not part of the library API and may depend on
-application-only packages such as `Parquet2`, `CSV`, or `JSON`.
+Project-specific data preparation, estimation, and post-estimation scripts
+from the original research codebase are archived with the reproducibility
+compendium rather than tracked in this reusable library repository.
 
 ## Performance
 
@@ -236,9 +235,8 @@ Zenodo:
 > [https://zenodo.org/records/19048278](https://zenodo.org/records/19048278)
 
 This repository hosts the reusable library extracted from that compendium.
-The legacy scripts under `src/estimate`, `src/create`, and
-`src/post_estimation` correspond directly to the Zenodo pipeline and are
-preserved for direct reproducibility.
+The project-specific pipeline scripts are available in the Zenodo archive for
+direct reproducibility.
 
 ## Citation
 
