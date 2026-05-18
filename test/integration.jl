@@ -8,6 +8,9 @@
         seed=3,
     )
     @test result.prior_decomposition !== nothing
+    @test StatsAPI.coef(result) == coef(result)
+    @test StatsAPI.loglikelihood(result) == -nll(result)
+    @test StatsAPI.nobs(result) == result.problem.K
 
     posterior = posterior_decomposition(result; probes=3, seed=3)
     @test isfinite(posterior.V_total)

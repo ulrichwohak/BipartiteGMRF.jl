@@ -15,6 +15,7 @@ import Optim:
     optimize
 using Random: MersenneTwister, rand, randn
 using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm
+import StatsAPI: coef, loglikelihood, nobs
 using Statistics: mean, std
 
 export AbstractGMRFPrior,
@@ -34,6 +35,8 @@ export AbstractGMRFPrior,
     gmrf_mle,
     solve,
     coef,
+    loglikelihood,
+    nobs,
     nll,
     converged,
     prior_decomposition,
