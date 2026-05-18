@@ -8,11 +8,10 @@ makedocs(;
     sitename = "BipartiteGMRF.jl",
     format = Documenter.HTML(;
         prettyurls = get(ENV, "CI", "false") == "true",
-        canonical = "https://uw.github.io/BipartiteGMRF.jl",
-        edit_link = nothing,
-        repolink = nothing,
+        canonical = "https://ulrichwohak.github.io/BipartiteGMRF.jl",
+        edit_link = "main",
+        repolink = "https://github.com/ulrichwohak/BipartiteGMRF.jl",
     ),
-    remotes = nothing,
     pages = [
         "Overview" => "index.md",
         "API" => "api.md",
