@@ -328,8 +328,10 @@ function GMRFProblem(
     A_prior = copy(A_prior_base)
     padj == :binary && (A_prior.nzval .= 1.0)
     pscale = prepare_prior_scaling(A_prior, prior)
-    if prior isa VarianceStablePrior && !is_forest(A_prior) && verbose
-        @warn "Input graph contains a cycle; variance-stable prior no longer guarantees degree-independent marginal variances."
+    if prior isa VarianceStablePrior && !is_forest(A_prior)
+        msg = "Input graph contains a cycle; variance-stable prior no longer guarantees degree-independent marginal variances."
+        prior.strict_forest && throw(ArgumentError(msg))
+        @warn msg
     end
 
     unique_edges = nnz(sparse(f_rows, w_cols, ones(Float64, length(f_rows)), n_firms, n_workers))
