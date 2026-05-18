@@ -1,3 +1,13 @@
+"""
+    solve(problem::GMRFProblem, solver::AbstractGMRFSolver;
+          decompose=nothing, fix_rho=nothing, seed=42, verbose=false)
+
+Fit a prepared `GMRFProblem` with the chosen solver.
+
+`decompose` controls optional prior variance decomposition: pass `false` or
+`nothing` to skip, `true` to use the default probe count, or an integer probe
+count. `fix_rho` fixes the local-dependence parameter during optimization.
+"""
 function solve(
     problem::GMRFProblem,
     solver::ExactCholesky;

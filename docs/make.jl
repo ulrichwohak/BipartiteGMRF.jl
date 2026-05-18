@@ -23,5 +23,5 @@ makedocs(;
         "Examples" => "examples.md",
         "Performance" => "performance.md",
     ],
-    checkdocs = :none,
+    checkdocs = :exports,
 )

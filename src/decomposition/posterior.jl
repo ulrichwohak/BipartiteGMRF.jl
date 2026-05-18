@@ -1,3 +1,14 @@
+"""
+    posterior_decomposition(result::GMRFResult; probes=200, seed=42,
+                            target=result.problem.weighting.target,
+                            verbose=false)
+
+Estimate the posterior variance decomposition for a fitted model.
+
+The result combines posterior mode contributions with posterior covariance
+trace estimates and returns a `VarianceDecomposition` in original outcome
+units.
+"""
 function posterior_decomposition(
     result::GMRFResult;
     probes::Int=200,

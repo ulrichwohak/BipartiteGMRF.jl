@@ -1,3 +1,17 @@
+"""
+    gmrf_mle(df; outcome=:y, firm_id=:firm_id, worker_id=:worker_id,
+             prior=NormalizedPrior(), solver=ExactCholesky(),
+             weighting=Weighting(), decompose=200, fix_rho=nothing,
+             max_degree=nothing, standardize=true, on_missing=:drop,
+             seed=42, verbose=false)
+
+Construct and fit a bipartite-GMRF model from a `DataFrame`.
+
+This is the high-level entry point: it prepares a `GMRFProblem`, fits it with
+`solve`, and optionally computes a prior variance decomposition. The result is
+a `GMRFResult` with parameters in original outcome units when
+`standardize=true`.
+"""
 function gmrf_mle(
     df::DataFrame;
     outcome::Symbol=:y,
@@ -29,6 +43,13 @@ function gmrf_mle(
     return solve(problem, solver; decompose=decompose, fix_rho=fix_rho, seed=seed, verbose=verbose)
 end
 
+"""
+    coef(result::GMRFResult)
+
+Return fitted model coefficients as a named tuple.
+
+The tuple contains `rho`, `sigma_a`, `sigma_z`, `sigma_epsilon`, and `rho_eps`.
+"""
 coef(result::GMRFResult) = (
     rho = result.rho,
     sigma_a = result.sigma_a,
@@ -37,7 +58,18 @@ coef(result::GMRFResult) = (
     rho_eps = result.rho_eps,
 )
 
+"""
+    nll(result::GMRFResult)
+
+Return the fitted negative log-likelihood objective value.
+"""
 nll(result::GMRFResult) = result.nll
+
+"""
+    converged(result::GMRFResult)
+
+Return whether the optimizer reported convergence.
+"""
 converged(result::GMRFResult) = result.converged
 
 function Base.show(io::IO, result::GMRFResult)
