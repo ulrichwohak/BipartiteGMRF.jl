@@ -3,6 +3,12 @@
     @test isfinite(exact.nll)
     @test isfinite(exact.rho)
     @test exact.problem isa GMRFProblem
+    @test startswith(sprint(show, exact), "GMRFResult(rho=")
+    text_plain = sprint(show, MIME"text/plain"(), exact)
+    @test occursin("GMRFResult\n", text_plain)
+    @test occursin("parameters:", text_plain)
+    @test occursin("rho:", text_plain)
+    @test occursin("model:", text_plain)
 
     hutch = gmrf_mle(
         synthetic_df();
