@@ -164,6 +164,24 @@ function prepare_prior_scaling(A_prior::SparseMatrixCSC{Float64,Int}, prior::Abs
     )
 end
 
+function GMRFProblem(; kwargs...)
+    fields = fieldnames(GMRFProblem)
+    missing = [field for field in fields if !haskey(kwargs, field)]
+    isempty(missing) ||
+        throw(ArgumentError("Missing GMRFProblem fields: $(join(String.(missing), ", "))."))
+    field_set = Set(fields)
+    unknown = [field for field in keys(kwargs) if field ∉ field_set]
+    isempty(unknown) ||
+        throw(ArgumentError("Unknown GMRFProblem fields: $(join(String.(unknown), ", "))."))
+    values = map(field -> kwargs[field], fields)
+    return GMRFProblem(values...)
+end
+
+function problem_fields(problem::GMRFProblem)
+    fields = fieldnames(GMRFProblem)
+    return NamedTuple{fields}(map(field -> getfield(problem, field), fields))
+end
+
 function GMRFProblem(
     df::DataFrame;
     outcome::Symbol=:y,
@@ -334,105 +352,77 @@ function GMRFProblem(
         max_prior_degree_w = maximum(pscale.d_w),
     )
 
-    return GMRFProblem(
-        y,
-        Float64(base_stats.ydot),
-        base_stats.projected_y,
-        base_stats.VtV,
-        A_prior,
-        pscale.At_prior,
-        base_stats.A_obs,
-        base_stats.At_obs,
-        pscale.d_f,
-        pscale.d_w,
-        base_stats.cnt_f,
-        base_stats.cnt_w,
-        pscale.df_is,
-        pscale.dw_is,
-        pscale.diag_f,
-        pscale.diag_w,
-        ids_f,
-        ids_w,
-        firm_to_index,
-        worker_to_index,
-        f_rows,
-        w_cols,
-        y,
-        T_edge,
-        decomp_f_rows,
-        decomp_w_cols,
-        decomp_y,
-        decomp_T,
-        n_firms,
-        n_workers,
-        k,
-        personyear_rows,
-        Float64(y_mean),
-        Float64(y_std),
-        standardize,
-        prior,
-        weighting,
-        rho_eps_likelihood,
-        Float64(within_ss),
-        Int(within_df),
-        Float64(personyear_within_ss),
-        Float64(log_weight_sum),
-        Float64(effective_weight_sum),
-        Float64(effective_weight_over_T_sum),
-        Float64(mean_effective_weight),
-        Float64(max_effective_weight),
-        metadata,
+    return GMRFProblem(;
+        y = y,
+        ydot = Float64(base_stats.ydot),
+        projected_y = base_stats.projected_y,
+        VtV = base_stats.VtV,
+        A_prior = A_prior,
+        At_prior = pscale.At_prior,
+        A_obs = base_stats.A_obs,
+        At_obs = base_stats.At_obs,
+        d_f = pscale.d_f,
+        d_w = pscale.d_w,
+        cnt_f = base_stats.cnt_f,
+        cnt_w = base_stats.cnt_w,
+        df_is = pscale.df_is,
+        dw_is = pscale.dw_is,
+        diag_f = pscale.diag_f,
+        diag_w = pscale.diag_w,
+        firm_ids = ids_f,
+        worker_ids = ids_w,
+        firm_to_index = firm_to_index,
+        worker_to_index = worker_to_index,
+        base_f_rows = f_rows,
+        base_w_cols = w_cols,
+        base_y = y,
+        base_T = T_edge,
+        decomp_f_rows = decomp_f_rows,
+        decomp_w_cols = decomp_w_cols,
+        decomp_y = decomp_y,
+        decomp_T = decomp_T,
+        N_firms = n_firms,
+        N_workers = n_workers,
+        K = k,
+        personyear_rows = personyear_rows,
+        y_mean = Float64(y_mean),
+        y_std = Float64(y_std),
+        standardize = standardize,
+        prior = prior,
+        weighting = weighting,
+        rho_eps_likelihood = rho_eps_likelihood,
+        within_ss = Float64(within_ss),
+        within_df = Int(within_df),
+        personyear_within_ss = Float64(personyear_within_ss),
+        log_weight_sum = Float64(log_weight_sum),
+        effective_weight_sum = Float64(effective_weight_sum),
+        effective_weight_over_T_sum = Float64(effective_weight_over_T_sum),
+        mean_effective_weight = Float64(mean_effective_weight),
+        max_effective_weight = Float64(max_effective_weight),
+        metadata = metadata,
     )
 end
 
 function with_observation_stats(problem::GMRFProblem, stats, rho_eps::Union{Nothing,Float64})
-    return GMRFProblem(
-        problem.y,
-        Float64(stats.ydot),
-        stats.projected_y,
-        stats.VtV,
-        problem.A_prior,
-        problem.At_prior,
-        stats.A_obs,
-        stats.At_obs,
-        problem.d_f,
-        problem.d_w,
-        stats.cnt_f,
-        stats.cnt_w,
-        problem.df_is,
-        problem.dw_is,
-        problem.diag_f,
-        problem.diag_w,
-        problem.firm_ids,
-        problem.worker_ids,
-        problem.firm_to_index,
-        problem.worker_to_index,
-        problem.base_f_rows,
-        problem.base_w_cols,
-        problem.base_y,
-        problem.base_T,
-        problem.decomp_f_rows,
-        problem.decomp_w_cols,
-        problem.decomp_y,
-        problem.decomp_T,
-        problem.N_firms,
-        problem.N_workers,
-        problem.K,
-        problem.personyear_rows,
-        problem.y_mean,
-        problem.y_std,
-        problem.standardize,
-        problem.prior,
-        problem.weighting,
-        rho_eps,
-        problem.within_ss,
-        problem.within_df,
-        problem.personyear_within_ss,
-        Float64(get(stats, :log_weight_sum, problem.log_weight_sum)),
-        Float64(get(stats, :effective_weight_sum, problem.effective_weight_sum)),
-        Float64(get(stats, :effective_weight_over_T_sum, problem.effective_weight_over_T_sum)),
-        Float64(get(stats, :mean_effective_weight, problem.mean_effective_weight)),
-        Float64(get(stats, :max_effective_weight, problem.max_effective_weight)),
-        problem.metadata,
+    return GMRFProblem(;
+        merge(problem_fields(problem), (
+            ydot = Float64(stats.ydot),
+            projected_y = stats.projected_y,
+            VtV = stats.VtV,
+            A_obs = stats.A_obs,
+            At_obs = stats.At_obs,
+            cnt_f = stats.cnt_f,
+            cnt_w = stats.cnt_w,
+            rho_eps_likelihood = rho_eps,
+            log_weight_sum = Float64(get(stats, :log_weight_sum, problem.log_weight_sum)),
+            effective_weight_sum = Float64(get(stats, :effective_weight_sum, problem.effective_weight_sum)),
+            effective_weight_over_T_sum = Float64(get(
+                stats,
+                :effective_weight_over_T_sum,
+                problem.effective_weight_over_T_sum,
+            )),
+            mean_effective_weight = Float64(get(stats, :mean_effective_weight, problem.mean_effective_weight)),
+            max_effective_weight = Float64(get(stats, :max_effective_weight, problem.max_effective_weight)),
+        ))...
     )
 end
