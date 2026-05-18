@@ -1,6 +1,30 @@
+"""
+Abstract supertype for prior precision models used by `GMRFProblem`.
+
+Concrete priors define how the bipartite adjacency matrix enters the latent
+firm/worker precision matrix. Use one of `NormalizedPrior`,
+`UnnormalizedPrior`, `SpectralPrior`, or `VarianceStablePrior`.
+"""
 abstract type AbstractGMRFPrior end
+
+"""
+Abstract supertype for marginal-likelihood solvers.
+
+Concrete solvers control how log determinants, quadratic forms, and optimizer
+steps are evaluated. Use `ExactCholesky()` for sparse direct factorization or
+`HutchSLQ()` for matrix-free stochastic evaluation.
+"""
 abstract type AbstractGMRFSolver end
 
+"""
+    NormalizedPrior(; adjacency=:degree, prior_adjacency=:binary)
+
+Degree-normalized bipartite GMRF prior.
+
+`prior_adjacency` controls whether the prior graph is binary (`:binary`) or
+uses observed edge counts (`:counts`). This prior supports both
+`ExactCholesky()` and `HutchSLQ()`.
+"""
 struct NormalizedPrior <: AbstractGMRFPrior
     adjacency::Symbol
     prior_adjacency::Symbol
@@ -13,6 +37,14 @@ struct NormalizedPrior <: AbstractGMRFPrior
     end
 end
 
+"""
+    UnnormalizedPrior(; prior_adjacency=:binary)
+
+Unnormalized `D - rho*A` precision model.
+
+This prior matches the paper-style degree matrix scaling and supports both
+`ExactCholesky()` and `HutchSLQ()`.
+"""
 struct UnnormalizedPrior <: AbstractGMRFPrior
     prior_adjacency::Symbol
     function UnnormalizedPrior(; prior_adjacency::Symbol=:binary)
@@ -22,6 +54,14 @@ struct UnnormalizedPrior <: AbstractGMRFPrior
     end
 end
 
+"""
+    SpectralPrior(; prior_adjacency=:binary)
+
+Spectral-normalized adjacency prior.
+
+The bipartite adjacency is scaled by its leading singular value before entering
+the precision matrix. This prior currently supports `HutchSLQ()` only.
+"""
 struct SpectralPrior <: AbstractGMRFPrior
     prior_adjacency::Symbol
     function SpectralPrior(; prior_adjacency::Symbol=:binary)
@@ -31,8 +71,28 @@ struct SpectralPrior <: AbstractGMRFPrior
     end
 end
 
+"""
+    VarianceStablePrior()
+
+Variance-stable precision model for bipartite graphs.
+
+This prior is intended for forest-like graphs where its marginal-variance
+property applies. It currently supports raw observation weighting and
+`HutchSLQ()` only.
+"""
 struct VarianceStablePrior <: AbstractGMRFPrior end
 
+"""
+    Weighting(; observations=:raw, rho_eps=nothing, target=:estimation)
+
+Configure how repeated firm-worker observations enter the likelihood and
+variance decompositions.
+
+`observations` is one of `:raw`, `:edge`, or `:effective`. Effective weighting
+requires `rho_eps` as a number in `[0, 1)` or `:estimate`. `target` controls the
+default decomposition target and accepts `:estimation`, `:personyear`, or
+`:edge`.
+"""
 struct Weighting
     observations::Symbol
     rho_eps::Union{Nothing,Float64,Symbol}
@@ -61,6 +121,16 @@ struct Weighting
     end
 end
 
+"""
+    GMRFProblem(df; outcome=:y, firm_id=:firm_id, worker_id=:worker_id, ...)
+
+Prepared bipartite-GMRF estimation problem.
+
+The constructor validates and standardizes an input `DataFrame`, maps firm and
+worker IDs to graph indices, builds sparse observation/prior matrices, and
+stores metadata used by `solve`. Build a `GMRFProblem` once when comparing
+multiple solvers on the same data.
+"""
 struct GMRFProblem
     y::Vector{Float64}
     ydot::Float64
@@ -141,6 +211,16 @@ function Base.getproperty(p::GMRFProblem, name::Symbol)
     return getfield(p, name)
 end
 
+"""
+    HutchSLQ(; logdet_probes=30, lanczos_iters=30, cg_tol=1e-6,
+             cg_maxiter=700, optim_iters=1000)
+
+Matrix-free stochastic solver using Hutchinson stochastic Lanczos quadrature
+for log determinants and preconditioned conjugate gradients for linear solves.
+
+Use this solver when sparse direct factorization is too memory intensive.
+Pass `seed` to `solve` or `gmrf_mle` for reproducible stochastic paths.
+"""
 struct HutchSLQ <: AbstractGMRFSolver
     logdet_probes::Int
     lanczos_iters::Int
@@ -163,6 +243,15 @@ struct HutchSLQ <: AbstractGMRFSolver
     end
 end
 
+"""
+    ExactCholesky(; optim_iters=200, polish=true, autodiff=:finitediff)
+
+Deterministic solver based on sparse Cholesky factorizations.
+
+This solver is suitable for small and medium graphs where CHOLMOD fill-in is
+manageable. When `polish=true`, a finite-difference L-BFGS polishing pass is
+attempted after the initial Nelder-Mead optimization.
+"""
 struct ExactCholesky <: AbstractGMRFSolver
     optim_iters::Int
     polish::Bool
@@ -175,6 +264,14 @@ struct ExactCholesky <: AbstractGMRFSolver
     end
 end
 
+"""
+Variance decomposition returned by `prior_decomposition` or
+`posterior_decomposition`.
+
+Fields report firm, worker, cross, residual, and total variance components,
+along with probe counts, decomposition target, method, convergence metadata,
+and additional residual-model details.
+"""
 struct VarianceDecomposition
     V_firm::Float64
     V_worker::Float64
@@ -189,6 +286,13 @@ struct VarianceDecomposition
     metadata::NamedTuple
 end
 
+"""
+Fitted bipartite-GMRF model returned by `solve` and `gmrf_mle`.
+
+Stores fitted parameters in original outcome units, optimization diagnostics,
+optional prior/posterior decompositions, the prepared `GMRFProblem`, and solver
+metadata.
+"""
 struct GMRFResult
     rho::Float64
     sigma_a::Float64
@@ -209,6 +313,13 @@ struct GMRFResult
     metadata::NamedTuple
 end
 
+"""
+Cached covariance factorization returned by `prior_covariance` or
+`posterior_covariance`.
+
+Pass a `CovarianceOperator` to `cov_block` to extract covariance blocks for
+selected firm and worker IDs.
+"""
 struct CovarianceOperator
     kind::Symbol
     factor::Any
@@ -216,6 +327,12 @@ struct CovarianceOperator
     units::Symbol
 end
 
+"""
+Covariance block returned by `cov_block`.
+
+`matrix` contains the extracted covariance values, while `rows` and `cols`
+record entity metadata as `(side=:firm/:worker, id=...)` named tuples.
+"""
 struct CovarianceBlock
     matrix::Matrix{Float64}
     rows::Vector{Any}

@@ -60,6 +60,18 @@ function extract_submatrix(F, n::Int, row_idx::Vector{Int}, col_idx::Vector{Int}
     return Matrix(transpose(extract_by_columns(F, n, col_idx, row_idx; batch_size=batch_size)))
 end
 
+"""
+    cov_block(op::CovarianceOperator; firms=[], workers=[],
+              row_firms=[], row_workers=[], col_firms=[], col_workers=[],
+              batch_size=16)
+
+Extract a principal or rectangular covariance block from a cached covariance
+operator.
+
+Use `firms`/`workers` for a principal block, or `row_*` and `col_*` keywords
+for a rectangular block. The result is a `CovarianceBlock` with matrix values
+and row/column entity metadata.
+"""
 function cov_block(
     op::CovarianceOperator;
     firms=Any[],
