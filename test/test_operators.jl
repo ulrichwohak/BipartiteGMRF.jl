@@ -8,6 +8,8 @@
         y = similar(x)
         qop(y, x)
         @test y ≈ Q * x atol=1e-10 rtol=1e-10
+        mop = BipartiteGMRF.MOp(qop, p.VtV, similar(x), 1.0)
+        @test mop isa BipartiteGMRF.MOp{typeof(qop)}
     end
     @test GMRFProblem(synthetic_df(); prior=SpectralPrior(seed=7)).prior.seed == 7
 

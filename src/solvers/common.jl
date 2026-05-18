@@ -146,14 +146,14 @@ function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, sta
     return finite_or_big(val)
 end
 
-mutable struct HutchCache
+mutable struct HutchCache{Q<:Union{QOp,QOpVS}}
     dV::Vector{Float64}
     Mdiag::Vector{Float64}
     pcg::PCGWorkspace
     slqQ::SLQWorkspace
     slqM::SLQWorkspace
-    qop::Any
-    mop::MOp
+    qop::Q
+    mop::MOp{Q}
 end
 
 function make_hutch_cache(problem::GMRFProblem, solver::HutchSLQ)
