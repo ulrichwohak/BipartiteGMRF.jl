@@ -3,6 +3,10 @@
     @test p.N_firms == 3
     @test p.N_workers == 4
     @test p.K == 8
+    @test p.firm_ids isa Vector{Int}
+    @test p.worker_ids isa Vector{Int}
+    @test p.firm_to_index isa Dict{Int,Int}
+    @test p.worker_to_index isa Dict{Int,Int}
     @test p.firm_to_index[1] == 1
     @test p.worker_to_index[10] == 1
     @test p.metadata.outcome == :y
@@ -30,6 +34,10 @@
         on_missing=:drop,
     )
     @test custom.K == 5
+    @test custom.firm_ids isa Vector{String}
+    @test custom.worker_ids isa Vector{String}
+    @test custom.firm_to_index isa Dict{String,Int}
+    @test custom.worker_to_index isa Dict{String,Int}
     @test custom.firm_to_index["a"] == 1
     @test custom.worker_to_index["p1"] == 1
     @test_throws ArgumentError GMRFProblem(

@@ -132,7 +132,7 @@ worker IDs to graph indices, builds sparse observation/prior matrices, and
 stores metadata used by `solve`. Build a `GMRFProblem` once when comparing
 multiple solvers on the same data.
 """
-struct GMRFProblem
+struct GMRFProblem{F,W}
     y::Vector{Float64}
     ydot::Float64
     projected_y::Vector{Float64}
@@ -149,10 +149,10 @@ struct GMRFProblem
     dw_is::Vector{Float64}
     diag_f::Vector{Float64}
     diag_w::Vector{Float64}
-    firm_ids::Vector{Any}
-    worker_ids::Vector{Any}
-    firm_to_index::Dict{Any,Int}
-    worker_to_index::Dict{Any,Int}
+    firm_ids::Vector{F}
+    worker_ids::Vector{W}
+    firm_to_index::Dict{F,Int}
+    worker_to_index::Dict{W,Int}
     base_f_rows::Vector{Int}
     base_w_cols::Vector{Int}
     base_y::Vector{Float64}
