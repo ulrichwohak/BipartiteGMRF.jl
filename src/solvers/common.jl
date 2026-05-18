@@ -257,30 +257,30 @@ function optimize_problem(
     end
 
     iterations = solver isa ExactCholesky ? solver.optim_iters : solver.optim_iters
-    opts = Optim.Options(iterations=iterations, show_trace=verbose, g_tol=1e-3)
+    opts = Options(iterations=iterations, show_trace=verbose, g_tol=1e-3)
     elapsed = @elapsed res = optimize(obj, p0, NelderMead(), opts)
     if solver isa ExactCholesky && solver.polish && solver.autodiff == :finitediff
-        p_start = Vector{Float64}(Optim.minimizer(res))
+        p_start = Vector{Float64}(minimizer(res))
         function fg!(F, G, x)
             if G !== nothing
-                FiniteDiff.finite_difference_gradient!(G, obj, x)
+                finite_difference_gradient!(G, obj, x)
             end
             return F === nothing ? nothing : obj(x)
         end
-        polish_opts = Optim.Options(iterations=solver.optim_iters, show_trace=verbose)
+        polish_opts = Options(iterations=solver.optim_iters, show_trace=verbose)
         polish_elapsed = @elapsed begin
             polished = try
-                optimize(Optim.only_fg!(fg!), p_start, LBFGS(), polish_opts)
+                optimize(only_fg!(fg!), p_start, LBFGS(), polish_opts)
             catch
                 nothing
             end
-            if polished !== nothing && Optim.minimum(polished) <= Optim.minimum(res)
+            if polished !== nothing && optim_minimum(polished) <= optim_minimum(res)
                 res = polished
             end
         end
         elapsed += polish_elapsed
     end
-    pfree = Vector{Float64}(Optim.minimizer(res))
+    pfree = Vector{Float64}(minimizer(res))
     pfull = full_params(pfree, fix_rho, estimate_rho_eps)
     stats = objective_stats(problem, pfull)
     final_problem = estimate_rho_eps ? with_observation_stats(problem, stats, stats.rho_eps) : problem
@@ -294,8 +294,8 @@ function optimize_problem(
         sigma_epsilon = decoded.sigma_epsilon * final_problem.y_std,
         rho_eps = rho_eps,
         nll = val,
-        converged = Optim.converged(res),
-        iterations = Optim.iterations(res),
+        converged = optim_converged(res),
+        iterations = optim_iterations(res),
         obj_evals = evals[],
         optimization_time = elapsed,
         theta_unconstrained = pfull,
