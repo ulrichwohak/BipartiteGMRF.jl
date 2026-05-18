@@ -1,7 +1,0 @@
-interface:
-  display_name: "Julia"
-  short_description: "Julia coding and script conventions"
-  default_prompt: "Use $julia to write or review Julia code using the repository conventions."
-
-policy:
-  allow_implicit_invocation: true
