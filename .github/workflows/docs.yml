@@ -2,12 +2,18 @@ name: Docs
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
+    tags: ['*']
   pull_request:
+
+permissions:
+  contents: write
 
 jobs:
   docs:
     runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2

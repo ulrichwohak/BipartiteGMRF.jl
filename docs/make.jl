@@ -24,3 +24,8 @@ makedocs(;
     ],
     checkdocs = :exports,
 )
+
+deploydocs(;
+    repo = "github.com/ulrichwohak/BipartiteGMRF.jl.git",
+    devbranch = "main",
+)
