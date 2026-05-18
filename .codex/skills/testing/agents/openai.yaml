@@ -1,7 +1,0 @@
-interface:
-  display_name: "Testing"
-  short_description: "Julia testing and TDD conventions"
-  default_prompt: "Use $testing to write or review tests for this repository."
-
-policy:
-  allow_implicit_invocation: true

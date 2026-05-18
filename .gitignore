@@ -20,6 +20,9 @@ docs/site/
 # Local docs for dev architecture
 docs/julia-templates-lib-dev.md
 
+# Local agent tooling
+.codex/
+
 # macOS Finder metadata
 .DS_Store
 
