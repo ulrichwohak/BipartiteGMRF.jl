@@ -79,3 +79,22 @@ function Base.show(io::IO, result::GMRFResult)
         "nll=$(result.nll), converged=$(result.converged))",
     )
 end
+
+function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
+    println(io, "GMRFResult")
+    println(io, "  converged: ", result.converged)
+    println(io, "  nll: ", result.nll)
+    println(io, "  parameters:")
+    println(io, "    rho: ", result.rho)
+    println(io, "    sigma_a: ", result.sigma_a)
+    println(io, "    sigma_z: ", result.sigma_z)
+    println(io, "    sigma_epsilon: ", result.sigma_epsilon)
+    result.rho_eps !== nothing && println(io, "    rho_eps: ", result.rho_eps)
+    println(io, "  model:")
+    println(io, "    prior: ", nameof(typeof(result.prior)))
+    println(io, "    solver: ", nameof(typeof(result.solver)))
+    println(io, "    observations: ", result.problem.K)
+    println(io, "    person-year rows: ", result.problem.personyear_rows)
+    println(io, "    firms: ", result.problem.N_firms)
+    print(io, "    workers: ", result.problem.N_workers)
+end
