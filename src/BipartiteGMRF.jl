@@ -1,12 +1,21 @@
 module BipartiteGMRF
 
-using DataFrames
-using FiniteDiff
-using LinearAlgebra
-using Optim
-using Random
-using SparseArrays
-using Statistics
+using DataFrames: DataFrame, combine, groupby, nrow
+using FiniteDiff: finite_difference_gradient!
+using LinearAlgebra: Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, logdet, mul!, norm
+import Optim:
+    LBFGS,
+    NelderMead,
+    Options,
+    converged as optim_converged,
+    iterations as optim_iterations,
+    minimum as optim_minimum,
+    minimizer,
+    only_fg!,
+    optimize
+using Random: MersenneTwister, rand, randn
+using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm
+using Statistics: mean, std
 
 export AbstractGMRFPrior,
     AbstractGMRFSolver,
