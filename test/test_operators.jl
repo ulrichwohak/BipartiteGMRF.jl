@@ -9,6 +9,7 @@
         qop(y, x)
         @test y ≈ Q * x atol=1e-10 rtol=1e-10
     end
+    @test GMRFProblem(synthetic_df(); prior=SpectralPrior(seed=7)).prior.seed == 7
 
     pvs = GMRFProblem(synthetic_df(); prior=VarianceStablePrior())
     rho, sa, sz = 0.2, 0.6, 0.5

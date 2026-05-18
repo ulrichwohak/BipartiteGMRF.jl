@@ -37,9 +37,10 @@ function leading_singular_value(
     At::SparseMatrixCSC{Float64,Int};
     maxiter::Int=200,
     tol::Float64=1e-10,
+    seed::Int=12345,
 )
     m = size(A, 2)
-    rng = MersenneTwister(12345)
+    rng = MersenneTwister(seed)
     x = randn(rng, m)
     x ./= norm(x)
     sigma_old = 0.0
