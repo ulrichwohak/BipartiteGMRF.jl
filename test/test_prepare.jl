@@ -6,6 +6,10 @@
     @test p.firm_to_index[1] == 1
     @test p.worker_to_index[10] == 1
     @test p.metadata.outcome == :y
+    fields = fieldnames(GMRFProblem)
+    rebuilt = GMRFProblem(; NamedTuple{fields}(map(field -> getfield(p, field), fields))...)
+    @test rebuilt.K == p.K
+    @test rebuilt.metadata == p.metadata
 
     custom = GMRFProblem(
         custom_column_df();
