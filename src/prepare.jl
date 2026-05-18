@@ -242,13 +242,13 @@ function GMRFProblem(
     obs = weighting.observations
 
     if obs == :raw
-        ids_f = Any[x for x in unique(work.firm)]
-        ids_w = Any[x for x in unique(work.worker)]
+        ids_f = collect(unique(work.firm))
+        ids_w = collect(unique(work.worker))
         n_firms = length(ids_f)
         n_workers = length(ids_w)
         k = nrow(work)
-        firm_to_index = Dict{Any,Int}(id => i for (i, id) in enumerate(ids_f))
-        worker_to_index = Dict{Any,Int}(id => i for (i, id) in enumerate(ids_w))
+        firm_to_index = Dict(id => i for (i, id) in enumerate(ids_f))
+        worker_to_index = Dict(id => i for (i, id) in enumerate(ids_w))
         f_rows = Vector{Int}(undef, k)
         w_cols = Vector{Int}(undef, k)
         @inbounds for i in 1:k
@@ -278,13 +278,13 @@ function GMRFProblem(
         mean_effective_weight = 1.0
         max_effective_weight = 1.0
     else
-        ids_f = Any[x for x in unique(collapsed_all.firm)]
-        ids_w = Any[x for x in unique(collapsed_all.worker)]
+        ids_f = collect(unique(collapsed_all.firm))
+        ids_w = collect(unique(collapsed_all.worker))
         n_firms = length(ids_f)
         n_workers = length(ids_w)
         k = nrow(collapsed_all)
-        firm_to_index = Dict{Any,Int}(id => i for (i, id) in enumerate(ids_f))
-        worker_to_index = Dict{Any,Int}(id => i for (i, id) in enumerate(ids_w))
+        firm_to_index = Dict(id => i for (i, id) in enumerate(ids_f))
+        worker_to_index = Dict(id => i for (i, id) in enumerate(ids_w))
         f_rows = Vector{Int}(undef, k)
         w_cols = Vector{Int}(undef, k)
         @inbounds for i in 1:k
