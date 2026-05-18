@@ -6,9 +6,19 @@ and extracts requested entity blocks by batched solves.
 - `prior_covariance(result; units=:original)`: factor fitted prior precision.
 - `posterior_covariance(result; units=:original)`: factor fitted posterior
   precision.
-- `cov_block(op; ...)`: extract principal or rectangular blocks by firm and
-  worker IDs.
+- `cov_block(op; ..., batch_size=16)`: extract principal or rectangular blocks
+  by firm and worker IDs.
 - `CovarianceOperator`: cached factorization and metadata for extraction.
+
+## Batch Size And Memory
+
+`cov_block` extracts selected columns of the inverse precision matrix by solving
+against batches of unit vectors. `batch_size` controls how many requested
+columns are solved at once. Larger batches can reduce sparse factor solve
+overhead, but allocate a dense temporary right-hand-side workspace with
+`n_latents * batch_size` entries, in addition to the returned covariance block.
+Lower `batch_size` when extracting from large fitted graphs under tight memory
+limits.
 
 Examples:
 
