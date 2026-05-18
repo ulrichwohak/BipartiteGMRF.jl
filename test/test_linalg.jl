@@ -13,4 +13,10 @@
         m=80, k=3, seed=2)
     @test isfinite(estimated)
     @test abs(estimated - logdet(Matrix(A))) < 0.5
+
+    B = sparse([1, 2, 3, 3], [1, 1, 2, 3], [2.0, 1.0, 3.0, 4.0], 3, 3)
+    Bt = copy(transpose(B))
+    seeded = BipartiteGMRF.leading_singular_value(B, Bt; maxiter=1, tol=0.0, seed=7)
+    @test seeded == BipartiteGMRF.leading_singular_value(B, Bt; maxiter=1, tol=0.0, seed=7)
+    @test seeded != BipartiteGMRF.leading_singular_value(B, Bt; maxiter=1, tol=0.0, seed=8)
 end

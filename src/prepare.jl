@@ -133,7 +133,7 @@ function prepare_prior_scaling(A_prior::SparseMatrixCSC{Float64,Int}, prior::Abs
         diag_f = ones(Float64, n_firms)
         diag_w = ones(Float64, n_workers)
     elseif prior isa SpectralPrior
-        s1 = leading_singular_value(A_prior, At_prior)
+        s1 = leading_singular_value(A_prior, At_prior; seed=prior.seed)
         s1 > 0 || throw(ArgumentError("Cannot spectral-normalize an empty adjacency matrix."))
         df_is = fill(1.0 / sqrt(s1), n_firms)
         dw_is = fill(1.0 / sqrt(s1), n_workers)

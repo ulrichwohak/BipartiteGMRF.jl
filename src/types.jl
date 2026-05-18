@@ -24,10 +24,11 @@ end
 
 struct SpectralPrior <: AbstractGMRFPrior
     prior_adjacency::Symbol
-    function SpectralPrior(; prior_adjacency::Symbol=:binary)
+    seed::Int
+    function SpectralPrior(; prior_adjacency::Symbol=:binary, seed::Int=12345)
         prior_adjacency in (:binary, :counts) ||
             throw(ArgumentError("prior_adjacency must be :binary or :counts; got $(prior_adjacency)."))
-        new(prior_adjacency)
+        new(prior_adjacency, seed)
     end
 end
 
