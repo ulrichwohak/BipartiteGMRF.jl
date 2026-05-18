@@ -315,9 +315,9 @@ Cached covariance factorization returned by `prior_covariance` or
 Pass a `CovarianceOperator` to `cov_block` to extract covariance blocks for
 selected firm and worker IDs.
 """
-struct CovarianceOperator
+struct CovarianceOperator{F}
     kind::Symbol
-    factor::Any
+    factor::F
     result::GMRFResult
     units::Symbol
 end

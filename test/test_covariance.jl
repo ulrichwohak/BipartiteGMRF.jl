@@ -7,6 +7,8 @@
     Sigma = inv(Matrix(Q)) .* problem.y_std^2
 
     op = prior_covariance(result; units=:original)
+    @test op isa CovarianceOperator
+    @test !(typeof(op).parameters[1] === Any)
     block = cov_block(op; firms=[1, 2], workers=[10])
     idx = [
         problem.firm_to_index[1],

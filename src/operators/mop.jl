@@ -1,5 +1,5 @@
-mutable struct MOp
-    qop::Any
+mutable struct MOp{Q}
+    qop::Q
     VtV::SparseMatrixCSC{Float64,Int}
     tmp::Vector{Float64}
     lambda::Float64
