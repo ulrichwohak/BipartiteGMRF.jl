@@ -11,6 +11,17 @@
     @test rebuilt.K == p.K
     @test rebuilt.metadata == p.metadata
 
+    legacy_aliases = (:N_F, :N_M, :firms, :people, :A_fm, :At_fm, :cnt_m)
+    public_names = propertynames(p)
+    @test all(alias -> alias ∉ public_names, legacy_aliases)
+    @test_deprecated p.N_F
+    @test_deprecated p.N_M
+    @test_deprecated p.firms
+    @test_deprecated p.people
+    @test_deprecated p.A_fm
+    @test_deprecated p.At_fm
+    @test_deprecated p.cnt_m
+
     custom = GMRFProblem(
         custom_column_df();
         outcome=:outcome,

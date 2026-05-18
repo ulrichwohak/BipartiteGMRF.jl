@@ -182,32 +182,26 @@ struct GMRFProblem
     metadata::NamedTuple
 end
 
-Base.propertynames(p::GMRFProblem, private::Bool=false) = (
-    fieldnames(GMRFProblem)...,
-    :N_F,
-    :N_M,
-    :firms,
-    :people,
-    :A_fm,
-    :At_fm,
-    :cnt_m,
+const GMRFPROBLEM_LEGACY_ALIASES = Dict{Symbol,Symbol}(
+    :N_F => :N_firms,
+    :N_M => :N_workers,
+    :firms => :firm_ids,
+    :people => :worker_ids,
+    :A_fm => :A_prior,
+    :At_fm => :At_prior,
+    :cnt_m => :cnt_w,
 )
 
+Base.propertynames(p::GMRFProblem, private::Bool=false) = fieldnames(GMRFProblem)
+
 function Base.getproperty(p::GMRFProblem, name::Symbol)
-    if name == :N_F
-        return getfield(p, :N_firms)
-    elseif name == :N_M
-        return getfield(p, :N_workers)
-    elseif name == :firms
-        return getfield(p, :firm_ids)
-    elseif name == :people
-        return getfield(p, :worker_ids)
-    elseif name == :A_fm
-        return getfield(p, :A_prior)
-    elseif name == :At_fm
-        return getfield(p, :At_prior)
-    elseif name == :cnt_m
-        return getfield(p, :cnt_w)
+    canonical = get(GMRFPROBLEM_LEGACY_ALIASES, name, nothing)
+    if canonical !== nothing
+        Base.depwarn(
+            "`GMRFProblem.$(name)` is deprecated; use `GMRFProblem.$(canonical)` instead.",
+            :getproperty,
+        )
+        return getfield(p, canonical)
     end
     return getfield(p, name)
 end
