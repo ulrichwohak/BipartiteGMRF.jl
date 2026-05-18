@@ -115,7 +115,7 @@ function residual_corr_term(problem::GMRFProblem, sigma_epsilon::Float64, rho_ep
 end
 
 function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, stats)
-    p = unpack_params(params_full)
+    p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
     all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
     p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
     lambda = 1.0 / p.sigma_epsilon^2
@@ -194,7 +194,7 @@ function nll_hutch_value(
     cache::HutchCache;
     seed::Int,
 )
-    p = unpack_params(params_full)
+    p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
     all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
     p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
 
@@ -235,19 +235,20 @@ function optimize_problem(
     verbose::Bool=false,
 )
     validate_capability(problem, solver)
-    if fix_rho !== nothing && !(abs(fix_rho) < 0.99)
-        throw(ArgumentError("fix_rho must lie in (-0.99, 0.99)."))
+    limit = rho_limit(problem.prior)
+    if fix_rho !== nothing && !(abs(fix_rho) < limit)
+        throw(ArgumentError("fix_rho must lie in (-$(limit), $(limit))."))
     end
 
     estimate_rho_eps = problem.weighting.observations == :effective &&
         problem.weighting.rho_eps == :estimate
-    p0 = initial_params(fix_rho, estimate_rho_eps)
+    p0 = initial_params(fix_rho, estimate_rho_eps; rho_limit=limit)
     evals = Ref(0)
     cache = solver isa HutchSLQ ? make_hutch_cache(problem, solver) : nothing
 
     function obj(pfree)
         evals[] += 1
-        pfull = full_params(Vector{Float64}(pfree), fix_rho, estimate_rho_eps)
+        pfull = full_params(Vector{Float64}(pfree), fix_rho, estimate_rho_eps; rho_limit=limit)
         stats = objective_stats(problem, pfull)
         if solver isa ExactCholesky
             return nll_exact_value(problem, pfull, stats)
@@ -281,11 +282,11 @@ function optimize_problem(
         elapsed += polish_elapsed
     end
     pfree = Vector{Float64}(minimizer(res))
-    pfull = full_params(pfree, fix_rho, estimate_rho_eps)
+    pfull = full_params(pfree, fix_rho, estimate_rho_eps; rho_limit=limit)
     stats = objective_stats(problem, pfull)
     final_problem = estimate_rho_eps ? with_observation_stats(problem, stats, stats.rho_eps) : problem
     val = obj(pfree)
-    decoded = unpack_params(pfull)
+    decoded = unpack_params(pfull; rho_limit=limit)
     rho_eps = estimate_rho_eps ? stats.rho_eps : problem.rho_eps_likelihood
     return (
         rho = decoded.rho,

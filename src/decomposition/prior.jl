@@ -89,7 +89,7 @@ function prior_decomposition(
 )
     probes > 0 || throw(ArgumentError("probes must be positive."))
     problem = result.problem
-    p = unpack_params(result.theta_unconstrained)
+    p = unpack_params(result.theta_unconstrained; rho_limit=rho_limit(problem.prior))
     sigma_a = result.sigma_a / problem.y_std
     sigma_z = result.sigma_z / problem.y_std
     sigma_e = result.sigma_epsilon / problem.y_std

@@ -84,28 +84,44 @@ function is_forest(A::SparseMatrixCSC{Float64,Int})
     return true
 end
 
-function unpack_params(params::AbstractVector{<:Real})
+function unpack_params(params::AbstractVector{<:Real}; rho_limit::Real=0.99)
+    limit = validate_rho_limit(rho_limit)
     return (
-        rho = 0.99 * tanh(Float64(params[1])),
+        rho = limit * tanh(Float64(params[1])),
         sigma_a = exp(Float64(params[2])),
         sigma_z = exp(Float64(params[3])),
         sigma_epsilon = exp(Float64(params[4])),
     )
 end
 
-function initial_params(rho_fixed::Union{Nothing,Float64}, estimate_rho_eps::Bool)
+default_rho_start(rho_limit::Real) = min(0.5, 0.5 * validate_rho_limit(rho_limit))
+
+function initial_params(
+    rho_fixed::Union{Nothing,Float64},
+    estimate_rho_eps::Bool;
+    rho_limit::Real=0.99,
+)
+    limit = validate_rho_limit(rho_limit)
     p = rho_fixed === nothing ?
-        [atanh(0.5 / 0.99), log(0.7), log(0.04), log(0.4)] :
+        [atanh(default_rho_start(limit) / limit), log(0.7), log(0.04), log(0.4)] :
         [log(0.7), log(0.04), log(0.4)]
     estimate_rho_eps && push!(p, rhoeps_to_unconstrained(0.5))
     return p
 end
 
-function full_params(params::Vector{Float64}, rho_fixed::Union{Nothing,Float64}, estimate_rho_eps::Bool)
+function full_params(
+    params::Vector{Float64},
+    rho_fixed::Union{Nothing,Float64},
+    estimate_rho_eps::Bool;
+    rho_limit::Real=0.99,
+)
     if rho_fixed === nothing
         return params
     end
-    rho_code = atanh(rho_fixed / 0.99)
+    limit = validate_rho_limit(rho_limit)
+    abs(rho_fixed) < limit ||
+        throw(ArgumentError("rho_fixed must lie in (-$(limit), $(limit)); got $(rho_fixed)."))
+    rho_code = atanh(rho_fixed / limit)
     return estimate_rho_eps ?
         [rho_code, params[1], params[2], params[3], params[4]] :
         [rho_code, params[1], params[2], params[3]]
