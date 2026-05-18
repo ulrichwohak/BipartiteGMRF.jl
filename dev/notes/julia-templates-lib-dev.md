@@ -11,8 +11,8 @@ This file refines §11–§13 of the design doc and supersedes nothing.
 > a sibling `BipartiteGMRF/` package with `PkgTemplates`. The current working
 > tree has instead been adapted in place: `src/BipartiteGMRF.jl` is the package
 > entry point, the root `Project.toml` is kept library-only, and the older
-> `src/estimate`, `src/create`, and `src/post_estimation` files remain legacy
-> project scripts outside the reusable package API. For this repo, use the
+> project-specific pipeline scripts have been removed from the reusable package
+> API and archived with the reproducibility compendium. For this repo, use the
 > dependency, docs, test, and open-source-readiness guidance below as an audit
 > checklist rather than rerunning `PkgTemplates`.
 
@@ -94,9 +94,8 @@ transition:
 1. In `BipartiteGMRFMLE/Project.toml`, add the library as a dependency.
 2. `julia --project=. -e 'using Pkg; Pkg.develop(path="../BipartiteGMRF")'`
    so the parent picks up the local checkout, not a registered version.
-3. Convert `src/estimate/gmrfmle.jl`, `gmrfmle_exact.jl`, and `gmrfvs.jl`
-   into thin wrappers: parse CLI args, read Parquet, call `gmrf_mle`,
-   write `estimates.txt`.
+3. Keep project-specific CLI wrappers, Parquet readers, and `estimates.txt`
+   writers outside the reusable library package.
 4. Once the library reaches v0.2 and is registered, switch
    `Pkg.develop(...)` to `Pkg.add("BipartiteGMRF")` in the parent.
 
