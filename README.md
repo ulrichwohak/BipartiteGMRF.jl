@@ -260,8 +260,7 @@ and the underlying paper.
 
 ```bibtex
 @software{bipartite_gmrf_jl,
-    author  = {Wohak, Ulrich and Koren, Mikl{\'o}s and Orb{\'a}n, Krisztina
-               and Telegdy, {\'A}lmos},
+    author  = {Wohak, Ulrich and Koren, Mikl{\'o}s},
     title   = {{BipartiteGMRF.jl}: Bipartite-graph {GMRF} random-effects
                estimation in {J}ulia},
     year    = {2026},
