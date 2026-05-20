@@ -13,7 +13,10 @@
     end
     @test GMRFProblem(synthetic_df(); prior=SpectralPrior(seed=7)).prior.seed == 7
 
-    pvs = GMRFProblem(synthetic_df(); prior=VarianceStablePrior())
+    pvs = @test_warn "variance-stable prior no longer guarantees" GMRFProblem(
+        synthetic_df();
+        prior=VarianceStablePrior(),
+    )
     rho, sa, sz = 0.2, 0.6, 0.5
     qop = BipartiteGMRF.q_operator(pvs, rho, sa, sz)
     Q = BipartiteGMRF.precision_matrix(pvs, rho, sa, sz)

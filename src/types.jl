@@ -73,15 +73,19 @@ struct SpectralPrior <: AbstractGMRFPrior
 end
 
 """
-    VarianceStablePrior()
+    VarianceStablePrior(; strict_forest=false)
 
 Variance-stable precision model for bipartite graphs.
 
 This prior is intended for forest-like graphs where its marginal-variance
 property applies. It currently supports raw observation weighting and
-`HutchSLQ()` only.
+`HutchSLQ()` only. Cyclic graphs warn by default; set `strict_forest=true` to
+throw `ArgumentError` instead.
 """
-struct VarianceStablePrior <: AbstractGMRFPrior end
+struct VarianceStablePrior <: AbstractGMRFPrior
+    strict_forest::Bool
+    VarianceStablePrior(; strict_forest::Bool=false) = new(strict_forest)
+end
 
 """
     Weighting(; observations=:raw, rho_eps=nothing, target=:estimation)

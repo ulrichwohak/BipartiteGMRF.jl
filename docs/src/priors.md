@@ -10,8 +10,9 @@ They are intentionally separate from solvers.
 - `SpectralPrior(; prior_adjacency=:binary, seed=12345)`:
   spectral-normalized adjacency model. The seed controls the power-iteration
   initialization used for spectral normalization.
-- `VarianceStablePrior()`: variance-stable precision model ported as a distinct
-  prior.
+- `VarianceStablePrior(; strict_forest=false)`: variance-stable precision model
+  ported as a distinct prior. Cyclic graphs warn by default; with
+  `strict_forest=true` they throw `ArgumentError`.
 
 ## Supported Solver Matrix
 

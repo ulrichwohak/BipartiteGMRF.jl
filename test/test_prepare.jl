@@ -62,4 +62,13 @@
     maxdeg = GMRFProblem(synthetic_df(); max_degree=2)
     @test maxdeg.N_firms <= 3
     @test maxdeg.N_workers <= 4
+
+    @test_warn "variance-stable prior no longer guarantees" GMRFProblem(
+        synthetic_df();
+        prior=VarianceStablePrior(),
+    )
+    @test_throws ArgumentError GMRFProblem(
+        synthetic_df();
+        prior=VarianceStablePrior(strict_forest=true),
+    )
 end

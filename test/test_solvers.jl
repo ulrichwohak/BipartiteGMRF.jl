@@ -38,7 +38,10 @@
     @test isfinite(effective.nll)
     @test 0 <= effective.rho_eps < 1
 
-    p = GMRFProblem(synthetic_df(); prior=VarianceStablePrior())
+    p = @test_warn "variance-stable prior no longer guarantees" GMRFProblem(
+        synthetic_df();
+        prior=VarianceStablePrior(),
+    )
     @test_throws ArgumentError solve(p, ExactCholesky(optim_iters=2); decompose=false)
 
     ps = GMRFProblem(synthetic_df(); prior=SpectralPrior())
