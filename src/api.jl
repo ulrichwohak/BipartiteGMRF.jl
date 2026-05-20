@@ -59,6 +59,20 @@ coef(result::GMRFResult) = (
 )
 
 """
+    loglikelihood(result::GMRFResult)
+
+Return the fitted log-likelihood value.
+"""
+loglikelihood(result::GMRFResult) = -result.nll
+
+"""
+    nobs(result::GMRFResult)
+
+Return the number of model observations used by the likelihood.
+"""
+nobs(result::GMRFResult) = result.problem.K
+
+"""
     nll(result::GMRFResult)
 
 Return the fitted negative log-likelihood objective value.

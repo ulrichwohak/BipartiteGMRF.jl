@@ -7,9 +7,13 @@ gmrf_mle
 GMRFProblem
 solve
 coef
+loglikelihood
+nobs
 nll
 converged
 ```
+
+`coef`, `loglikelihood`, and `nobs` extend `StatsAPI`.
 
 ## Priors And Weighting
 

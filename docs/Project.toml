@@ -6,6 +6,7 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+StatsAPI = "82ae8749-77ed-4fe6-ae5f-f523153014b0"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [compat]
@@ -13,3 +14,4 @@ DataFrames = "1.6"
 Documenter = "1"
 FiniteDiff = "2.20"
 Optim = "1.7"
+StatsAPI = "1"

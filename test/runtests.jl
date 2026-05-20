@@ -2,6 +2,7 @@ using Test
 using DataFrames
 using LinearAlgebra
 using SparseArrays
+using StatsAPI
 using BipartiteGMRF
 
 include("fixtures/synthetic.jl")
