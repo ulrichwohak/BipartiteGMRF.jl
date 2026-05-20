@@ -16,64 +16,85 @@ steps are evaluated. Use `ExactCholesky()` for sparse direct factorization or
 """
 abstract type AbstractGMRFSolver end
 
+function validate_rho_limit(rho_limit::Real)
+    limit = Float64(rho_limit)
+    0.0 < limit < 1.0 ||
+        throw(ArgumentError("rho_limit must satisfy 0 < rho_limit < 1; got $(rho_limit)."))
+    return limit
+end
+
 """
-    NormalizedPrior(; adjacency=:degree, prior_adjacency=:binary)
+    NormalizedPrior(; adjacency=:degree, prior_adjacency=:binary, rho_limit=0.99)
 
 Degree-normalized bipartite GMRF prior.
 
 `prior_adjacency` controls whether the prior graph is binary (`:binary`) or
 uses observed edge counts (`:counts`). This prior supports both
-`ExactCholesky()` and `HutchSLQ()`.
+`ExactCholesky()` and `HutchSLQ()`. `rho_limit` is the open bound used to
+transform and validate the latent firm-worker dependence parameter.
 """
 struct NormalizedPrior <: AbstractGMRFPrior
     adjacency::Symbol
     prior_adjacency::Symbol
-    function NormalizedPrior(; adjacency::Symbol=:degree, prior_adjacency::Symbol=:binary)
+    rho_limit::Float64
+    function NormalizedPrior(;
+        adjacency::Symbol=:degree,
+        prior_adjacency::Symbol=:binary,
+        rho_limit::Real=0.99,
+    )
         adjacency == :degree ||
             throw(ArgumentError("NormalizedPrior only supports adjacency=:degree; got $(adjacency)."))
         prior_adjacency in (:binary, :counts) ||
             throw(ArgumentError("prior_adjacency must be :binary or :counts; got $(prior_adjacency)."))
-        new(adjacency, prior_adjacency)
+        new(adjacency, prior_adjacency, validate_rho_limit(rho_limit))
     end
 end
 
 """
-    UnnormalizedPrior(; prior_adjacency=:binary)
+    UnnormalizedPrior(; prior_adjacency=:binary, rho_limit=0.99)
 
 Unnormalized `D - rho*A` precision model.
 
 This prior matches the paper-style degree matrix scaling and supports both
-`ExactCholesky()` and `HutchSLQ()`.
+`ExactCholesky()` and `HutchSLQ()`. `rho_limit` is the open bound used to
+transform and validate the latent firm-worker dependence parameter.
 """
 struct UnnormalizedPrior <: AbstractGMRFPrior
     prior_adjacency::Symbol
-    function UnnormalizedPrior(; prior_adjacency::Symbol=:binary)
+    rho_limit::Float64
+    function UnnormalizedPrior(; prior_adjacency::Symbol=:binary, rho_limit::Real=0.99)
         prior_adjacency in (:binary, :counts) ||
             throw(ArgumentError("prior_adjacency must be :binary or :counts; got $(prior_adjacency)."))
-        new(prior_adjacency)
+        new(prior_adjacency, validate_rho_limit(rho_limit))
     end
 end
 
 """
-    SpectralPrior(; prior_adjacency=:binary)
+    SpectralPrior(; prior_adjacency=:binary, seed=12345, rho_limit=0.99)
 
 Spectral-normalized adjacency prior.
 
 The bipartite adjacency is scaled by its leading singular value before entering
-the precision matrix. This prior currently supports `HutchSLQ()` only.
+the precision matrix. `seed` controls the power-iteration initialization used
+for spectral normalization. This prior currently supports `HutchSLQ()` only.
 """
 struct SpectralPrior <: AbstractGMRFPrior
     prior_adjacency::Symbol
     seed::Int
-    function SpectralPrior(; prior_adjacency::Symbol=:binary, seed::Int=12345)
+    rho_limit::Float64
+    function SpectralPrior(;
+        prior_adjacency::Symbol=:binary,
+        seed::Int=12345,
+        rho_limit::Real=0.99,
+    )
         prior_adjacency in (:binary, :counts) ||
             throw(ArgumentError("prior_adjacency must be :binary or :counts; got $(prior_adjacency)."))
-        new(prior_adjacency, seed)
+        new(prior_adjacency, seed, validate_rho_limit(rho_limit))
     end
 end
 
 """
-    VarianceStablePrior(; strict_forest=false)
+    VarianceStablePrior(; strict_forest=false, rho_limit=0.99)
 
 Variance-stable precision model for bipartite graphs.
 
@@ -84,8 +105,13 @@ throw `ArgumentError` instead.
 """
 struct VarianceStablePrior <: AbstractGMRFPrior
     strict_forest::Bool
-    VarianceStablePrior(; strict_forest::Bool=false) = new(strict_forest)
+    rho_limit::Float64
+    function VarianceStablePrior(; strict_forest::Bool=false, rho_limit::Real=0.99)
+        new(strict_forest, validate_rho_limit(rho_limit))
+    end
 end
+
+rho_limit(prior::AbstractGMRFPrior) = prior.rho_limit
 
 """
     Weighting(; observations=:raw, rho_eps=nothing, target=:estimation)

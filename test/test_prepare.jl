@@ -26,6 +26,12 @@
     @test_deprecated getproperty(p, :At_fm)
     @test_deprecated getproperty(p, :cnt_m)
 
+    @test NormalizedPrior(rho_limit=0.4).rho_limit == 0.4
+    @test UnnormalizedPrior(rho_limit=0.4).rho_limit == 0.4
+    @test SpectralPrior(rho_limit=0.4).rho_limit == 0.4
+    @test VarianceStablePrior(rho_limit=0.4).rho_limit == 0.4
+    @test_throws ArgumentError NormalizedPrior(rho_limit=1.0)
+
     custom = GMRFProblem(
         custom_column_df();
         outcome=:outcome,

@@ -38,6 +38,14 @@
     @test isfinite(effective.nll)
     @test 0 <= effective.rho_eps < 1
 
+    limited = GMRFProblem(synthetic_df(); prior=NormalizedPrior(rho_limit=0.4))
+    @test_throws ArgumentError solve(limited, ExactCholesky(optim_iters=2, polish=false);
+        fix_rho=0.41, decompose=false)
+    fixed = solve(limited, ExactCholesky(optim_iters=2, polish=false);
+        fix_rho=0.2, decompose=false)
+    @test fixed.rho ≈ 0.2
+    @test abs(fixed.rho) < limited.prior.rho_limit
+
     p = @test_warn "variance-stable prior no longer guarantees" GMRFProblem(
         synthetic_df();
         prior=VarianceStablePrior(),
