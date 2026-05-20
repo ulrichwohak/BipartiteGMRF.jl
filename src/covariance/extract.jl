@@ -71,6 +71,11 @@ operator.
 Use `firms`/`workers` for a principal block, or `row_*` and `col_*` keywords
 for a rectangular block. The result is a `CovarianceBlock` with matrix values
 and row/column entity metadata.
+
+`batch_size` controls how many right-hand-side unit columns are solved at once.
+Larger batches can reduce factorization solve overhead, while smaller batches
+reduce temporary memory. The extraction allocates the returned block plus an
+`n_latents * batch_size` dense right-hand-side workspace.
 """
 function cov_block(
     op::CovarianceOperator;
