@@ -11,6 +11,8 @@ This is the high-level entry point: it prepares a `GMRFProblem`, fits it with
 `solve`, and optionally computes a prior variance decomposition. The result is
 a `GMRFResult` with parameters in original outcome units when
 `standardize=true`.
+
+See also [`coef`](@ref), [`loglikelihood`](@ref), [`nobs`](@ref), [`converged`](@ref).
 """
 function gmrf_mle(
     df::DataFrame;
