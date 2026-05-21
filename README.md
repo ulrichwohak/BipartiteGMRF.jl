@@ -1,6 +1,7 @@
 # BipartiteGMRF.jl
 
 [![CI](https://github.com/ulrichwohak/BipartiteGMRF.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/ulrichwohak/BipartiteGMRF.jl/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/ulrichwohak/BipartiteGMRF.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ulrichwohak/BipartiteGMRF.jl)
 [![Docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://ulrichwohak.github.io/BipartiteGMRF.jl/stable)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19048278.svg)](https://doi.org/10.5281/zenodo.19048278)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
