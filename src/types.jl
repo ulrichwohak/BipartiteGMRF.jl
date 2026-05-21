@@ -224,17 +224,24 @@ const GMRFPROBLEM_LEGACY_ALIASES = Dict{Symbol,Symbol}(
 
 Base.propertynames(p::GMRFProblem, private::Bool=false) = fieldnames(GMRFProblem)
 
-function Base.getproperty(p::GMRFProblem, name::Symbol)
-    canonical = get(GMRFPROBLEM_LEGACY_ALIASES, name, nothing)
-    if canonical !== nothing
-        Base.depwarn(
-            "`GMRFProblem.$(name)` is deprecated; use `GMRFProblem.$(canonical)` instead.",
-            :getproperty,
-        )
-        return getfield(p, canonical)
-    end
-    return getfield(p, name)
+Base.getproperty(p::GMRFProblem, name::Symbol) = getproperty(p, Val(name))
+
+function legacy_gmrf_property(p::GMRFProblem, legacy::Symbol, canonical::Symbol)
+    Base.depwarn(
+        "`GMRFProblem.$(legacy)` is deprecated; use `GMRFProblem.$(canonical)` instead.",
+        :getproperty,
+    )
+    return getfield(p, canonical)
 end
+
+Base.getproperty(p::GMRFProblem, ::Val{:N_F}) = legacy_gmrf_property(p, :N_F, :N_firms)
+Base.getproperty(p::GMRFProblem, ::Val{:N_M}) = legacy_gmrf_property(p, :N_M, :N_workers)
+Base.getproperty(p::GMRFProblem, ::Val{:firms}) = legacy_gmrf_property(p, :firms, :firm_ids)
+Base.getproperty(p::GMRFProblem, ::Val{:people}) = legacy_gmrf_property(p, :people, :worker_ids)
+Base.getproperty(p::GMRFProblem, ::Val{:A_fm}) = legacy_gmrf_property(p, :A_fm, :A_prior)
+Base.getproperty(p::GMRFProblem, ::Val{:At_fm}) = legacy_gmrf_property(p, :At_fm, :At_prior)
+Base.getproperty(p::GMRFProblem, ::Val{:cnt_m}) = legacy_gmrf_property(p, :cnt_m, :cnt_w)
+Base.getproperty(p::GMRFProblem, ::Val{name}) where {name} = getfield(p, name)
 
 """
     HutchSLQ(; logdet_probes=30, lanczos_iters=30, cg_tol=1e-6,
@@ -318,7 +325,11 @@ Stores fitted parameters in original outcome units, optimization diagnostics,
 optional prior/posterior decompositions, the prepared `GMRFProblem`, and solver
 metadata.
 """
-struct GMRFResult
+struct GMRFResult{
+    P<:GMRFProblem,
+    R<:AbstractGMRFPrior,
+    S<:AbstractGMRFSolver,
+}
     rho::Float64
     sigma_a::Float64
     sigma_z::Float64
@@ -331,9 +342,9 @@ struct GMRFResult
     optimization_time::Float64
     prior_decomposition::Union{VarianceDecomposition,Nothing}
     posterior_decomposition::Union{VarianceDecomposition,Nothing}
-    problem::GMRFProblem
-    prior::AbstractGMRFPrior
-    solver::AbstractGMRFSolver
+    problem::P
+    prior::R
+    solver::S
     theta_unconstrained::Vector{Float64}
     metadata::NamedTuple
 end
@@ -345,10 +356,10 @@ Cached covariance factorization returned by `prior_covariance` or
 Pass a `CovarianceOperator` to `cov_block` to extract covariance blocks for
 selected firm and worker IDs.
 """
-struct CovarianceOperator{F}
+struct CovarianceOperator{F,R<:GMRFResult}
     kind::Symbol
     factor::F
-    result::GMRFResult
+    result::R
     units::Symbol
 end
 
