@@ -23,6 +23,9 @@ docs/julia-templates-lib-dev.md
 # Local agent tooling
 .codex/
 
+# Local working notes (review drafts, planning docs)
+temp/
+
 # macOS Finder metadata
 .DS_Store
 
