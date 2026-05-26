@@ -25,18 +25,42 @@ jobs:
             experimental: true
     steps:
       - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
           version: ${{ matrix.julia-version }}
-      - uses: julia-actions/cache@v2
-      - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-buildpkg@v1.6
+      - uses: julia-actions/julia-runtest@v1.11
         with:
           coverage: true
-      - uses: julia-actions/julia-processcoverage@v1
+      - uses: julia-actions/julia-processcoverage@v1.2
         if: matrix.julia-version == '1'
       - uses: codecov/codecov-action@v4
         if: matrix.julia-version == '1'
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  jet:
+    name: JET (Julia stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-buildpkg@v1.6
+      - name: Run JET
+        run: |
+          julia -e '
+            using Pkg
+            Pkg.activate(temp=true)
+            Pkg.develop(path=".")
+            Pkg.add(name="DataFrames")
+            Pkg.add(name="JET", version="0.11")
+            using BipartiteGMRF, DataFrames, JET, Test
+            using LinearAlgebra
+            include("test/fixtures/synthetic.jl")
+            include("test/test_jet.jl")
+          '
