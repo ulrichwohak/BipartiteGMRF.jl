@@ -40,3 +40,27 @@ jobs:
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  jet:
+    name: JET (Julia stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v2
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: Run JET
+        run: |
+          julia -e '
+            using Pkg
+            Pkg.activate(temp=true)
+            Pkg.develop(path=".")
+            Pkg.add(name="DataFrames")
+            Pkg.add(name="JET", version="0.11")
+            using BipartiteGMRF, DataFrames, JET, Test
+            using LinearAlgebra
+            include("test/fixtures/synthetic.jl")
+            include("test/test_jet.jl")
+          '
