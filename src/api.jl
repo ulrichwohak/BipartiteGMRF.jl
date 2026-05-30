@@ -3,7 +3,7 @@
              prior=NormalizedPrior(), solver=ExactCholesky(),
              weighting=Weighting(), decompose=200, fix_rho=nothing,
              max_degree=nothing, standardize=true, on_missing=:drop,
-             seed=42, verbose=false)
+             seed=42, compute_se=false, verbose=false)
 
 Construct and fit a bipartite-GMRF model from a `DataFrame`.
 
@@ -12,7 +12,12 @@ This is the high-level entry point: it prepares a `GMRFProblem`, fits it with
 a `GMRFResult` with parameters in original outcome units when
 `standardize=true`.
 
-See also [`coef`](@ref), [`loglikelihood`](@ref), [`nobs`](@ref), [`converged`](@ref).
+Pass `compute_se=true` to also compute and cache observed-information standard
+errors, which makes `show` print them in a regression-table style; standard
+errors are otherwise available on demand via [`stderror`](@ref).
+
+See also [`coef`](@ref), [`stderror`](@ref), [`confint`](@ref),
+[`loglikelihood`](@ref), [`nobs`](@ref), [`converged`](@ref).
 """
 function gmrf_mle(
     df::DataFrame;
@@ -28,6 +33,7 @@ function gmrf_mle(
     standardize::Bool=true,
     on_missing::Symbol=:drop,
     seed::Int=42,
+    compute_se::Bool=false,
     verbose::Bool=false,
 )
     problem = GMRFProblem(
@@ -42,7 +48,8 @@ function gmrf_mle(
         on_missing=on_missing,
         verbose=verbose,
     )
-    return solve(problem, solver; decompose=decompose, fix_rho=fix_rho, seed=seed, verbose=verbose)
+    return solve(problem, solver;
+        decompose=decompose, fix_rho=fix_rho, seed=seed, compute_se=compute_se, verbose=verbose)
 end
 
 """

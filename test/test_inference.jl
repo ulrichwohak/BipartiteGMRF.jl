@@ -94,6 +94,19 @@
         @test !occursin("±", sprint(show, MIME"text/plain"(), fit))
     end
 
+    @testset "compute_se caches SEs for show" begin
+        fit_se = gmrf_mle(df; solver=ExactCholesky(optim_iters=150, polish=true),
+            decompose=false, seed=1, compute_se=true)
+        @test fit_se.metadata.stderror == stderror(fit_se)
+        @test occursin("±", sprint(show, MIME"text/plain"(), fit_se))
+
+        # with_standard_errors is the composable equivalent on an existing fit.
+        wse = with_standard_errors(fit)
+        @test wse.metadata.stderror == stderror(fit)
+        @test occursin("±", sprint(show, MIME"text/plain"(), wse))
+        @test !occursin("±", sprint(show, MIME"text/plain"(), fit))  # original unchanged
+    end
+
     @testset "HutchSLQ requires an explicit opt-in" begin
         hutch = gmrf_mle(df;
             solver=HutchSLQ(logdet_probes=6, lanczos_iters=10, optim_iters=20, cg_maxiter=200),

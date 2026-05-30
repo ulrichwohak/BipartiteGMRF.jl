@@ -4,6 +4,7 @@ function solve(
     decompose::Union{Bool,Nothing,Int}=nothing,
     fix_rho::Union{Nothing,Float64}=nothing,
     seed::Int=42,
+    compute_se::Bool=false,
     verbose::Bool=false,
 )
     fit = optimize_problem(problem, solver; fix_rho=fix_rho, seed=seed, verbose=verbose)
@@ -37,5 +38,6 @@ function solve(
             result.metadata,
         )
     end
+    compute_se && (result = with_standard_errors(result; seed=seed))
     return result
 end

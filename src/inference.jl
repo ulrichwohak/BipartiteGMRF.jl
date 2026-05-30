@@ -231,10 +231,35 @@ function confint(
     return _named_over_params(names, intervals)
 end
 
+"""
+    with_standard_errors(result::GMRFResult; seed=nothing)
+
+Return a copy of `result` with its standard errors computed once and cached in
+`metadata.stderror`, so `show` can display them without recomputing a Hessian.
+This is what the `compute_se=true` option of [`gmrf_mle`](@ref) and `solve`
+calls after fitting. For `HutchSLQ` the SEs are stochastic (see
+[`observed_information`](@ref)); the cached values use the fit `seed` unless
+overridden.
+"""
+function with_standard_errors(result::GMRFResult; seed::Union{Nothing,Int}=nothing)
+    se = stderror(result; compute_se=true, seed=seed)
+    return GMRFResult(
+        result.rho, result.sigma_a, result.sigma_z, result.sigma_epsilon,
+        result.rho_eps, result.nll, result.converged, result.iterations,
+        result.obj_evals, result.optimization_time, result.prior_decomposition,
+        result.posterior_decomposition, result.problem, result.prior, result.solver,
+        result.theta_unconstrained, merge(result.metadata, (stderror = se,)),
+    )
+end
+
 # Cached standard errors for display. This intentionally does not compute a
 # Hessian, so `show` stays cheap and side-effect free.
 function _display_stderror(result::GMRFResult)
     return get(result.metadata, :stderror, nothing)
 end
 
-_format_estimate(value, se) = se === nothing ? string(value) : string(value, " ± ", se)
+# Compact, regression-table-friendly rendering of `estimate ± se`.
+function _format_estimate(value, se)
+    se === nothing && return string(value)
+    return string(round(value; sigdigits=5), " ± ", round(se; sigdigits=3))
+end
