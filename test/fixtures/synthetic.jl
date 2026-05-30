@@ -70,6 +70,8 @@ function simulate_gmrf_panel(
     reps::Int=5,
     truth=(rho=0.45, sigma_a=0.8, sigma_z=0.5, sigma_epsilon=0.25),
 )
+    rho_eps = haskey(pairs(truth), :rho_eps) ? Float64(truth.rho_eps) : 0.0
+    0.0 <= rho_eps < 1.0 || throw(ArgumentError("rho_eps must satisfy 0 <= rho_eps < 1."))
     rng = MersenneTwister(seed)
     edges = connected_random_edges(rng, n_firms, n_workers, n_edges)
     firm_id = Int[]
@@ -86,10 +88,17 @@ function simulate_gmrf_panel(
     Q = BipartiteGMRF.precision_matrix(problem, truth.rho, truth.sigma_a, truth.sigma_z)
     L = cholesky(Symmetric(Matrix(Q))).L
     theta = transpose(L) \ randn(rng, n_firms + n_workers)
+    edge_shock = Dict{Tuple{Int,Int},Float64}()
+    if rho_eps > 0
+        for (firm, worker) in edges
+            edge_shock[(firm, 1000 + worker)] = truth.sigma_epsilon * sqrt(rho_eps) * randn(rng)
+        end
+    end
     y = [
         theta[problem.firm_to_index[firm_id[k]]] +
         theta[problem.N_firms + problem.worker_to_index[worker_id[k]]] +
-        truth.sigma_epsilon * randn(rng)
+        get(edge_shock, (firm_id[k], worker_id[k]), 0.0) +
+        truth.sigma_epsilon * sqrt(1.0 - rho_eps) * randn(rng)
         for k in eachindex(firm_id)
     ]
     return DataFrame(firm_id=firm_id, worker_id=worker_id, y=y), truth

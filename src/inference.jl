@@ -50,6 +50,10 @@ function _free_objective(result::GMRFResult; seed::Int=42)
     end
 end
 
+function _inference_seed(result::GMRFResult, seed::Union{Nothing,Int})
+    return seed === nothing ? get(result.metadata, :seed, 42) : seed
+end
+
 # Diagonal delta-method Jacobian factor d(natural, original units)/d(free
 # unconstrained), aligned with `_free_names`. The transforms are elementwise, so
 # the Jacobian is diagonal and each factor depends only on its own parameter.
@@ -85,8 +89,9 @@ end
 # Numerical Hessian of the NLL with respect to the estimated free parameters,
 # with the HutchSLQ stochastic-noise opt-in gate. Returns the symmetrized
 # Hessian and the fitted free-parameter vector.
-function _free_hessian(result::GMRFResult; compute_se::Bool, seed::Int)
+function _free_hessian(result::GMRFResult; compute_se::Bool, seed::Union{Nothing,Int})
     solver = result.solver
+    hutch_seed = _inference_seed(result, seed)
     if solver isa HutchSLQ
         compute_se || throw(ArgumentError(
             "Standard errors for HutchSLQ derive from a numerical Hessian of a " *
@@ -94,9 +99,9 @@ function _free_hessian(result::GMRFResult; compute_se::Bool, seed::Int)
             "`compute_se=true` to opt in (consider averaging across seeds), or " *
             "refit with ExactCholesky for deterministic standard errors."))
         @warn "HutchSLQ standard errors use a numerical Hessian of a stochastic " *
-              "likelihood; values are noisy and depend on `seed`." seed
+              "likelihood; values are noisy and depend on `seed`." seed=hutch_seed
     end
-    obj = _free_objective(result; seed=seed)
+    obj = _free_objective(result; seed=hutch_seed)
     pfree = _free_point(result)
     H = finite_difference_hessian(obj, pfree)
     return 0.5 .* (H .+ transpose(H)), pfree
@@ -132,7 +137,7 @@ function _stderror_from(result::GMRFResult, Vfree::AbstractMatrix)
 end
 
 """
-    observed_information(result::GMRFResult; compute_se=false, seed=42)
+    observed_information(result::GMRFResult; compute_se=false, seed=nothing)
 
 Observed Fisher information at the fitted parameters: the numerical Hessian of
 the negative log-likelihood with respect to the estimated *unconstrained*
@@ -140,16 +145,17 @@ parameters (the ones actually optimized). Rows/columns follow the order rho (if
 estimated), `sigma_a`, `sigma_z`, `sigma_epsilon`, `rho_eps` (if estimated).
 
 For `HutchSLQ` the likelihood is stochastic, so the Hessian is noisy; pass
-`compute_se=true` to opt in. `seed` controls the SLQ probes for `HutchSLQ` and
-is ignored for `ExactCholesky`.
+`compute_se=true` to opt in. `seed` controls the SLQ probes for `HutchSLQ`;
+when omitted, the seed used to fit the result is reused. It is ignored for
+`ExactCholesky`.
 """
-function observed_information(result::GMRFResult; compute_se::Bool=false, seed::Int=42)
+function observed_information(result::GMRFResult; compute_se::Bool=false, seed::Union{Nothing,Int}=nothing)
     H, _ = _free_hessian(result; compute_se=compute_se, seed=seed)
     return H
 end
 
 """
-    vcov(result::GMRFResult; compute_se=false, seed=42)
+    vcov(result::GMRFResult; compute_se=false, seed=nothing)
 
 Covariance matrix of the estimator for the natural parameters in original
 outcome units, obtained by a delta-method transform of the inverse observed
@@ -158,7 +164,7 @@ information. Rows/columns follow the order rho (if estimated), `sigma_a`,
 
 See [`observed_information`](@ref) for the `compute_se`/`seed` semantics.
 """
-function vcov(result::GMRFResult; compute_se::Bool=false, seed::Int=42)
+function vcov(result::GMRFResult; compute_se::Bool=false, seed::Union{Nothing,Int}=nothing)
     H, _ = _free_hessian(result; compute_se=compute_se, seed=seed)
     Vfree = _free_cov(H)
     _, jac = _free_jacobian(result)
@@ -170,7 +176,7 @@ function vcov(result::GMRFResult; compute_se::Bool=false, seed::Int=42)
 end
 
 """
-    stderror(result::GMRFResult; compute_se=false, seed=42)
+    stderror(result::GMRFResult; compute_se=false, seed=nothing)
 
 Standard errors for the fitted parameters in original outcome units, returned as
 a named tuple mirroring [`coef`](@ref): `rho`, `sigma_a`, `sigma_z`,
@@ -179,13 +185,13 @@ a named tuple mirroring [`coef`](@ref): `rho`, `sigma_a`, `sigma_z`,
 
 See [`observed_information`](@ref) for the `compute_se`/`seed` semantics.
 """
-function stderror(result::GMRFResult; compute_se::Bool=false, seed::Int=42)
+function stderror(result::GMRFResult; compute_se::Bool=false, seed::Union{Nothing,Int}=nothing)
     H, _ = _free_hessian(result; compute_se=compute_se, seed=seed)
     return _stderror_from(result, _free_cov(H))
 end
 
 """
-    confint(result::GMRFResult; level=0.95, compute_se=false, seed=42)
+    confint(result::GMRFResult; level=0.95, compute_se=false, seed=nothing)
 
 Wald confidence intervals for the fitted parameters, returned as a named tuple
 mirroring [`coef`](@ref) where each estimated entry is an `(lower, upper)`
@@ -196,7 +202,12 @@ parameters are `nothing`. Extends `StatsAPI.confint`.
 
 See [`observed_information`](@ref) for the `compute_se`/`seed` semantics.
 """
-function confint(result::GMRFResult; level::Real=0.95, compute_se::Bool=false, seed::Int=42)
+function confint(
+    result::GMRFResult;
+    level::Real=0.95,
+    compute_se::Bool=false,
+    seed::Union{Nothing,Int}=nothing,
+)
     0.0 < level < 1.0 || throw(ArgumentError("level must lie in (0, 1); got $(level)."))
     H, pfree = _free_hessian(result; compute_se=compute_se, seed=seed)
     Vfree = _free_cov(H)
@@ -220,16 +231,10 @@ function confint(result::GMRFResult; level::Real=0.95, compute_se::Bool=false, s
     return _named_over_params(names, intervals)
 end
 
-# Best-effort standard errors for display; never throws and skips the stochastic
-# HutchSLQ path so that `show` stays cheap and side-effect free.
+# Cached standard errors for display. This intentionally does not compute a
+# Hessian, so `show` stays cheap and side-effect free.
 function _display_stderror(result::GMRFResult)
-    result.solver isa ExactCholesky || return nothing
-    return try
-        H, _ = _free_hessian(result; compute_se=false, seed=42)
-        _stderror_from(result, _free_cov(H; warn=false))
-    catch
-        nothing
-    end
+    return get(result.metadata, :stderror, nothing)
 end
 
 _format_estimate(value, se) = se === nothing ? string(value) : string(value, " ± ", se)

@@ -72,18 +72,26 @@
     end
 
     @testset "estimated rho_eps extends the parameter vector" begin
-        # The synthetic panel has i.i.d. residuals (true rho_eps = 0, a boundary),
-        # so SEs for rho_eps are not well-defined here; assert only the parameter
-        # bookkeeping (the rho_eps column/slot is present) and the SE shape.
-        eff = gmrf_mle(df; solver=ExactCholesky(optim_iters=120, polish=true),
+        df_corr, _ = simulate_gmrf_panel(202;
+            n_firms=45,
+            n_workers=45,
+            n_edges=260,
+            reps=5,
+            truth=(rho=0.35, sigma_a=0.8, sigma_z=0.5, sigma_epsilon=0.25, rho_eps=0.4),
+        )
+        eff = gmrf_mle(df_corr; solver=ExactCholesky(optim_iters=150, polish=true),
             weighting=Weighting(observations=:effective, rho_eps=:estimate),
             decompose=false, seed=1)
-        @test size(vcov(eff)) == (5, 5)
-        @test stderror(eff).rho_eps !== nothing
+        Veff = vcov(eff)
+        seeff = stderror(eff)
+        @test size(Veff) == (5, 5)
+        @test all(isfinite, diag(Veff))
+        @test seeff.rho_eps isa Float64
+        @test isfinite(seeff.rho_eps) && seeff.rho_eps > 0
     end
 
-    @testset "show includes SE annotations for ExactCholesky" begin
-        @test occursin("±", sprint(show, MIME"text/plain"(), fit))
+    @testset "show stays cheap by default" begin
+        @test !occursin("±", sprint(show, MIME"text/plain"(), fit))
     end
 
     @testset "HutchSLQ requires an explicit opt-in" begin
@@ -96,7 +104,47 @@
         @test_logs (:warn,) match_mode = :any (se_h = stderror(hutch; compute_se=true))
         @test se_h isa NamedTuple
         @test keys(se_h) == (:rho, :sigma_a, :sigma_z, :sigma_epsilon, :rho_eps)
-        # HutchSLQ show stays cheap: no SEs computed, so no annotation.
+        local H_default, H_fitseed
+        @test_logs (:warn,) match_mode = :any (H_default = observed_information(hutch; compute_se=true))
+        @test_logs (:warn,) match_mode = :any (H_fitseed = observed_information(hutch; compute_se=true, seed=1))
+        @test H_default == H_fitseed
+        # show stays cheap: no SEs computed, so no annotation.
         @test !occursin("±", sprint(show, MIME"text/plain"(), hutch))
+    end
+
+    @testset "confidence intervals attain nominal coverage" begin
+        # Monte-Carlo coverage over a contiguous seed range (no cherry-picking):
+        # 95% Wald intervals should cover each truth close to 95% of the time.
+        # Empirically ~0.96 aggregate; the bounds below are loose enough to
+        # absorb Monte-Carlo and cross-platform noise yet catch gross
+        # miscalibration (e.g. systematically wrong intervals).
+        params = (:rho, :sigma_a, :sigma_z, :sigma_epsilon)
+        covered, nvalid = let
+            truth = (rho=0.4, sigma_a=0.8, sigma_z=0.5, sigma_epsilon=0.3)
+            counts = Dict(p => 0 for p in params)
+            nv = 0
+            for s in 1:30
+                df_s, tr = simulate_gmrf_panel(s; n_firms=50, n_workers=50,
+                    n_edges=320, reps=4, truth=truth)
+                fit_s = gmrf_mle(df_s; solver=ExactCholesky(optim_iters=180, polish=true),
+                    decompose=false, seed=s)
+                se_s = stderror(fit_s)
+                all(isfinite, (se_s.rho, se_s.sigma_a, se_s.sigma_z, se_s.sigma_epsilon)) ||
+                    continue
+                ci_s = confint(fit_s; level=0.95)
+                nv += 1
+                for p in params
+                    lo, hi = getfield(ci_s, p)
+                    lo <= getfield(tr, p) <= hi && (counts[p] += 1)
+                end
+            end
+            (counts, nv)
+        end
+
+        @test nvalid >= 27                                # most fits well-conditioned
+        for p in params
+            @test covered[p] / nvalid >= 0.70             # per-parameter floor
+        end
+        @test sum(covered[p] for p in params) / (4 * nvalid) >= 0.85  # aggregate near nominal
     end
 end
