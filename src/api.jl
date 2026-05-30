@@ -97,15 +97,20 @@ function Base.show(io::IO, result::GMRFResult)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
+    se = _display_stderror(result)
+    se_of(name) = se === nothing ? nothing : getfield(se, name)
+    rho_fixed = get(result.metadata, :fix_rho, nothing) !== nothing
     println(io, "GMRFResult")
     println(io, "  converged: ", result.converged)
     println(io, "  nll: ", result.nll)
     println(io, "  parameters:")
-    println(io, "    rho: ", result.rho)
-    println(io, "    sigma_a: ", result.sigma_a)
-    println(io, "    sigma_z: ", result.sigma_z)
-    println(io, "    sigma_epsilon: ", result.sigma_epsilon)
-    result.rho_eps !== nothing && println(io, "    rho_eps: ", result.rho_eps)
+    println(io, "    rho: ", rho_fixed ? string(result.rho, " (fixed)") :
+                             _format_estimate(result.rho, se_of(:rho)))
+    println(io, "    sigma_a: ", _format_estimate(result.sigma_a, se_of(:sigma_a)))
+    println(io, "    sigma_z: ", _format_estimate(result.sigma_z, se_of(:sigma_z)))
+    println(io, "    sigma_epsilon: ", _format_estimate(result.sigma_epsilon, se_of(:sigma_epsilon)))
+    result.rho_eps !== nothing &&
+        println(io, "    rho_eps: ", _format_estimate(result.rho_eps, se_of(:rho_eps)))
     println(io, "  model:")
     println(io, "    prior: ", nameof(typeof(result.prior)))
     println(io, "    solver: ", nameof(typeof(result.solver)))

@@ -1,7 +1,7 @@
 module BipartiteGMRF
 
 using DataFrames: DataFrame, combine, groupby, nrow
-using FiniteDiff: finite_difference_gradient!
+using FiniteDiff: finite_difference_gradient!, finite_difference_hessian
 using LinearAlgebra: Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, logdet, mul!, norm
 import Optim:
     LBFGS,
@@ -15,7 +15,7 @@ import Optim:
     optimize
 using Random: MersenneTwister, rand, randn
 using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm
-import StatsAPI: coef, loglikelihood, nobs
+import StatsAPI: coef, loglikelihood, nobs, vcov, stderror, confint
 using Statistics: mean, std
 
 export AbstractGMRFPrior,
@@ -39,6 +39,10 @@ export AbstractGMRFPrior,
     nobs,
     nll,
     converged,
+    observed_information,
+    vcov,
+    stderror,
+    confint,
     prior_decomposition,
     posterior_decomposition,
     prior_covariance,
@@ -61,5 +65,6 @@ include("decomposition/posterior.jl")
 include("covariance/operator.jl")
 include("covariance/extract.jl")
 include("api.jl")
+include("inference.jl")
 
 end
