@@ -257,8 +257,21 @@ function optimize_problem(
         end
     end
 
-    iterations = solver isa ExactCholesky ? solver.optim_iters : solver.optim_iters
-    opts = Options(iterations=iterations, show_trace=verbose, g_tol=1e-3)
+    iterations = solver.optim_iters
+    # HutchSLQ's objective (PCG solve + stochastic log-determinant) is accurate
+    # only to a relative level, so an absolute NelderMead tolerance that suits a
+    # small graph is unreachable on a large one. Scale the tolerance by the
+    # objective magnitude at the start point to make it scale-invariant. The
+    # exact solver has a smooth, deterministic objective and keeps a fixed
+    # absolute tolerance.
+    g_abstol = if solver isa HutchSLQ
+        f0 = obj(p0)
+        fscale = (isfinite(f0) && f0 < BIG_NLL) ? max(1.0, abs(f0)) : 1.0
+        solver.g_reltol * fscale
+    else
+        1e-3
+    end
+    opts = Options(iterations=iterations, show_trace=verbose, g_tol=g_abstol)
     elapsed = @elapsed res = optimize(obj, p0, NelderMead(), opts)
     if solver isa ExactCholesky && solver.polish && solver.autodiff == :finitediff
         p_start = Vector{Float64}(minimizer(res))

@@ -55,3 +55,22 @@
     ps = GMRFProblem(synthetic_df(); prior=SpectralPrior())
     @test_throws ArgumentError solve(ps, ExactCholesky(optim_iters=2); decompose=false)
 end
+
+@testset "g_reltol convergence tolerance" begin
+    @test HutchSLQ().g_reltol == 1e-7
+    @test HutchSLQ(g_reltol=1e-4).g_reltol == 1e-4
+    @test_throws ArgumentError HutchSLQ(g_reltol=0.0)
+    @test_throws ArgumentError HutchSLQ(g_reltol=-1.0)
+
+    # The relative tolerance scales the simplex-spread stopping rule by the
+    # objective magnitude, so a looser tolerance must converge no later than a
+    # tighter one on the same seeded problem; both converge within budget.
+    base = (logdet_probes=8, lanczos_iters=10, optim_iters=500, cg_maxiter=200)
+    tight = gmrf_mle(synthetic_df(); solver=HutchSLQ(; base..., g_reltol=1e-7),
+                     decompose=false, seed=1, verbose=false)
+    loose = gmrf_mle(synthetic_df(); solver=HutchSLQ(; base..., g_reltol=1e-2),
+                     decompose=false, seed=1, verbose=false)
+    @test tight.converged
+    @test loose.converged
+    @test loose.iterations <= tight.iterations
+end
