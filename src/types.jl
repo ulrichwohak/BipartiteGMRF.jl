@@ -245,13 +245,22 @@ Base.getproperty(p::GMRFProblem, ::Val{name}) where {name} = getfield(p, name)
 
 """
     HutchSLQ(; logdet_probes=30, lanczos_iters=30, cg_tol=1e-6,
-             cg_maxiter=700, optim_iters=1000)
+             cg_maxiter=700, optim_iters=1000, g_reltol=1e-7)
 
 Matrix-free stochastic solver using Hutchinson stochastic Lanczos quadrature
 for log determinants and preconditioned conjugate gradients for linear solves.
 
 Use this solver when sparse direct factorization is too memory intensive.
 Pass `seed` to `solve` or `gmrf_mle` for reproducible stochastic paths.
+
+`g_reltol` is a *relative* Nelder-Mead convergence tolerance: the optimizer
+stops once the simplex-objective spread falls below `g_reltol * max(1, |nll₀|)`,
+where `nll₀` is the objective at the starting point. A relative tolerance is
+scale-invariant across problem sizes, which matters here because the SLQ/PCG
+objective is accurate only to a relative level (set by `cg_tol` and the
+stochastic log-determinant). An absolute tolerance tight enough for a small
+graph is unreachable on a large one and forces the optimizer to exhaust
+`optim_iters` without converging.
 """
 struct HutchSLQ <: AbstractGMRFSolver
     logdet_probes::Int
@@ -259,19 +268,22 @@ struct HutchSLQ <: AbstractGMRFSolver
     cg_tol::Float64
     cg_maxiter::Int
     optim_iters::Int
+    g_reltol::Float64
     function HutchSLQ(;
         logdet_probes::Int=30,
         lanczos_iters::Int=30,
         cg_tol::Float64=1e-6,
         cg_maxiter::Int=700,
         optim_iters::Int=1000,
+        g_reltol::Float64=1e-7,
     )
         logdet_probes > 0 || throw(ArgumentError("logdet_probes must be positive."))
         lanczos_iters > 0 || throw(ArgumentError("lanczos_iters must be positive."))
         cg_tol > 0 || throw(ArgumentError("cg_tol must be positive."))
         cg_maxiter > 0 || throw(ArgumentError("cg_maxiter must be positive."))
         optim_iters > 0 || throw(ArgumentError("optim_iters must be positive."))
-        new(logdet_probes, lanczos_iters, cg_tol, cg_maxiter, optim_iters)
+        g_reltol > 0 || throw(ArgumentError("g_reltol must be positive."))
+        new(logdet_probes, lanczos_iters, cg_tol, cg_maxiter, optim_iters, g_reltol)
     end
 end
 
