@@ -34,6 +34,20 @@ function fitted_exact(; decompose=false)
     )
 end
 
+# Acyclic firm-worker graph (a caterpillar path: f1-w1-f2-w2-...-f_n-w_n), used
+# to exercise the VarianceStablePrior + ExactCholesky path, which is only valid
+# on forests.
+function tree_df(; n=12, seed=11)
+    rng = MersenneTwister(seed)
+    firm = Int[]
+    worker = Int[]
+    for i in 1:n
+        push!(firm, i); push!(worker, i)                 # f_i — w_i
+        i < n && (push!(firm, i + 1); push!(worker, i))  # w_i — f_{i+1}
+    end
+    return DataFrame(firm_id = firm, worker_id = worker, y = randn(rng, length(firm)))
+end
+
 function connected_random_edges(rng::AbstractRNG, n_firms::Int, n_workers::Int, n_edges::Int)
     edges = Set{Tuple{Int,Int}}()
     for firm in 1:n_firms

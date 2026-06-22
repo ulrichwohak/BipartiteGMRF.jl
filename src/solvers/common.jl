@@ -2,8 +2,13 @@ function validate_capability(problem::GMRFProblem, solver::AbstractGMRFSolver)
     if problem.prior isa VarianceStablePrior
         problem.weighting.observations == :raw ||
             throw(ArgumentError("VarianceStablePrior currently supports only raw observation weighting."))
-        solver isa ExactCholesky &&
-            throw(ArgumentError("ExactCholesky for VarianceStablePrior is not implemented; use HutchSLQ."))
+        # ExactCholesky is exact and cheap on acyclic graphs (no Cholesky
+        # fill-in) and avoids the HutchSLQ log-det cancellation that corrupts the
+        # VS objective at small sigma_z (see issue #82). On cyclic graphs the VS
+        # precision can be indefinite and fill-in is heavy, so keep HutchSLQ.
+        if solver isa ExactCholesky && !is_forest(problem.A_prior)
+            throw(ArgumentError("ExactCholesky for VarianceStablePrior is only supported on acyclic (forest) graphs; this graph has cycles — use HutchSLQ."))
+        end
     end
     if problem.prior isa SpectralPrior && solver isa ExactCholesky
         throw(ArgumentError("ExactCholesky for SpectralPrior is not implemented; use HutchSLQ."))

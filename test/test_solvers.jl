@@ -74,3 +74,27 @@ end
     @test loose.converged
     @test loose.iterations <= tight.iterations
 end
+
+@testset "VS + ExactCholesky on acyclic graphs (issue #82)" begin
+    # Forest (caterpillar path): ExactCholesky is now allowed for the VS prior;
+    # exact log-dets sidestep the HutchSLQ small-sigma_z cancellation.
+    ptree = GMRFProblem(tree_df(); prior=VarianceStablePrior(),
+                        weighting=Weighting(observations=:raw))
+    @test BipartiteGMRF.is_forest(ptree.A_prior)
+    res = solve(ptree, ExactCholesky(optim_iters=200, polish=true); decompose=false, seed=1)
+    @test res.converged
+    @test isfinite(res.nll)
+    @test isfinite(res.rho)
+    @test res.sigma_a > 0 && res.sigma_z > 0 && res.sigma_epsilon > 0
+
+    # Cyclic graph: ExactCholesky stays blocked (raw weighting, so this exercises
+    # the is_forest gate, not the weighting check), pointing users to HutchSLQ.
+    pcyc = @test_warn "contains a cycle" GMRFProblem(synthetic_df();
+        prior=VarianceStablePrior(), weighting=Weighting(observations=:raw))
+    @test !BipartiteGMRF.is_forest(pcyc.A_prior)
+    @test_throws ArgumentError solve(pcyc, ExactCholesky(optim_iters=10); decompose=false)
+    # HutchSLQ remains available on cyclic graphs.
+    resh = solve(pcyc, HutchSLQ(logdet_probes=4, lanczos_iters=6, optim_iters=10, cg_maxiter=50);
+                 decompose=false, seed=1)
+    @test isfinite(resh.nll)
+end
