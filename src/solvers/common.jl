@@ -284,7 +284,12 @@ function optimize_problem(
             end
             return F === nothing ? nothing : obj(x)
         end
-        polish_opts = Options(iterations=solver.optim_iters, show_trace=verbose)
+        # Stop the polish when the objective stops improving (relative change <
+        # g_reltol), not only on the default g_abstol=1e-8: the finite-difference
+        # gradient floors well above 1e-8 on large problems, so g_abstol is
+        # unreachable and LBFGS would otherwise grind to the iteration cap (#86).
+        polish_opts = Options(iterations=solver.optim_iters, show_trace=verbose,
+                              f_reltol=solver.g_reltol)
         polish_elapsed = @elapsed begin
             polished = try
                 optimize(only_fg!(fg!), p_start, LBFGS(), polish_opts)
