@@ -61,6 +61,12 @@ end
     @test HutchSLQ(g_reltol=1e-4).g_reltol == 1e-4
     @test_throws ArgumentError HutchSLQ(g_reltol=0.0)
     @test_throws ArgumentError HutchSLQ(g_reltol=-1.0)
+    # ExactCholesky also carries g_reltol; its effective tolerance is
+    # max(1e-3, g_reltol*|nll0|), so small-problem behaviour is unchanged.
+    @test ExactCholesky().g_reltol == 1e-7
+    @test ExactCholesky(g_reltol=1e-5).g_reltol == 1e-5
+    @test_throws ArgumentError ExactCholesky(g_reltol=0.0)
+    @test_throws ArgumentError ExactCholesky(g_reltol=-1.0)
 
     # The relative tolerance scales the simplex-spread stopping rule by the
     # objective magnitude, so a looser tolerance must converge no later than a

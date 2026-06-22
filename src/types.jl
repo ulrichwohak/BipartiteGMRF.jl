@@ -290,23 +290,32 @@ struct HutchSLQ <: AbstractGMRFSolver
 end
 
 """
-    ExactCholesky(; optim_iters=200, polish=true, autodiff=:finitediff)
+    ExactCholesky(; optim_iters=200, polish=true, autodiff=:finitediff, g_reltol=1e-7)
 
 Deterministic solver based on sparse Cholesky factorizations.
 
 This solver is suitable for small and medium graphs where CHOLMOD fill-in is
 manageable. When `polish=true`, a finite-difference L-BFGS polishing pass is
 attempted after the initial Nelder-Mead optimization.
+
+`g_reltol` scales the Nelder-Mead convergence tolerance by the objective
+magnitude at the start point, with a `1e-3` absolute floor:
+`g_tol = max(1e-3, g_reltol * max(1, |nll0|))`. The floor keeps small-problem
+behaviour fixed; the relative term loosens the tolerance on large problems
+(where an absolute `1e-3` on the simplex-objective spread is unreachable).
 """
 struct ExactCholesky <: AbstractGMRFSolver
     optim_iters::Int
     polish::Bool
     autodiff::Symbol
-    function ExactCholesky(; optim_iters::Int=200, polish::Bool=true, autodiff::Symbol=:finitediff)
+    g_reltol::Float64
+    function ExactCholesky(; optim_iters::Int=200, polish::Bool=true,
+                           autodiff::Symbol=:finitediff, g_reltol::Float64=1e-7)
         optim_iters > 0 || throw(ArgumentError("optim_iters must be positive."))
         autodiff in (:finitediff, :none) ||
             throw(ArgumentError("ExactCholesky supports autodiff=:finitediff or :none; got $(autodiff)."))
-        new(optim_iters, polish, autodiff)
+        g_reltol > 0 || throw(ArgumentError("g_reltol must be positive."))
+        new(optim_iters, polish, autodiff, g_reltol)
     end
 end
 

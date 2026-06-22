@@ -1,6 +1,6 @@
 # Solvers
 
-- `ExactCholesky(; optim_iters=200, polish=true, autodiff=:finitediff)`
+- `ExactCholesky(; optim_iters=200, polish=true, autodiff=:finitediff, g_reltol=1e-7)`
 - `HutchSLQ(; logdet_probes=30, lanczos_iters=30, cg_tol=1e-6,
   cg_maxiter=700, optim_iters=1000, g_reltol=1e-7)`
 
@@ -18,5 +18,7 @@ tolerance is scale-invariant, so the same setting converges on both small and
 very large graphs. The stochastic SLQ/PCG objective is accurate only to a
 relative level, so an absolute tolerance tight enough for a small graph is
 unreachable on a large one and would force the optimizer to exhaust
-`optim_iters` without converging. `ExactCholesky`'s deterministic objective
-converges reliably at a fixed absolute tolerance and needs no such scaling.
+`optim_iters` without converging. `ExactCholesky` uses the same `g_reltol` but
+with a `1e-3` absolute floor — `g_tol = max(1e-3, g_reltol * max(1, |nll₀|))` —
+so its small/medium-graph behaviour is unchanged while large exact problems
+still converge promptly.
