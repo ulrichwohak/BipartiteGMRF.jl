@@ -263,19 +263,17 @@ function optimize_problem(
     end
 
     iterations = solver.optim_iters
-    # HutchSLQ's objective (PCG solve + stochastic log-determinant) is accurate
-    # only to a relative level, so an absolute NelderMead tolerance that suits a
-    # small graph is unreachable on a large one. Scale the tolerance by the
-    # objective magnitude at the start point to make it scale-invariant. The
-    # exact solver has a smooth, deterministic objective and keeps a fixed
-    # absolute tolerance.
-    g_abstol = if solver isa HutchSLQ
-        f0 = obj(p0)
-        fscale = (isfinite(f0) && f0 < BIG_NLL) ? max(1.0, abs(f0)) : 1.0
-        solver.g_reltol * fscale
-    else
-        1e-3
-    end
+    # NelderMead's convergence metric is the absolute spread of objective values,
+    # which grows with the problem size (nll scales with the number of
+    # observations), so a fixed absolute tolerance is unreachable on large graphs
+    # (see #80, #84). Scale it by the objective magnitude at the start point.
+    # HutchSLQ uses the pure relative tolerance; ExactCholesky keeps a 1e-3 floor
+    # (its calibrated small-problem behaviour, against which the solver-agreement
+    # tests are tuned) and only loosens above it on large problems.
+    f0 = obj(p0)
+    fscale = (isfinite(f0) && f0 < BIG_NLL) ? max(1.0, abs(f0)) : 1.0
+    g_rel = solver.g_reltol * fscale
+    g_abstol = solver isa ExactCholesky ? max(1e-3, g_rel) : g_rel
     opts = Options(iterations=iterations, show_trace=verbose, g_tol=g_abstol)
     elapsed = @elapsed res = optimize(obj, p0, NelderMead(), opts)
     if solver isa ExactCholesky && solver.polish && solver.autodiff == :finitediff
