@@ -2,13 +2,17 @@ function validate_capability(problem::GMRFProblem, solver::AbstractGMRFSolver)
     if problem.prior isa VarianceStablePrior
         problem.weighting.observations == :raw ||
             throw(ArgumentError("VarianceStablePrior currently supports only raw observation weighting."))
-        # ExactCholesky is exact and cheap on acyclic graphs (no Cholesky
-        # fill-in) and avoids the HutchSLQ log-det cancellation that corrupts the
-        # VS objective at small sigma_z (see issue #82). On cyclic graphs the VS
-        # precision can be indefinite and fill-in is heavy, so keep HutchSLQ.
-        if solver isa ExactCholesky && !is_forest(problem.A_prior)
-            throw(ArgumentError("ExactCholesky for VarianceStablePrior is only supported on acyclic (forest) graphs; this graph has cycles — use HutchSLQ."))
-        end
+        # ExactCholesky is exact and cheap on acyclic graphs (no fill-in) and
+        # avoids the HutchSLQ log-det cancellation that corrupts the VS objective at
+        # small sigma_z (see issue #82). It is also permitted on *cyclic* graphs:
+        # the VS precision is positive-definite while |rho| * lambda_NB < 1 (the
+        # caller enforces this via rho_limit), an indefinite precision is rejected
+        # per-evaluation (the cholesky in nll_exact_value returns BIG_NLL on
+        # failure), and fill-in is acceptable on mildly cyclic / NB-pruned graphs.
+        # Cyclic VS input is already warned about at construction (prepare.jl), and
+        # strict_forest=true errors there. An automatic safeguard that sets/checks
+        # rho_limit from lambda_NB is tracked in issues #79 (spectral analysis) and
+        # #78 (graph pruning).
     end
     if problem.prior isa SpectralPrior && solver isa ExactCholesky
         throw(ArgumentError("ExactCholesky for SpectralPrior is not implemented; use HutchSLQ."))

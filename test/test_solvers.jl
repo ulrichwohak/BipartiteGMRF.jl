@@ -50,7 +50,10 @@
         synthetic_df();
         prior=VarianceStablePrior(),
     )
-    @test_throws ArgumentError solve(p, ExactCholesky(optim_iters=2); decompose=false)
+    # VS + ExactCholesky on a cyclic graph is now permitted (was: capability throw);
+    # PD is enforced by the caller via rho_limit < 1/lambda_NB.
+    rvs = solve(p, ExactCholesky(optim_iters=2); decompose=false, seed=1)
+    @test isfinite(rvs.nll)
 
     ps = GMRFProblem(synthetic_df(); prior=SpectralPrior())
     @test_throws ArgumentError solve(ps, ExactCholesky(optim_iters=2); decompose=false)
@@ -93,12 +96,17 @@ end
     @test isfinite(res.rho)
     @test res.sigma_a > 0 && res.sigma_z > 0 && res.sigma_epsilon > 0
 
-    # Cyclic graph: ExactCholesky stays blocked (raw weighting, so this exercises
-    # the is_forest gate, not the weighting check), pointing users to HutchSLQ.
+    # Cyclic graph: construction warns by default (strict_forest=false).
     pcyc = @test_warn "contains a cycle" GMRFProblem(synthetic_df();
         prior=VarianceStablePrior(), weighting=Weighting(observations=:raw))
     @test !BipartiteGMRF.is_forest(pcyc.A_prior)
-    @test_throws ArgumentError solve(pcyc, ExactCholesky(optim_iters=10); decompose=false)
+    # strict_forest=true still errors at construction on a cyclic graph.
+    @test_throws ArgumentError GMRFProblem(synthetic_df();
+        prior=VarianceStablePrior(strict_forest=true), weighting=Weighting(observations=:raw))
+    # ExactCholesky is now permitted on cyclic graphs (PD enforced via rho_limit <
+    # 1/lambda_NB); the old capability throw is gone and the solver returns a result.
+    rce = solve(pcyc, ExactCholesky(optim_iters=10); decompose=false, seed=1)
+    @test isfinite(rce.nll)
     # HutchSLQ remains available on cyclic graphs.
     resh = solve(pcyc, HutchSLQ(logdet_probes=4, lanczos_iters=6, optim_iters=10, cg_maxiter=50);
                  decompose=false, seed=1)
