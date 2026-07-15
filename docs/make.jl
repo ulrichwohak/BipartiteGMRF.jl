@@ -20,6 +20,7 @@ makedocs(;
         "Weighting" => "weighting.md",
         "Covariance" => "covariance.md",
         "Non-Backtracking" => "nonbacktracking.md",
+        "NB-Walk Theory" => "nb_walk_theory.md",
         "Examples" => "examples.md",
         "Performance" => "performance.md",
     ],
