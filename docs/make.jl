@@ -19,6 +19,7 @@ makedocs(;
         "Solvers" => "solvers.md",
         "Weighting" => "weighting.md",
         "Covariance" => "covariance.md",
+        "Non-Backtracking" => "nonbacktracking.md",
         "Examples" => "examples.md",
         "Performance" => "performance.md",
     ],

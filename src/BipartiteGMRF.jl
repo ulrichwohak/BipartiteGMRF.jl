@@ -1,5 +1,6 @@
 module BipartiteGMRF
 
+using ArnoldiMethod: partialeigen, partialschur
 using DataFrames: DataFrame, combine, groupby, nrow
 using FiniteDiff: finite_difference_gradient!
 using LinearAlgebra: Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, logdet, mul!, norm
@@ -14,7 +15,7 @@ import Optim:
     only_fg!,
     optimize
 using Random: MersenneTwister, rand, randn
-using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm
+using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
 import StatsAPI: coef, loglikelihood, nobs
 using Statistics: mean, std
 
@@ -32,6 +33,8 @@ export AbstractGMRFPrior,
     VarianceDecomposition,
     CovarianceOperator,
     CovarianceBlock,
+    NBSpectrum,
+    nb_spectrum,
     gmrf_mle,
     solve,
     coef,
@@ -48,6 +51,8 @@ export AbstractGMRFPrior,
 include("types.jl")
 include("util.jl")
 include("prepare.jl")
+include("nonbacktracking/graph.jl")
+include("nonbacktracking/spectrum.jl")
 include("operators/qop.jl")
 include("operators/qop_vs.jl")
 include("operators/mop.jl")
