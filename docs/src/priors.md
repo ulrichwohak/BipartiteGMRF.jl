@@ -12,12 +12,23 @@ They are intentionally separate from solvers.
   initialization used for spectral normalization.
 - `VarianceStablePrior(; strict_forest=false, rho_limit=0.99)`:
   variance-stable precision model ported as a distinct prior. Cyclic graphs
-  warn by default; with `strict_forest=true` they throw `ArgumentError`.
+  warn by default; with `strict_forest=true` they throw `ArgumentError`. Pass
+  `rho_limit=:auto` to opt into a non-backtracking feasibility limit during
+  problem preparation.
 
 `rho_limit` sets the open interval `(-rho_limit, rho_limit)` used to transform
 and validate the latent firm-worker dependence parameter. The default
 `rho_limit=0.99` preserves the historical numerical optimization bound; it is
 not a model-theoretic restriction.
+
+For an automatic variance-stable limit, forests resolve to `0.99`; cyclic
+graphs resolve to `min(0.99, 0.98 / lambda_nb)`. Preparation always emits an
+information message and records the spectrum, true ceiling, source, and active
+limit in `problem.metadata`. Numeric limits remain explicit expert overrides.
+Call `feasibility(problem)` to audit one; an unsafe limit warns but is not
+changed. Every variance-stable fit reports its limit utilization, and
+`rho_at_bound(result)` identifies a freely estimated `rho` at 98% or more of
+the active limit.
 
 ## Supported Solver Matrix
 

@@ -92,8 +92,11 @@ function Base.show(io::IO, result::GMRFResult)
     print(io,
         "GMRFResult(rho=$(result.rho), sigma_a=$(result.sigma_a), ",
         "sigma_z=$(result.sigma_z), sigma_epsilon=$(result.sigma_epsilon), ",
-        "nll=$(result.nll), converged=$(result.converged))",
+        "nll=$(result.nll), converged=$(result.converged)",
     )
+    result.prior isa VarianceStablePrior &&
+        print(io, ", rho_status=$(get(result.metadata, :rho_status, :unknown))")
+    print(io, ")")
 end
 
 function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
@@ -102,6 +105,11 @@ function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
     println(io, "  nll: ", result.nll)
     println(io, "  parameters:")
     println(io, "    rho: ", result.rho)
+    if result.prior isa VarianceStablePrior
+        println(io, "    rho limit: ", rho_limit(result.prior))
+        println(io, "    rho utilization: ", get(result.metadata, :rho_utilization, NaN))
+        println(io, "    rho status: ", get(result.metadata, :rho_status, :unknown))
+    end
     println(io, "    sigma_a: ", result.sigma_a)
     println(io, "    sigma_z: ", result.sigma_z)
     println(io, "    sigma_epsilon: ", result.sigma_epsilon)

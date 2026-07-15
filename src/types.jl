@@ -103,17 +103,38 @@ property applies. It currently supports raw observation weighting only.
 `ExactCholesky()` gives deterministic likelihoods when sparse fill-in is
 manageable; `HutchSLQ()` uses a congruence-scaled, common-probe estimate of the
 log-determinant ratio for numerical stability. Cyclic graphs warn by default;
-set `strict_forest=true` to throw `ArgumentError` instead.
+set `strict_forest=true` to throw `ArgumentError` instead. The default numeric
+`rho_limit=0.99` is unchanged. Pass `rho_limit=:auto` to resolve an opt-in
+non-backtracking feasibility limit while preparing the problem.
 """
-struct VarianceStablePrior <: AbstractGMRFPrior
+struct VarianceStablePrior{L<:Union{Float64,Symbol}} <: AbstractGMRFPrior
     strict_forest::Bool
-    rho_limit::Float64
-    function VarianceStablePrior(; strict_forest::Bool=false, rho_limit::Real=0.99)
-        new(strict_forest, validate_rho_limit(rho_limit))
+    rho_limit::L
+    function VarianceStablePrior(strict_forest::Bool, rho_limit::Float64)
+        return new{Float64}(strict_forest, validate_rho_limit(rho_limit))
+    end
+    function VarianceStablePrior(strict_forest::Bool, rho_limit::Symbol)
+        rho_limit == :auto ||
+            throw(ArgumentError("VarianceStablePrior rho_limit symbol must be :auto; got $(rho_limit)."))
+        return new{Symbol}(strict_forest, rho_limit)
     end
 end
 
+function VarianceStablePrior(;
+    strict_forest::Bool=false,
+    rho_limit::Union{Real,Symbol}=0.99,
+)
+    if rho_limit isa Symbol
+        rho_limit == :auto ||
+            throw(ArgumentError("VarianceStablePrior rho_limit symbol must be :auto; got $(rho_limit)."))
+        return VarianceStablePrior(strict_forest, rho_limit)
+    end
+    return VarianceStablePrior(strict_forest, validate_rho_limit(rho_limit))
+end
+
 rho_limit(prior::AbstractGMRFPrior) = prior.rho_limit
+rho_limit(::VarianceStablePrior{Symbol}) =
+    throw(ArgumentError("rho_limit=:auto must be resolved by constructing a GMRFProblem."))
 
 """
     Weighting(; observations=:raw, rho_eps=nothing, target=:estimation)

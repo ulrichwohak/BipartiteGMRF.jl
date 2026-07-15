@@ -34,7 +34,7 @@ function solve(
         fit.problem.prior,
         solver,
         fit.theta_unconstrained,
-        (fix_rho = fix_rho,),
+        fit_result_metadata(fit.problem, fit.rho, fix_rho),
     )
     probes = decompose === true ? 200 : decompose isa Int ? decompose : 0
     if probes > 0
