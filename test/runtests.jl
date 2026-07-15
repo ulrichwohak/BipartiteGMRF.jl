@@ -9,6 +9,7 @@ include("fixtures/synthetic.jl")
 
 include("test_prepare.jl")
 include("test_nb_spectrum.jl")
+include("test_nb_walk_theory.jl")
 include("test_feasibility.jl")
 include("test_nb_prune.jl")
 include("test_implied_corr.jl")
