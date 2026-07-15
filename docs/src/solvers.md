@@ -8,6 +8,11 @@
 likelihood evaluation and finite-difference polishing. `HutchSLQ()` uses PCG
 and stochastic Lanczos quadrature for larger graphs.
 
+For `VarianceStablePrior`, `HutchSLQ()` evaluates the log-determinant ratio as
+`logdet(B + lambda*S*VtV*S) - logdet(B)`, using identical random probes for both
+terms. This avoids cancellation between sigma-dependent log determinants when
+one latent standard deviation is small.
+
 Both solvers accept `seed` through `gmrf_mle` or `solve` to make stochastic
 paths reproducible.
 

@@ -21,7 +21,8 @@ not a model-theoretic restriction.
 
 ## Supported Solver Matrix
 
-`NormalizedPrior()` and `UnnormalizedPrior()` support `ExactCholesky()` and
-`HutchSLQ()`. `SpectralPrior()` and `VarianceStablePrior()` currently support
-`HutchSLQ()` only. Unsupported combinations throw `ArgumentError` before
-fitting.
+`NormalizedPrior()`, `UnnormalizedPrior()`, and `VarianceStablePrior()` support
+`ExactCholesky()` and `HutchSLQ()`. `SpectralPrior()` supports `HutchSLQ()`
+only. On cyclic variance-stable graphs, direct factorization can incur
+substantial fill-in; choose the solver to match graph size and sparsity.
+Unsupported combinations throw `ArgumentError` before fitting.

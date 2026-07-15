@@ -36,3 +36,43 @@
 
     @test exact_nll ≈ dense_nll atol=1e-8 rtol=1e-8
 end
+
+
+@testset "variance-stable paired HutchSLQ logdet" begin
+    problem = @test_warn "contains a cycle" GMRFProblem(
+        synthetic_df();
+        prior=VarianceStablePrior(),
+        weighting=Weighting(observations=:raw),
+        standardize=false,
+    )
+    solver = HutchSLQ(
+        logdet_probes=4096,
+        lanczos_iters=20,
+        cg_tol=1e-12,
+        cg_maxiter=1000,
+        optim_iters=2,
+    )
+
+    for sigma_z in (0.4, 1e-6)
+        params = [
+            atanh(0.25 / 0.99),
+            log(0.8),
+            log(sigma_z),
+            log(0.4),
+        ]
+        stats = BipartiteGMRF.objective_stats(problem, params)
+        exact_nll = BipartiteGMRF.nll_exact_value(problem, params, stats)
+        cache = BipartiteGMRF.make_hutch_cache(problem, solver)
+        hutch_nll = BipartiteGMRF.nll_hutch_value(
+            problem,
+            solver,
+            params,
+            stats,
+            cache;
+            seed=17,
+        )
+
+        @test isfinite(hutch_nll)
+        @test hutch_nll ≈ exact_nll atol=0.03
+    end
+end

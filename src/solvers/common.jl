@@ -3,8 +3,9 @@ function validate_capability(problem::GMRFProblem, solver::AbstractGMRFSolver)
         problem.weighting.observations == :raw ||
             throw(ArgumentError("VarianceStablePrior currently supports only raw observation weighting."))
         # ExactCholesky is exact and cheap on acyclic graphs (no fill-in) and
-        # avoids the HutchSLQ log-det cancellation that corrupts the VS objective at
-        # small sigma_z (see issue #82). It is also permitted on *cyclic* graphs:
+        # avoids stochastic log-det error when the graph is small. HutchSLQ uses a
+        # congruence-scaled common-probe ratio for the VS objective (issue #82).
+        # ExactCholesky is also permitted on *cyclic* graphs:
         # the VS precision is positive-definite while |rho| * lambda_NB < 1 (the
         # caller enforces this via rho_limit), an indefinite precision is rejected
         # per-evaluation (the cholesky in nll_exact_value returns BIG_NLL on
@@ -165,10 +166,37 @@ mutable struct HutchCache{Q<:Union{QOp,QOpVS}}
     mop::MOp{Q}
 end
 
+mutable struct VSHutchCache
+    dV::Vector{Float64}
+    Mdiag::Vector{Float64}
+    pcg::PCGWorkspace
+    slqB::SLQWorkspace
+    slqK::SLQWorkspace
+    qop::QOpVS
+    mop::MOp{QOpVS}
+    bop::QOpVS
+    kop::ScaledMOp{QOpVS}
+end
+
 function make_hutch_cache(problem::GMRFProblem, solver::HutchSLQ)
     n = problem.N_firms + problem.N_workers
     qop = q_operator(problem, 0.0, 1.0, 1.0)
     mop = MOp(qop, problem.VtV, zeros(n), 1.0)
+    if problem.prior isa VarianceStablePrior
+        bop = make_qop_vs(problem, 0.0, 1.0, 1.0)
+        kop = ScaledMOp(bop, problem.VtV, ones(n), zeros(n), zeros(n), 1.0)
+        return VSHutchCache(
+            Vector{Float64}(diag(problem.VtV)),
+            zeros(n),
+            PCGWorkspace(n),
+            SLQWorkspace(n, solver.lanczos_iters),
+            SLQWorkspace(n, solver.lanczos_iters),
+            qop,
+            mop,
+            bop,
+            kop,
+        )
+    end
     return HutchCache(
         Vector{Float64}(diag(problem.VtV)),
         zeros(n),
@@ -178,6 +206,45 @@ function make_hutch_cache(problem::GMRFProblem, solver::HutchSLQ)
         qop,
         mop,
     )
+end
+
+function hutch_logdet_difference!(
+    cache::HutchCache,
+    solver::HutchSLQ,
+    n::Int,
+    seed::Int,
+    ::NamedTuple,
+    ::Float64,
+)
+    ldQ = slq_logdet_spd_mul_cached!(cache.qop, n, cache.slqQ;
+        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed)
+    ldM = slq_logdet_spd_mul_cached!(cache.mop, n, cache.slqM;
+        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed + 10_000)
+    return ldM - ldQ
+end
+
+function hutch_logdet_difference!(
+    cache::VSHutchCache,
+    solver::HutchSLQ,
+    n::Int,
+    seed::Int,
+    p::NamedTuple,
+    lambda::Float64,
+)
+    set_q_params!(cache.bop, p.rho, 1.0, 1.0)
+    cache.kop.lambda = lambda
+    cache.kop.VtV = cache.mop.VtV
+    nf = cache.bop.n_firms
+    @views fill!(cache.kop.scale[1:nf], p.sigma_a)
+    @views fill!(cache.kop.scale[(nf + 1):n], p.sigma_z)
+
+    # Resetting the local RNG to the same seed gives B and K identical
+    # Rademacher probes, substantially reducing variance in their difference.
+    ldB = slq_logdet_spd_mul_cached!(cache.bop, n, cache.slqB;
+        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed)
+    ldK = slq_logdet_spd_mul_cached!(cache.kop, n, cache.slqK;
+        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed)
+    return ldK - ldB
 end
 
 function set_q_params!(qop::QOp, rho::Float64, sigma_a::Float64, sigma_z::Float64)
@@ -200,7 +267,7 @@ function nll_hutch_value(
     solver::HutchSLQ,
     params_full::Vector{Float64},
     stats,
-    cache::HutchCache;
+    cache::Union{HutchCache,VSHutchCache};
     seed::Int,
 )
     p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
@@ -222,16 +289,13 @@ function nll_hutch_value(
     isfinite(quad) || return BIG_NLL
 
     n = length(stats.projected_y)
-    ldQ = slq_logdet_spd_mul_cached!(cache.qop, n, cache.slqQ;
-        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed)
-    ldM = slq_logdet_spd_mul_cached!(cache.mop, n, cache.slqM;
-        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed + 10_000)
-    isfinite(ldQ) && isfinite(ldM) || return BIG_NLL
+    ld_difference = hutch_logdet_difference!(cache, solver, n, seed, p, lambda)
+    isfinite(ld_difference) || return BIG_NLL
     rcorr = residual_corr_term(problem, p.sigma_epsilon, stats.rho_eps)
     rcorr == BIG_NLL && return BIG_NLL
     val = 0.5 * (
         problem.K * 2.0 * log(p.sigma_epsilon) - Float64(stats.log_weight_sum) +
-        (ldM - ldQ) + lambda * stats.ydot - lambda^2 * quad + rcorr
+        ld_difference + lambda * stats.ydot - lambda^2 * quad + rcorr
     )
     return finite_or_big(val)
 end
