@@ -38,6 +38,9 @@ export AbstractGMRFPrior,
     nb_spectrum,
     feasibility,
     rho_at_bound,
+    NBPruneResult,
+    nb_prune_edges,
+    pruned_dataframe,
     gmrf_mle,
     solve,
     coef,
@@ -56,6 +59,7 @@ include("util.jl")
 include("nonbacktracking/graph.jl")
 include("nonbacktracking/spectrum.jl")
 include("nonbacktracking/feasibility.jl")
+include("nonbacktracking/prune.jl")
 include("prepare.jl")
 include("operators/qop.jl")
 include("operators/qop_vs.jl")
