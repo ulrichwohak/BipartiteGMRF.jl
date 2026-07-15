@@ -21,6 +21,7 @@ makedocs(;
         "Covariance" => "covariance.md",
         "Non-Backtracking" => "nonbacktracking.md",
         "NB-Walk Theory" => "nb_walk_theory.md",
+        "Pruning Correction" => "pruning_correction.md",
         "Examples" => "examples.md",
         "Performance" => "performance.md",
     ],
