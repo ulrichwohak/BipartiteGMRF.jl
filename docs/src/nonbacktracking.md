@@ -43,3 +43,20 @@ reduced = pruned_dataframe(df, prune)
 for one edge. `prune.dropped_edges` reports unique removed edges and
 `prune.audit` records the radius before and after each round. Check
 `prune.target_met` before using the reduced graph.
+
+## Implied Correlations
+
+For a variance-stable problem, `implied_correlations(problem, rho)` factors
+the graph kernel once and obtains exact selected inverse entries with batched
+column solves. By default it includes all core edges and deterministic samples
+from the adjacent and tree strata.
+
+```julia
+diagnostic = implied_correlations(problem, result.rho; seed=12345)
+functional = implied_corr_functional(diagnostic)
+```
+
+The result includes edge correlations, solved-node variance inflation,
+distance-to-core strata, non-backtracking localization scores, and hotspot
+flags. `functional.method` is `:exact` when all unique edges were selected and
+`:stratified` when outside-core samples were population-weighted.

@@ -69,3 +69,11 @@ NBPruneResult
 nb_prune_edges
 pruned_dataframe
 ```
+
+## Implied Correlations
+
+```@docs
+ImpliedCorrResult
+implied_correlations
+implied_corr_functional
+```

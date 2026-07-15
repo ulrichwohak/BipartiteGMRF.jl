@@ -15,7 +15,7 @@ import Optim:
     only_fg!,
     optimize
 using Printf: @sprintf
-using Random: MersenneTwister, rand, randn
+using Random: MersenneTwister, rand, randn, randperm
 using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
 import StatsAPI: coef, loglikelihood, nobs
 using Statistics: mean, std
@@ -41,6 +41,9 @@ export AbstractGMRFPrior,
     NBPruneResult,
     nb_prune_edges,
     pruned_dataframe,
+    ImpliedCorrResult,
+    implied_correlations,
+    implied_corr_functional,
     gmrf_mle,
     solve,
     coef,
@@ -60,6 +63,7 @@ include("nonbacktracking/graph.jl")
 include("nonbacktracking/spectrum.jl")
 include("nonbacktracking/feasibility.jl")
 include("nonbacktracking/prune.jl")
+include("nonbacktracking/implied_corr.jl")
 include("prepare.jl")
 include("operators/qop.jl")
 include("operators/qop_vs.jl")
