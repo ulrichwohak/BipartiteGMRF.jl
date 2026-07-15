@@ -16,6 +16,8 @@ Non-backtracking spectrum diagnostics for a bipartite prior graph.
 vectors use the latent ordering (firms followed by workers). `node_scores` are
 normalized within each 2-core component, `core_component` is zero outside the
 2-core, and `distance_to_core` is `-1` in components without a cycle.
+`eigenvalues` contains at most the requested number of largest-modulus values
+from each component.
 
 If any iterative eigensolve fails, `converged` is false and `lambda_nb` is
 `NaN`; the corresponding component also carries `NaN` scores.
@@ -113,9 +115,11 @@ function nb_arnoldi_component(
         lead = argmax(abs.(values))
         scores = nb_node_scores(@view(vectors[:, lead]), n)
         all(isfinite, values) && all(isfinite, scores) || error("non-finite eigensolution")
+        keep = partialsortperm(abs.(values), 1:min(k, length(values)); rev=true)
+        sort!(keep)
         return (
             lambda_nb=Float64(abs(values[lead])),
-            eigenvalues=ComplexF64.(values),
+            eigenvalues=ComplexF64.(values[keep]),
             node_scores=scores,
             converged=true,
         )
