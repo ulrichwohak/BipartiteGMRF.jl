@@ -52,3 +52,10 @@ prior_covariance
 posterior_covariance
 cov_block
 ```
+
+## Non-Backtracking Diagnostics
+
+```@docs
+NBSpectrum
+nb_spectrum
+```
