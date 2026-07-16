@@ -61,3 +61,11 @@ nb_spectrum
 feasibility
 rho_at_bound
 ```
+
+## Connectivity-Preserving Pruning
+
+```@docs
+NBPruneResult
+nb_prune_edges
+pruned_dataframe
+```
