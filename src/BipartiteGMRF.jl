@@ -3,7 +3,10 @@ module BipartiteGMRF
 using ArnoldiMethod: partialeigen, partialschur
 using DataFrames: DataFrame, combine, groupby, nrow
 using FiniteDiff: finite_difference_gradient!
+import GaussianMarkovRandomFields
+import GaussianMarkovRandomFields: LatentModel, precision_matrix, model_name, hyperparameters, constraints
 using LinearAlgebra: Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, logdet, mul!, norm
+using LinearSolve: CHOLMODFactorization
 import Optim:
     LBFGS,
     NelderMead,
@@ -20,6 +23,7 @@ using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
 import StatsAPI: coef, loglikelihood, nobs
 using Statistics: mean, std
 
+# Existing public API (backward compatible)
 export AbstractGMRFPrior,
     AbstractGMRFSolver,
     NormalizedPrior,
@@ -50,6 +54,15 @@ export AbstractGMRFPrior,
     prior_covariance,
     posterior_covariance,
     cov_block
+
+# New public API (GMRF.jl integration)
+export AbstractBipartiteModel,
+    BipartiteNormalizedModel,
+    BipartiteUnnormalizedModel,
+    BipartiteSpectralModel,
+    BipartiteVarianceStableModel,
+    BipartiteGraph,
+    to_model
 
 include("types.jl")
 include("util.jl")

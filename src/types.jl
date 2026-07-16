@@ -1,20 +1,60 @@
-"""
-Abstract supertype for prior precision models used by `GMRFProblem`.
+# ═══════════════════════════════════════════════════════════════════════════
+# Abstract bipartite model hierarchy
+# ═══════════════════════════════════════════════════════════════════════════
 
-Concrete priors define how the bipartite adjacency matrix enters the latent
-firm/worker precision matrix. Use one of `NormalizedPrior`,
-`UnnormalizedPrior`, `SpectralPrior`, or `VarianceStablePrior`.
+"""
+Abstract supertype for bipartite GMRF latent models.
+
+All bipartite models share a common graph structure (rectangular adjacency
+matrix, firm/worker degrees) and differ in how the precision matrix is
+constructed from hyperparameters `(ρ, σ_a, σ_z)`.
+
+Subtypes implement the GaussianMarkovRandomFields.jl `LatentModel` interface:
+`precision_matrix`, `mean`, `hyperparameters`, `constraints`, `model_name`, `length`.
+"""
+abstract type AbstractBipartiteModel <: LatentModel end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Bipartite graph data
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    BipartiteGraph
+
+Stores the bipartite adjacency matrix and precomputed degree vectors
+shared by all bipartite model types.
+"""
+struct BipartiteGraph
+    A::SparseMatrixCSC{Float64,Int}        # n_firms × n_workers adjacency
+    At::SparseMatrixCSC{Float64,Int}       # transpose
+    d_f::Vector{Float64}                   # firm degrees
+    d_w::Vector{Float64}                   # worker degrees
+    n_firms::Int
+    n_workers::Int
+end
+
+function BipartiteGraph(A::SparseMatrixCSC{Float64,Int})
+    n_firms, n_workers = size(A)
+    At = copy(transpose(A))
+    d_f = vec(sum(A; dims=2))
+    d_w = vec(sum(A; dims=1))
+    any(d_f .<= 0) && throw(ArgumentError("Zero-degree firm node detected."))
+    any(d_w .<= 0) && throw(ArgumentError("Zero-degree worker node detected."))
+    return BipartiteGraph(A, At, Float64.(d_f), Float64.(d_w), n_firms, n_workers)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Model specification types (lightweight, no graph data)
+#
+# These are the user-facing API for specifying which model to use. They
+# are passed to gmrf_mle() / GMRFProblem() and resolved into full
+# AbstractBipartiteModel subtypes by prepare.jl once the adjacency is known.
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+Abstract supertype for model specifications passed to `gmrf_mle` / `GMRFProblem`.
 """
 abstract type AbstractGMRFPrior end
-
-"""
-Abstract supertype for marginal-likelihood solvers.
-
-Concrete solvers control how log determinants, quadratic forms, and optimizer
-steps are evaluated. Use `ExactCholesky()` for sparse direct factorization or
-`HutchSLQ()` for matrix-free stochastic evaluation.
-"""
-abstract type AbstractGMRFSolver end
 
 function validate_rho_limit(rho_limit::Real)
     limit = Float64(rho_limit)
@@ -26,12 +66,7 @@ end
 """
     NormalizedPrior(; adjacency=:degree, prior_adjacency=:binary, rho_limit=0.99)
 
-Degree-normalized bipartite GMRF prior.
-
-`prior_adjacency` controls whether the prior graph is binary (`:binary`) or
-uses observed edge counts (`:counts`). This prior supports both
-`ExactCholesky()` and `HutchSLQ()`. `rho_limit` is the open bound used to
-transform and validate the latent firm-worker dependence parameter.
+Degree-normalized bipartite GMRF model specification.
 """
 struct NormalizedPrior <: AbstractGMRFPrior
     adjacency::Symbol
@@ -53,11 +88,7 @@ end
 """
     UnnormalizedPrior(; prior_adjacency=:binary, rho_limit=0.99)
 
-Unnormalized `D - rho*A` precision model.
-
-This prior matches the paper-style degree matrix scaling and supports both
-`ExactCholesky()` and `HutchSLQ()`. `rho_limit` is the open bound used to
-transform and validate the latent firm-worker dependence parameter.
+Unnormalized `D - ρA` model specification.
 """
 struct UnnormalizedPrior <: AbstractGMRFPrior
     prior_adjacency::Symbol
@@ -72,11 +103,7 @@ end
 """
     SpectralPrior(; prior_adjacency=:binary, seed=12345, rho_limit=0.99)
 
-Spectral-normalized adjacency prior.
-
-The bipartite adjacency is scaled by its leading singular value before entering
-the precision matrix. `seed` controls the power-iteration initialization used
-for spectral normalization. This prior currently supports `HutchSLQ()` only.
+Spectral-normalized model specification.
 """
 struct SpectralPrior <: AbstractGMRFPrior
     prior_adjacency::Symbol
@@ -96,16 +123,7 @@ end
 """
     VarianceStablePrior(; strict_forest=false, rho_limit=0.99)
 
-Variance-stable precision model for bipartite graphs.
-
-This prior is intended for forest-like graphs where its marginal-variance
-property applies. It currently supports raw observation weighting only.
-`ExactCholesky()` gives deterministic likelihoods when sparse fill-in is
-manageable; `HutchSLQ()` uses a congruence-scaled, common-probe estimate of the
-log-determinant ratio for numerical stability. Cyclic graphs warn by default;
-set `strict_forest=true` to throw `ArgumentError` instead. The default numeric
-`rho_limit=0.99` is unchanged. Pass `rho_limit=:auto` to resolve an opt-in
-non-backtracking feasibility limit while preparing the problem.
+Variance-stable model specification for forest-like graphs.
 """
 struct VarianceStablePrior{L<:Union{Float64,Symbol}} <: AbstractGMRFPrior
     strict_forest::Bool
@@ -136,16 +154,217 @@ rho_limit(prior::AbstractGMRFPrior) = prior.rho_limit
 rho_limit(::VarianceStablePrior{Symbol}) =
     throw(ArgumentError("rho_limit=:auto must be resolved by constructing a GMRFProblem."))
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Concrete bipartite model types (graph-bound, implement LatentModel)
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+Degree-normalized bipartite GMRF. Implements `GaussianMarkovRandomFields.LatentModel`.
+"""
+struct BipartiteNormalizedModel{Alg} <: AbstractBipartiteModel
+    graph::BipartiteGraph
+    df_is::Vector{Float64}    # D_f^{-1/2}
+    dw_is::Vector{Float64}    # D_w^{-1/2}
+    rho_limit::Float64
+    alg::Alg
+end
+
+function BipartiteNormalizedModel(
+    A::SparseMatrixCSC{Float64,Int};
+    rho_limit::Real=0.99,
+    alg=CHOLMODFactorization(),
+)
+    g = BipartiteGraph(A)
+    df_is = 1.0 ./ sqrt.(g.d_f)
+    dw_is = 1.0 ./ sqrt.(g.d_w)
+    return BipartiteNormalizedModel(g, df_is, dw_is, validate_rho_limit(rho_limit), alg)
+end
+
+"""
+Unnormalized `D - ρA` bipartite GMRF. Implements `GaussianMarkovRandomFields.LatentModel`.
+"""
+struct BipartiteUnnormalizedModel{Alg} <: AbstractBipartiteModel
+    graph::BipartiteGraph
+    rho_limit::Float64
+    alg::Alg
+end
+
+function BipartiteUnnormalizedModel(
+    A::SparseMatrixCSC{Float64,Int};
+    rho_limit::Real=0.99,
+    alg=CHOLMODFactorization(),
+)
+    g = BipartiteGraph(A)
+    return BipartiteUnnormalizedModel(g, validate_rho_limit(rho_limit), alg)
+end
+
+"""
+Spectral-normalized bipartite GMRF. Implements `GaussianMarkovRandomFields.LatentModel`.
+"""
+struct BipartiteSpectralModel{Alg} <: AbstractBipartiteModel
+    graph::BipartiteGraph
+    spectral_is::Float64   # 1/√s₁
+    rho_limit::Float64
+    alg::Alg
+end
+
+function BipartiteSpectralModel(
+    A::SparseMatrixCSC{Float64,Int};
+    rho_limit::Real=0.99,
+    seed::Int=12345,
+    alg=CHOLMODFactorization(),
+)
+    g = BipartiteGraph(A)
+    s1 = leading_singular_value(g.A, g.At; seed=seed)
+    s1 > 0 || throw(ArgumentError("Cannot spectral-normalize an empty adjacency matrix."))
+    return BipartiteSpectralModel(g, 1.0 / sqrt(s1), validate_rho_limit(rho_limit), alg)
+end
+
+"""
+Variance-stable bipartite GMRF for forest-like graphs.
+Implements `GaussianMarkovRandomFields.LatentModel`.
+"""
+struct BipartiteVarianceStableModel{L<:Union{Float64,Symbol},Alg} <: AbstractBipartiteModel
+    graph::BipartiteGraph
+    strict_forest::Bool
+    rho_limit::L
+    alg::Alg
+end
+
+function BipartiteVarianceStableModel(
+    A::SparseMatrixCSC{Float64,Int};
+    strict_forest::Bool=false,
+    rho_limit::Union{Real,Symbol}=0.99,
+    alg=CHOLMODFactorization(),
+)
+    g = BipartiteGraph(_binarize(A))
+
+    if !is_forest(g.A)
+        msg = "Input graph contains a cycle; variance-stable model no longer guarantees degree-independent marginal variances."
+        strict_forest && throw(ArgumentError(msg))
+        @warn msg
+    end
+
+    if rho_limit isa Symbol
+        rho_limit == :auto ||
+            throw(ArgumentError("rho_limit symbol must be :auto; got $(rho_limit)."))
+        return BipartiteVarianceStableModel(g, strict_forest, rho_limit, alg)
+    end
+    return BipartiteVarianceStableModel(g, strict_forest, validate_rho_limit(rho_limit), alg)
+end
+
+# ─── rho_limit for model types ────────────────────────────────────────────
+rho_limit(m::AbstractBipartiteModel) = m.rho_limit
+rho_limit(::BipartiteVarianceStableModel{Symbol}) =
+    throw(ArgumentError("rho_limit=:auto must be resolved before use."))
+
+# ─── GaussianMarkovRandomFields.jl LatentModel interface ──────────────────
+
+Base.length(m::AbstractBipartiteModel) = m.graph.n_firms + m.graph.n_workers
+
+GaussianMarkovRandomFields.hyperparameters(::AbstractBipartiteModel) = (ρ = Real, σ_a = Real, σ_z = Real)
+GaussianMarkovRandomFields.constraints(::AbstractBipartiteModel; kwargs...) = nothing
+
+GaussianMarkovRandomFields.model_name(::BipartiteNormalizedModel) = :bipartite_normalized
+GaussianMarkovRandomFields.model_name(::BipartiteUnnormalizedModel) = :bipartite_unnormalized
+GaussianMarkovRandomFields.model_name(::BipartiteSpectralModel) = :bipartite_spectral
+GaussianMarkovRandomFields.model_name(::BipartiteVarianceStableModel) = :bipartite_variance_stable
+
+GaussianMarkovRandomFields.mean(m::AbstractBipartiteModel; kwargs...) = zeros(length(m))
+
+# ─── precision_matrix implementations ──────────────────────────────────────
+
+function GaussianMarkovRandomFields.precision_matrix(
+    m::BipartiteNormalizedModel;
+    ρ::Real, σ_a::Real, σ_z::Real, kwargs...,
+)
+    _validate_bipartite_params(ρ, σ_a, σ_z, m.rho_limit)
+    inv_sa2 = 1.0 / σ_a^2
+    inv_sz2 = 1.0 / σ_z^2
+    cross = ρ / (σ_a * σ_z)
+    g = m.graph
+    W = spdiagm(0 => m.df_is) * g.A * spdiagm(0 => m.dw_is)
+    Wt = copy(transpose(W))
+    return [
+        spdiagm(0 => fill(inv_sa2, g.n_firms))   (-cross .* W)
+        (-cross .* Wt)                             spdiagm(0 => fill(inv_sz2, g.n_workers))
+    ]
+end
+
+function GaussianMarkovRandomFields.precision_matrix(
+    m::BipartiteUnnormalizedModel;
+    ρ::Real, σ_a::Real, σ_z::Real, kwargs...,
+)
+    _validate_bipartite_params(ρ, σ_a, σ_z, m.rho_limit)
+    inv_sa2 = 1.0 / σ_a^2
+    inv_sz2 = 1.0 / σ_z^2
+    cross = ρ / (σ_a * σ_z)
+    g = m.graph
+    return [
+        spdiagm(0 => g.d_f .* inv_sa2)   (-cross .* g.A)
+        (-cross .* g.At)                   spdiagm(0 => g.d_w .* inv_sz2)
+    ]
+end
+
+function GaussianMarkovRandomFields.precision_matrix(
+    m::BipartiteSpectralModel;
+    ρ::Real, σ_a::Real, σ_z::Real, kwargs...,
+)
+    _validate_bipartite_params(ρ, σ_a, σ_z, m.rho_limit)
+    inv_sa2 = 1.0 / σ_a^2
+    inv_sz2 = 1.0 / σ_z^2
+    cross = ρ / (σ_a * σ_z)
+    g = m.graph
+    s = m.spectral_is  # 1/√s₁
+    W = (s * s) .* g.A   # A / s₁
+    Wt = copy(transpose(W))
+    return [
+        spdiagm(0 => fill(inv_sa2, g.n_firms))   (-cross .* W)
+        (-cross .* Wt)                             spdiagm(0 => fill(inv_sz2, g.n_workers))
+    ]
+end
+
+function GaussianMarkovRandomFields.precision_matrix(
+    m::BipartiteVarianceStableModel{Float64};
+    ρ::Real, σ_a::Real, σ_z::Real, kwargs...,
+)
+    _validate_bipartite_params(ρ, σ_a, σ_z, m.rho_limit)
+    inv_sa2 = 1.0 / σ_a^2
+    inv_sz2 = 1.0 / σ_z^2
+    cross = ρ / (σ_a * σ_z)
+    rho_sq = ρ^2
+    g = m.graph
+    diag_f = (1.0 .+ rho_sq .* (g.d_f .- 1.0)) .* inv_sa2
+    diag_w = (1.0 .+ rho_sq .* (g.d_w .- 1.0)) .* inv_sz2
+    return [
+        spdiagm(0 => diag_f)   (-cross .* g.A)
+        (-cross .* g.At)        spdiagm(0 => diag_w)
+    ]
+end
+
+# ─── Helpers ───────────────────────────────────────────────────────────────
+
+function _validate_bipartite_params(ρ::Real, σ_a::Real, σ_z::Real, rho_limit::Float64)
+    abs(ρ) < rho_limit || throw(ArgumentError("ρ must satisfy |ρ| < $(rho_limit); got $(ρ)."))
+    σ_a > 0 || throw(ArgumentError("σ_a must be positive; got $(σ_a)."))
+    σ_z > 0 || throw(ArgumentError("σ_z must be positive; got $(σ_z)."))
+end
+
+function _binarize(A::SparseMatrixCSC{Float64,Int})
+    B = copy(A)
+    B.nzval .= 1.0
+    return B
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Observation weighting
+# ═══════════════════════════════════════════════════════════════════════════
+
 """
     Weighting(; observations=:raw, rho_eps=nothing, target=:estimation)
 
 Configure how repeated firm-worker observations enter the likelihood and
 variance decompositions.
-
-`observations` is one of `:raw`, `:edge`, or `:effective`. Effective weighting
-requires `rho_eps` as a number in `[0, 1)` or `:estimate`. `target` controls the
-default decomposition target and accepts `:estimation`, `:personyear`, or
-`:edge`.
 """
 struct Weighting
     observations::Symbol
@@ -175,6 +394,71 @@ struct Weighting
     end
 end
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Solver types
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+Abstract supertype for marginal-likelihood solvers.
+"""
+abstract type AbstractGMRFSolver end
+
+"""
+    HutchSLQ(; logdet_probes=30, lanczos_iters=30, cg_tol=1e-6,
+             cg_maxiter=700, optim_iters=1000, g_reltol=1e-7)
+
+Matrix-free stochastic solver using Hutchinson stochastic Lanczos quadrature
+for log determinants and preconditioned conjugate gradients for linear solves.
+"""
+struct HutchSLQ <: AbstractGMRFSolver
+    logdet_probes::Int
+    lanczos_iters::Int
+    cg_tol::Float64
+    cg_maxiter::Int
+    optim_iters::Int
+    g_reltol::Float64
+    function HutchSLQ(;
+        logdet_probes::Int=30,
+        lanczos_iters::Int=30,
+        cg_tol::Float64=1e-6,
+        cg_maxiter::Int=700,
+        optim_iters::Int=1000,
+        g_reltol::Float64=1e-7,
+    )
+        logdet_probes > 0 || throw(ArgumentError("logdet_probes must be positive."))
+        lanczos_iters > 0 || throw(ArgumentError("lanczos_iters must be positive."))
+        cg_tol > 0 || throw(ArgumentError("cg_tol must be positive."))
+        cg_maxiter > 0 || throw(ArgumentError("cg_maxiter must be positive."))
+        optim_iters > 0 || throw(ArgumentError("optim_iters must be positive."))
+        g_reltol > 0 || throw(ArgumentError("g_reltol must be positive."))
+        new(logdet_probes, lanczos_iters, cg_tol, cg_maxiter, optim_iters, g_reltol)
+    end
+end
+
+"""
+    ExactCholesky(; optim_iters=200, polish=true, autodiff=:finitediff, g_reltol=1e-7)
+
+Deterministic solver based on sparse Cholesky factorizations.
+"""
+struct ExactCholesky <: AbstractGMRFSolver
+    optim_iters::Int
+    polish::Bool
+    autodiff::Symbol
+    g_reltol::Float64
+    function ExactCholesky(; optim_iters::Int=200, polish::Bool=true,
+                           autodiff::Symbol=:finitediff, g_reltol::Float64=1e-7)
+        optim_iters > 0 || throw(ArgumentError("optim_iters must be positive."))
+        autodiff in (:finitediff, :none) ||
+            throw(ArgumentError("ExactCholesky supports autodiff=:finitediff or :none; got $(autodiff)."))
+        g_reltol > 0 || throw(ArgumentError("g_reltol must be positive."))
+        new(optim_iters, polish, autodiff, g_reltol)
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Prepared estimation problem
+# ═══════════════════════════════════════════════════════════════════════════
+
 """
     GMRFProblem(df; outcome=:y, firm_id=:firm_id, worker_id=:worker_id, ...)
 
@@ -182,8 +466,7 @@ Prepared bipartite-GMRF estimation problem.
 
 The constructor validates and standardizes an input `DataFrame`, maps firm and
 worker IDs to graph indices, builds sparse observation/prior matrices, and
-stores metadata used by `solve`. Build a `GMRFProblem` once when comparing
-multiple solvers on the same data.
+stores metadata used by `solve`.
 """
 struct GMRFProblem{F,W}
     y::Vector{Float64}
@@ -266,87 +549,13 @@ Base.getproperty(p::GMRFProblem, ::Val{:At_fm}) = legacy_gmrf_property(p, :At_fm
 Base.getproperty(p::GMRFProblem, ::Val{:cnt_m}) = legacy_gmrf_property(p, :cnt_m, :cnt_w)
 Base.getproperty(p::GMRFProblem, ::Val{name}) where {name} = getfield(p, name)
 
-"""
-    HutchSLQ(; logdet_probes=30, lanczos_iters=30, cg_tol=1e-6,
-             cg_maxiter=700, optim_iters=1000, g_reltol=1e-7)
-
-Matrix-free stochastic solver using Hutchinson stochastic Lanczos quadrature
-for log determinants and preconditioned conjugate gradients for linear solves.
-
-Use this solver when sparse direct factorization is too memory intensive.
-Pass `seed` to `solve` or `gmrf_mle` for reproducible stochastic paths.
-
-`g_reltol` is a *relative* Nelder-Mead convergence tolerance: the optimizer
-stops once the simplex-objective spread falls below `g_reltol * max(1, |nll₀|)`,
-where `nll₀` is the objective at the starting point. A relative tolerance is
-scale-invariant across problem sizes, which matters here because the SLQ/PCG
-objective is accurate only to a relative level (set by `cg_tol` and the
-stochastic log-determinant). An absolute tolerance tight enough for a small
-graph is unreachable on a large one and forces the optimizer to exhaust
-`optim_iters` without converging.
-"""
-struct HutchSLQ <: AbstractGMRFSolver
-    logdet_probes::Int
-    lanczos_iters::Int
-    cg_tol::Float64
-    cg_maxiter::Int
-    optim_iters::Int
-    g_reltol::Float64
-    function HutchSLQ(;
-        logdet_probes::Int=30,
-        lanczos_iters::Int=30,
-        cg_tol::Float64=1e-6,
-        cg_maxiter::Int=700,
-        optim_iters::Int=1000,
-        g_reltol::Float64=1e-7,
-    )
-        logdet_probes > 0 || throw(ArgumentError("logdet_probes must be positive."))
-        lanczos_iters > 0 || throw(ArgumentError("lanczos_iters must be positive."))
-        cg_tol > 0 || throw(ArgumentError("cg_tol must be positive."))
-        cg_maxiter > 0 || throw(ArgumentError("cg_maxiter must be positive."))
-        optim_iters > 0 || throw(ArgumentError("optim_iters must be positive."))
-        g_reltol > 0 || throw(ArgumentError("g_reltol must be positive."))
-        new(logdet_probes, lanczos_iters, cg_tol, cg_maxiter, optim_iters, g_reltol)
-    end
-end
-
-"""
-    ExactCholesky(; optim_iters=200, polish=true, autodiff=:finitediff, g_reltol=1e-7)
-
-Deterministic solver based on sparse Cholesky factorizations.
-
-This solver is suitable for small and medium graphs where CHOLMOD fill-in is
-manageable. When `polish=true`, a finite-difference L-BFGS polishing pass is
-attempted after the initial Nelder-Mead optimization.
-
-`g_reltol` scales the Nelder-Mead convergence tolerance by the objective
-magnitude at the start point, with a `1e-3` absolute floor:
-`g_tol = max(1e-3, g_reltol * max(1, |nll0|))`. The floor keeps small-problem
-behaviour fixed; the relative term loosens the tolerance on large problems
-(where an absolute `1e-3` on the simplex-objective spread is unreachable).
-"""
-struct ExactCholesky <: AbstractGMRFSolver
-    optim_iters::Int
-    polish::Bool
-    autodiff::Symbol
-    g_reltol::Float64
-    function ExactCholesky(; optim_iters::Int=200, polish::Bool=true,
-                           autodiff::Symbol=:finitediff, g_reltol::Float64=1e-7)
-        optim_iters > 0 || throw(ArgumentError("optim_iters must be positive."))
-        autodiff in (:finitediff, :none) ||
-            throw(ArgumentError("ExactCholesky supports autodiff=:finitediff or :none; got $(autodiff)."))
-        g_reltol > 0 || throw(ArgumentError("g_reltol must be positive."))
-        new(optim_iters, polish, autodiff, g_reltol)
-    end
-end
+# ═══════════════════════════════════════════════════════════════════════════
+# Variance decomposition
+# ═══════════════════════════════════════════════════════════════════════════
 
 """
 Variance decomposition returned by `prior_decomposition` or
 `posterior_decomposition`.
-
-Fields report firm, worker, cross, residual, and total variance components,
-along with probe counts, decomposition target, method, convergence metadata,
-and additional residual-model details.
 """
 struct VarianceDecomposition
     V_firm::Float64
@@ -362,12 +571,12 @@ struct VarianceDecomposition
     metadata::NamedTuple
 end
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Estimation result
+# ═══════════════════════════════════════════════════════════════════════════
+
 """
 Fitted bipartite-GMRF model returned by `solve` and `gmrf_mle`.
-
-Stores fitted parameters in original outcome units, optimization diagnostics,
-optional prior/posterior decompositions, the prepared `GMRFProblem`, and solver
-metadata.
 """
 struct GMRFResult{
     P<:GMRFProblem,
@@ -393,12 +602,13 @@ struct GMRFResult{
     metadata::NamedTuple
 end
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Covariance types
+# ═══════════════════════════════════════════════════════════════════════════
+
 """
 Cached covariance factorization returned by `prior_covariance` or
 `posterior_covariance`.
-
-Pass a `CovarianceOperator` to `cov_block` to extract covariance blocks for
-selected firm and worker IDs.
 """
 struct CovarianceOperator{F,R<:GMRFResult}
     kind::Symbol
@@ -409,9 +619,6 @@ end
 
 """
 Covariance block returned by `cov_block`.
-
-`matrix` contains the extracted covariance values, while `rows` and `cols`
-record entity metadata as `(side=:firm/:worker, id=...)` named tuples.
 """
 struct CovarianceBlock
     matrix::Matrix{Float64}
@@ -419,4 +626,33 @@ struct CovarianceBlock
     cols::Vector{Any}
     kind::Symbol
     units::Symbol
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Convenience: construct a LatentModel from a spec + adjacency
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    to_model(spec::AbstractGMRFPrior, A_prior) -> AbstractBipartiteModel
+
+Convert a lightweight model specification into a full `LatentModel` subtype
+bound to the given adjacency matrix.
+"""
+function to_model(spec::NormalizedPrior, A::SparseMatrixCSC{Float64,Int})
+    return BipartiteNormalizedModel(A; rho_limit=spec.rho_limit)
+end
+
+function to_model(spec::UnnormalizedPrior, A::SparseMatrixCSC{Float64,Int})
+    return BipartiteUnnormalizedModel(A; rho_limit=spec.rho_limit)
+end
+
+function to_model(spec::SpectralPrior, A::SparseMatrixCSC{Float64,Int})
+    return BipartiteSpectralModel(A; rho_limit=spec.rho_limit, seed=spec.seed)
+end
+
+function to_model(spec::VarianceStablePrior, A::SparseMatrixCSC{Float64,Int})
+    return BipartiteVarianceStableModel(A;
+        strict_forest=spec.strict_forest,
+        rho_limit=spec.rho_limit,
+    )
 end
