@@ -18,7 +18,8 @@ import Optim:
     only_fg!,
     optimize
 using Printf: @sprintf
-using Random: MersenneTwister, rand, randn
+import Random
+using Random: AbstractRNG, MersenneTwister, rand, randn
 using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
 import StatsAPI: coef, loglikelihood, nobs
 using Statistics: mean, std
@@ -65,7 +66,8 @@ export AbstractBipartiteModel,
     BipartiteSpectralModel,
     BipartiteVarianceStableModel,
     BipartiteGraph,
-    to_model
+    to_model,
+    simulate
 
 include("types.jl")
 include("util.jl")
@@ -85,6 +87,7 @@ include("decomposition/prior.jl")
 include("decomposition/posterior.jl")
 include("covariance/operator.jl")
 include("covariance/extract.jl")
+include("simulate.jl")
 include("api.jl")
 
 end
