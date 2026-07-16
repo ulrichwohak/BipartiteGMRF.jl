@@ -24,4 +24,20 @@
     y = similar(x)
     qop(y, x)
     @test y ≈ Q * x atol=1e-10 rtol=1e-10
+
+    lambda = 1.7
+    scale = vcat(fill(sa, pvs.N_firms), fill(sz, pvs.N_workers))
+    bop = BipartiteGMRF.make_qop_vs(pvs, rho, 1.0, 1.0)
+    kop = BipartiteGMRF.ScaledMOp(
+        bop,
+        pvs.VtV,
+        copy(scale),
+        similar(x),
+        similar(x),
+        lambda,
+    )
+    kop(y, x)
+    B = BipartiteGMRF.precision_matrix(pvs, rho, 1.0, 1.0)
+    S = Diagonal(scale)
+    @test y ≈ (B + lambda .* S * pvs.VtV * S) * x atol=1e-10 rtol=1e-10
 end

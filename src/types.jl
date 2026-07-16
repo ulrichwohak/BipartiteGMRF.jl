@@ -99,11 +99,11 @@ end
 Variance-stable precision model for bipartite graphs.
 
 This prior is intended for forest-like graphs where its marginal-variance
-property applies. It currently supports raw observation weighting only. Use
-`ExactCholesky()` on acyclic (forest/tree) graphs — log-dets are exact and cheap
-there, avoiding the stochastic log-det cancellation that corrupts `HutchSLQ()`
-at small `sigma_z`; on cyclic graphs use `HutchSLQ()`. Cyclic graphs warn by
-default; set `strict_forest=true` to throw `ArgumentError` instead.
+property applies. It currently supports raw observation weighting only.
+`ExactCholesky()` gives deterministic likelihoods when sparse fill-in is
+manageable; `HutchSLQ()` uses a congruence-scaled, common-probe estimate of the
+log-determinant ratio for numerical stability. Cyclic graphs warn by default;
+set `strict_forest=true` to throw `ArgumentError` instead.
 """
 struct VarianceStablePrior <: AbstractGMRFPrior
     strict_forest::Bool
