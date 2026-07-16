@@ -3,7 +3,7 @@
              prior=NormalizedPrior(), solver=ExactCholesky(),
              weighting=Weighting(), decompose=200, fix_rho=nothing,
              max_degree=nothing, standardize=true, on_missing=:drop,
-             seed=42, verbose=false)
+             seed=42, compute_se=false, verbose=false)
 
 Construct and fit a bipartite-GMRF model from a `DataFrame`.
 
@@ -12,7 +12,12 @@ This is the high-level entry point: it prepares a `GMRFProblem`, fits it with
 a `GMRFResult` with parameters in original outcome units when
 `standardize=true`.
 
-See also [`coef`](@ref), [`loglikelihood`](@ref), [`nobs`](@ref), [`converged`](@ref).
+Pass `compute_se=true` to also compute and cache observed-information standard
+errors, which makes `show` print them in a regression-table style; standard
+errors are otherwise available on demand via [`stderror`](@ref).
+
+See also [`coef`](@ref), [`stderror`](@ref), [`confint`](@ref),
+[`loglikelihood`](@ref), [`nobs`](@ref), [`converged`](@ref).
 """
 function gmrf_mle(
     df::DataFrame;
@@ -28,6 +33,7 @@ function gmrf_mle(
     standardize::Bool=true,
     on_missing::Symbol=:drop,
     seed::Int=42,
+    compute_se::Bool=false,
     verbose::Bool=false,
 )
     problem = GMRFProblem(
@@ -42,7 +48,8 @@ function gmrf_mle(
         on_missing=on_missing,
         verbose=verbose,
     )
-    return solve(problem, solver; decompose=decompose, fix_rho=fix_rho, seed=seed, verbose=verbose)
+    return solve(problem, solver;
+        decompose=decompose, fix_rho=fix_rho, seed=seed, compute_se=compute_se, verbose=verbose)
 end
 
 """
@@ -97,15 +104,20 @@ function Base.show(io::IO, result::GMRFResult)
 end
 
 function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
+    se = _display_stderror(result)
+    se_of(name) = se === nothing ? nothing : getfield(se, name)
+    rho_fixed = get(result.metadata, :fix_rho, nothing) !== nothing
     println(io, "GMRFResult")
     println(io, "  converged: ", result.converged)
     println(io, "  nll: ", result.nll)
     println(io, "  parameters:")
-    println(io, "    rho: ", result.rho)
-    println(io, "    sigma_a: ", result.sigma_a)
-    println(io, "    sigma_z: ", result.sigma_z)
-    println(io, "    sigma_epsilon: ", result.sigma_epsilon)
-    result.rho_eps !== nothing && println(io, "    rho_eps: ", result.rho_eps)
+    println(io, "    rho: ", rho_fixed ? string(result.rho, " (fixed)") :
+                             _format_estimate(result.rho, se_of(:rho)))
+    println(io, "    sigma_a: ", _format_estimate(result.sigma_a, se_of(:sigma_a)))
+    println(io, "    sigma_z: ", _format_estimate(result.sigma_z, se_of(:sigma_z)))
+    println(io, "    sigma_epsilon: ", _format_estimate(result.sigma_epsilon, se_of(:sigma_epsilon)))
+    result.rho_eps !== nothing &&
+        println(io, "    rho_eps: ", _format_estimate(result.rho_eps, se_of(:rho_eps)))
     println(io, "  model:")
     println(io, "    prior: ", nameof(typeof(result.prior)))
     println(io, "    solver: ", nameof(typeof(result.solver)))
