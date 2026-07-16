@@ -23,3 +23,7 @@ component. Nodes in components without a cycle have `distance_to_core == -1`.
 Large core components use Arnoldi iteration with a local seeded start vector.
 Always check `spectrum.converged` before using the radius: a failed component
 sets the global `lambda_nb` to `NaN` rather than returning a partial bound.
+
+For `VarianceStablePrior(rho_limit=:auto)`, problem preparation uses this
+diagnostic to resolve a guarded optimization limit. The default
+`VarianceStablePrior()` remains the explicit numeric `0.99` behavior.

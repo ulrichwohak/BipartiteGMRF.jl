@@ -14,6 +14,7 @@ import Optim:
     minimizer,
     only_fg!,
     optimize
+using Printf: @sprintf
 using Random: MersenneTwister, rand, randn
 using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
 import StatsAPI: coef, loglikelihood, nobs
@@ -35,6 +36,8 @@ export AbstractGMRFPrior,
     CovarianceBlock,
     NBSpectrum,
     nb_spectrum,
+    feasibility,
+    rho_at_bound,
     gmrf_mle,
     solve,
     coef,
@@ -50,9 +53,10 @@ export AbstractGMRFPrior,
 
 include("types.jl")
 include("util.jl")
-include("prepare.jl")
 include("nonbacktracking/graph.jl")
 include("nonbacktracking/spectrum.jl")
+include("nonbacktracking/feasibility.jl")
+include("prepare.jl")
 include("operators/qop.jl")
 include("operators/qop_vs.jl")
 include("operators/mop.jl")

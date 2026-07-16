@@ -58,4 +58,6 @@ cov_block
 ```@docs
 NBSpectrum
 nb_spectrum
+feasibility
+rho_at_bound
 ```

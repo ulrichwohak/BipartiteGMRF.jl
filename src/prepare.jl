@@ -328,10 +328,16 @@ function GMRFProblem(
     A_prior = copy(A_prior_base)
     padj == :binary && (A_prior.nzval .= 1.0)
     pscale = prepare_prior_scaling(A_prior, prior)
+    vs_metadata = NamedTuple()
     if prior isa VarianceStablePrior && !is_forest(A_prior)
         msg = "Input graph contains a cycle; variance-stable prior no longer guarantees degree-independent marginal variances."
         prior.strict_forest && throw(ArgumentError(msg))
         @warn msg
+    end
+    if prior isa VarianceStablePrior
+        resolved = prepare_vs_feasibility(prior, A_prior)
+        prior = resolved.prior
+        vs_metadata = resolved.metadata
     end
 
     unique_edges = nnz(sparse(f_rows, w_cols, ones(Float64, length(f_rows)), n_firms, n_workers))
@@ -339,7 +345,7 @@ function GMRFProblem(
     mean_edge_count = unique_edges > 0 ? Float64(personyear_rows) / Float64(unique_edges) : NaN
     max_edge_count = isempty(T_edge) ? NaN : Float64(maximum(T_edge))
 
-    metadata = (
+    metadata = merge((
         outcome = outcome,
         firm_id = firm_id,
         worker_id = worker_id,
@@ -352,7 +358,7 @@ function GMRFProblem(
         total_prior_weight = sum(A_prior.nzval),
         max_prior_degree_f = maximum(pscale.d_f),
         max_prior_degree_w = maximum(pscale.d_w),
-    )
+    ), vs_metadata)
 
     return GMRFProblem(;
         y = y,
