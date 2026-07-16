@@ -1,15 +1,4 @@
-"""
-    posterior_decomposition(result::GMRFResult; probes=200, seed=42,
-                            target=result.problem.weighting.target,
-                            verbose=false)
-
-Estimate the posterior variance decomposition for a fitted model.
-
-The result combines posterior mode contributions with posterior covariance
-trace estimates and returns a `VarianceDecomposition` in original outcome
-units.
-"""
-function posterior_decomposition(
+function _decompose_fitted(
     result::GMRFResult;
     probes::Int=200,
     seed::Int=42,
@@ -77,7 +66,7 @@ function posterior_decomposition(
         if ok
             ok_count += 1
         elseif verbose
-            @info "posterior decomposition PCG did not converge" probe=t relres=relres
+            @info "fitted decomposition PCG did not converge" probe=t relres=relres
             continue
         end
         vf = view(v, 1:problem.N_firms)
@@ -95,7 +84,7 @@ function posterior_decomposition(
         acc_cross += dot(vf, wv_f) + dot(vw, wv_w)
     end
 
-    ok_count > 0 || throw(ErrorException("All posterior decomposition probes failed."))
+    ok_count > 0 || throw(ErrorException("All fitted decomposition probes failed."))
     quad_scale = problem.y_std^2 / dstats.weight_sum
     trace_scale = problem.y_std^2 / (Float64(ok_count) * dstats.weight_sum)
     V_firm = qa * quad_scale + acc_f * trace_scale
@@ -113,7 +102,7 @@ function posterior_decomposition(
         V_total,
         probes,
         dstats.target,
-        :posterior,
+        :fitted,
         method,
         result.solver isa ExactCholesky ? nothing : ok_count,
         (

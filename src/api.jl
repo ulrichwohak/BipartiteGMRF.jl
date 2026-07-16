@@ -8,11 +8,7 @@
 Construct and fit a bipartite-GMRF model from a `DataFrame`.
 
 This is the high-level entry point: it prepares a `GMRFProblem`, fits it with
-`solve`, and optionally computes a prior variance decomposition. The result is
-a `GMRFResult` with parameters in original outcome units when
-`standardize=true`.
-
-See also [`coef`](@ref), [`loglikelihood`](@ref), [`nobs`](@ref), [`converged`](@ref).
+`solve`, and optionally computes a model variance decomposition.
 """
 function gmrf_mle(
     df::DataFrame;
@@ -45,12 +41,102 @@ function gmrf_mle(
     return solve(problem, solver; decompose=decompose, fix_rho=fix_rho, seed=seed, verbose=verbose)
 end
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Variance decomposition: unified API
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    decompose(result::GMRFResult; kind=:model, probes=200, seed=42,
+              target=result.problem.weighting.target, verbose=false)
+
+Estimate the variance decomposition implied by a fitted bipartite GMRF.
+
+Returns a `VarianceDecomposition` containing firm, worker, cross, residual,
+and total variance components.
+
+`kind` selects the decomposition type:
+- `:model` — decomposition from the GMRF's precision structure alone
+- `:fitted` — includes fitted effects (posterior mode + trace correction)
+"""
+function decompose(
+    result::GMRFResult;
+    kind::Symbol=:model,
+    probes::Int=200,
+    seed::Int=42,
+    target::Symbol=result.problem.weighting.target,
+    verbose::Bool=false,
+)
+    if kind == :model
+        return _decompose_model(result; probes=probes, seed=seed, target=target, verbose=verbose)
+    elseif kind == :fitted
+        return _decompose_fitted(result; probes=probes, seed=seed, target=target, verbose=verbose)
+    else
+        throw(ArgumentError("decompose kind must be :model or :fitted; got $(kind)."))
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Covariance extraction: unified API
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    covariance(result::GMRFResult; kind=:model, units=:original)
+
+Factor the fitted precision matrix for covariance extraction.
+
+`kind` selects the precision matrix:
+- `:model` — the GMRF's precision Q
+- `:fitted` — the data-augmented precision Q + λV'V
+
+`units` may be `:original` or `:scaled`. Pass the returned
+`CovarianceOperator` to `cov_block` to extract selected entity blocks.
+"""
+function covariance(
+    result::GMRFResult;
+    kind::Symbol=:model,
+    units::Symbol=:original,
+)
+    if kind == :model
+        return _covariance_model(result; units=units)
+    elseif kind == :fitted
+        return _covariance_fitted(result; units=units)
+    else
+        throw(ArgumentError("covariance kind must be :model or :fitted; got $(kind)."))
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Deprecated wrappers (backward compatibility)
+# ═══════════════════════════════════════════════════════════════════════════
+
+function prior_decomposition(result::GMRFResult; kwargs...)
+    Base.depwarn("`prior_decomposition` is deprecated; use `decompose(result; kind=:model)` instead.", :prior_decomposition)
+    return decompose(result; kind=:model, kwargs...)
+end
+
+function posterior_decomposition(result::GMRFResult; kwargs...)
+    Base.depwarn("`posterior_decomposition` is deprecated; use `decompose(result; kind=:fitted)` instead.", :posterior_decomposition)
+    return decompose(result; kind=:fitted, kwargs...)
+end
+
+function prior_covariance(result::GMRFResult; kwargs...)
+    Base.depwarn("`prior_covariance` is deprecated; use `covariance(result; kind=:model)` instead.", :prior_covariance)
+    return covariance(result; kind=:model, kwargs...)
+end
+
+function posterior_covariance(result::GMRFResult; kwargs...)
+    Base.depwarn("`posterior_covariance` is deprecated; use `covariance(result; kind=:fitted)` instead.", :posterior_covariance)
+    return covariance(result; kind=:fitted, kwargs...)
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# StatsAPI and accessors
+# ═══════════════════════════════════════════════════════════════════════════
+
 """
     coef(result::GMRFResult)
 
 Return fitted model coefficients as a named tuple.
-
-The tuple contains `rho`, `sigma_a`, `sigma_z`, `sigma_epsilon`, and `rho_eps`.
 """
 coef(result::GMRFResult) = (
     rho = result.rho,

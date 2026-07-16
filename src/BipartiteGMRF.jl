@@ -49,11 +49,14 @@ export AbstractGMRFPrior,
     nobs,
     nll,
     converged,
+    decompose,
+    covariance,
+    cov_block,
+    # deprecated aliases
     prior_decomposition,
     posterior_decomposition,
     prior_covariance,
-    posterior_covariance,
-    cov_block
+    posterior_covariance
 
 # New public API (GMRF.jl integration)
 export AbstractBipartiteModel,

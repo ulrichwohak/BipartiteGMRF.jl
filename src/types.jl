@@ -554,8 +554,8 @@ Base.getproperty(p::GMRFProblem, ::Val{name}) where {name} = getfield(p, name)
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
-Variance decomposition returned by `prior_decomposition` or
-`posterior_decomposition`.
+Variance decomposition returned by `decompose(result; kind=:model)` or
+`decompose(result; kind=:fitted)`.
 """
 struct VarianceDecomposition
     V_firm::Float64
@@ -593,8 +593,8 @@ struct GMRFResult{
     iterations::Int
     obj_evals::Int
     optimization_time::Float64
-    prior_decomposition::Union{VarianceDecomposition,Nothing}
-    posterior_decomposition::Union{VarianceDecomposition,Nothing}
+    model_decomposition::Union{VarianceDecomposition,Nothing}
+    fitted_decomposition::Union{VarianceDecomposition,Nothing}
     problem::P
     prior::R
     solver::S
@@ -607,8 +607,8 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
-Cached covariance factorization returned by `prior_covariance` or
-`posterior_covariance`.
+Cached covariance factorization returned by `covariance(result; kind=:model)` or
+`covariance(result; kind=:fitted)`.
 """
 struct CovarianceOperator{F,R<:GMRFResult}
     kind::Symbol

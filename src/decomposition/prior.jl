@@ -69,18 +69,7 @@ function residual_decomp_components(problem::GMRFProblem, sigma_epsilon_original
     )
 end
 
-"""
-    prior_decomposition(result::GMRFResult; probes=200, seed=42,
-                        target=result.problem.weighting.target,
-                        verbose=false)
-
-Estimate the prior variance decomposition implied by a fitted model.
-
-Returns a `VarianceDecomposition` containing firm, worker, cross, residual, and
-total variance components for the requested target. `probes` controls the
-Hutchinson trace estimator used for latent-field variance terms.
-"""
-function prior_decomposition(
+function _decompose_model(
     result::GMRFResult;
     probes::Int=200,
     seed::Int=42,
@@ -143,7 +132,7 @@ function prior_decomposition(
             if ok
                 ok_count += 1
             elseif verbose
-                @info "prior decomposition PCG did not converge" probe=t relres=relres
+                @info "model decomposition PCG did not converge" probe=t relres=relres
                 continue
             end
             vf = view(v, 1:problem.N_firms)
@@ -164,7 +153,7 @@ function prior_decomposition(
         pcg_count = ok_count
     end
 
-    ok_count > 0 || throw(ErrorException("All prior decomposition probes failed."))
+    ok_count > 0 || throw(ErrorException("All model decomposition probes failed."))
     scale = problem.y_std^2 / (Float64(ok_count) * dstats.weight_sum)
     V_firm = acc_f * scale
     V_worker = acc_w * scale
@@ -180,7 +169,7 @@ function prior_decomposition(
         V_total,
         probes,
         dstats.target,
-        :prior,
+        :model,
         method,
         pcg_count,
         (

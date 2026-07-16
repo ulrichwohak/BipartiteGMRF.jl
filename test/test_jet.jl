@@ -22,7 +22,7 @@ function jet_exact_solve_flow(problem)
 end
 
 function jet_covariance_flow(result)
-    op = prior_covariance(result)
+    op = covariance(result; kind=:model)
     return cov_block(op; firms=(1,), workers=(10,))
 end
 

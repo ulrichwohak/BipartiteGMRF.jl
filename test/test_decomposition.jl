@@ -1,16 +1,16 @@
 @testset "decomposition" begin
     result = fitted_exact(; decompose=3)
-    prior = result.prior_decomposition
-    @test prior !== nothing
-    @test prior.kind == :prior
-    @test prior.V_total ≈ prior.V_firm + prior.V_worker + prior.V_cross + prior.V_epsilon
+    md = result.model_decomposition
+    @test md !== nothing
+    @test md.kind == :model
+    @test md.V_total ≈ md.V_firm + md.V_worker + md.V_cross + md.V_epsilon
 
-    posterior = posterior_decomposition(result; probes=3, seed=1)
-    @test posterior.kind == :posterior
-    @test posterior.V_total ≈ posterior.V_firm + posterior.V_worker + posterior.V_cross + posterior.V_epsilon
-    @test isfinite(posterior.metadata.covariance)
+    fd = decompose(result; kind=:fitted, probes=3, seed=1)
+    @test fd.kind == :fitted
+    @test fd.V_total ≈ fd.V_firm + fd.V_worker + fd.V_cross + fd.V_epsilon
+    @test isfinite(fd.metadata.covariance)
 
-    edge_target = prior_decomposition(result; probes=3, seed=2, target=:edge)
+    edge_target = decompose(result; kind=:model, probes=3, seed=2, target=:edge)
     @test edge_target.target == :edge
     @test isfinite(edge_target.V_total)
 end

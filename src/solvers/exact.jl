@@ -38,11 +38,11 @@ function solve(
     )
     probes = decompose === true ? 200 : decompose isa Int ? decompose : 0
     if probes > 0
-        pd = prior_decomposition(result; probes=probes, seed=seed, verbose=verbose)
+        pd = _decompose_model(result; probes=probes, seed=seed, verbose=verbose)
         result = GMRFResult(
             result.rho, result.sigma_a, result.sigma_z, result.sigma_epsilon,
             result.rho_eps, result.nll, result.converged, result.iterations,
-            result.obj_evals, result.optimization_time, pd, result.posterior_decomposition,
+            result.obj_evals, result.optimization_time, pd, result.fitted_decomposition,
             result.problem, result.prior, result.solver, result.theta_unconstrained,
             result.metadata,
         )
