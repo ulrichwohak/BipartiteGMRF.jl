@@ -15,17 +15,6 @@
     @test rebuilt.K == p.K
     @test rebuilt.metadata == p.metadata
 
-    legacy_aliases = (:N_F, :N_M, :firms, :people, :A_fm, :At_fm, :cnt_m)
-    public_names = propertynames(p)
-    @test all(alias -> alias ∉ public_names, legacy_aliases)
-    @test_deprecated getproperty(p, :N_F)
-    @test_deprecated getproperty(p, :N_M)
-    @test_deprecated getproperty(p, :firms)
-    @test_deprecated getproperty(p, :people)
-    @test_deprecated getproperty(p, :A_fm)
-    @test_deprecated getproperty(p, :At_fm)
-    @test_deprecated getproperty(p, :cnt_m)
-
     @test NormalizedPrior(rho_limit=0.4).rho_limit == 0.4
     @test UnnormalizedPrior(rho_limit=0.4).rho_limit == 0.4
     @test SpectralPrior(rho_limit=0.4).rho_limit == 0.4

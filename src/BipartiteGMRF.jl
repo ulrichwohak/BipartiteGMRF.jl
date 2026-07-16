@@ -24,50 +24,52 @@ using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
 import StatsAPI: coef, loglikelihood, nobs
 using Statistics: mean, std
 
-# Existing public API (backward compatible)
-export AbstractGMRFPrior,
-    AbstractGMRFSolver,
-    NormalizedPrior,
+# Model specification types (lightweight, passed to gmrf_mle)
+export NormalizedPrior,
     UnnormalizedPrior,
     SpectralPrior,
     VarianceStablePrior,
-    Weighting,
-    GMRFProblem,
-    HutchSLQ,
-    ExactCholesky,
-    GMRFResult,
-    VarianceDecomposition,
-    CovarianceOperator,
-    CovarianceBlock,
-    NBSpectrum,
-    nb_spectrum,
-    feasibility,
-    rho_at_bound,
-    gmrf_mle,
-    solve,
-    coef,
-    loglikelihood,
-    nobs,
-    nll,
-    converged,
-    decompose,
-    covariance,
-    cov_block,
-    # deprecated aliases
-    prior_decomposition,
-    posterior_decomposition,
-    prior_covariance,
-    posterior_covariance
+    Weighting
 
-# New public API (GMRF.jl integration)
+# Model types (LatentModel subtypes, graph-bound)
 export AbstractBipartiteModel,
     BipartiteNormalizedModel,
     BipartiteUnnormalizedModel,
     BipartiteSpectralModel,
     BipartiteVarianceStableModel,
     BipartiteGraph,
-    to_model,
-    simulate
+    to_model
+
+# Solver types
+export AbstractGMRFSolver,
+    HutchSLQ,
+    ExactCholesky
+
+# Data and result types
+export GMRFProblem,
+    GMRFResult,
+    VarianceDecomposition,
+    CovarianceOperator,
+    CovarianceBlock
+
+# Non-backtracking spectrum
+export NBSpectrum,
+    nb_spectrum,
+    feasibility,
+    rho_at_bound
+
+# Public API
+export gmrf_mle,
+    solve,
+    decompose,
+    covariance,
+    cov_block,
+    simulate,
+    coef,
+    loglikelihood,
+    nobs,
+    nll,
+    converged
 
 include("types.jl")
 include("util.jl")
@@ -83,8 +85,8 @@ include("linalg/slq.jl")
 include("solvers/common.jl")
 include("solvers/exact.jl")
 include("solvers/hutch.jl")
-include("decomposition/prior.jl")
-include("decomposition/posterior.jl")
+include("decomposition/model.jl")
+include("decomposition/fitted.jl")
 include("covariance/operator.jl")
 include("covariance/extract.jl")
 include("simulate.jl")

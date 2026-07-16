@@ -519,37 +519,6 @@ struct GMRFProblem{F,W}
     metadata::NamedTuple
 end
 
-const GMRFPROBLEM_LEGACY_ALIASES = Dict{Symbol,Symbol}(
-    :N_F => :N_firms,
-    :N_M => :N_workers,
-    :firms => :firm_ids,
-    :people => :worker_ids,
-    :A_fm => :A_prior,
-    :At_fm => :At_prior,
-    :cnt_m => :cnt_w,
-)
-
-Base.propertynames(p::GMRFProblem, private::Bool=false) = fieldnames(GMRFProblem)
-
-Base.getproperty(p::GMRFProblem, name::Symbol) = getproperty(p, Val(name))
-
-function legacy_gmrf_property(p::GMRFProblem, legacy::Symbol, canonical::Symbol)
-    Base.depwarn(
-        "`GMRFProblem.$(legacy)` is deprecated; use `GMRFProblem.$(canonical)` instead.",
-        :getproperty,
-    )
-    return getfield(p, canonical)
-end
-
-Base.getproperty(p::GMRFProblem, ::Val{:N_F}) = legacy_gmrf_property(p, :N_F, :N_firms)
-Base.getproperty(p::GMRFProblem, ::Val{:N_M}) = legacy_gmrf_property(p, :N_M, :N_workers)
-Base.getproperty(p::GMRFProblem, ::Val{:firms}) = legacy_gmrf_property(p, :firms, :firm_ids)
-Base.getproperty(p::GMRFProblem, ::Val{:people}) = legacy_gmrf_property(p, :people, :worker_ids)
-Base.getproperty(p::GMRFProblem, ::Val{:A_fm}) = legacy_gmrf_property(p, :A_fm, :A_prior)
-Base.getproperty(p::GMRFProblem, ::Val{:At_fm}) = legacy_gmrf_property(p, :At_fm, :At_prior)
-Base.getproperty(p::GMRFProblem, ::Val{:cnt_m}) = legacy_gmrf_property(p, :cnt_m, :cnt_w)
-Base.getproperty(p::GMRFProblem, ::Val{name}) where {name} = getfield(p, name)
-
 # ═══════════════════════════════════════════════════════════════════════════
 # Variance decomposition
 # ═══════════════════════════════════════════════════════════════════════════

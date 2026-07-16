@@ -106,30 +106,6 @@ function covariance(
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Deprecated wrappers (backward compatibility)
-# ═══════════════════════════════════════════════════════════════════════════
-
-function prior_decomposition(result::GMRFResult; kwargs...)
-    Base.depwarn("`prior_decomposition` is deprecated; use `decompose(result; kind=:model)` instead.", :prior_decomposition)
-    return decompose(result; kind=:model, kwargs...)
-end
-
-function posterior_decomposition(result::GMRFResult; kwargs...)
-    Base.depwarn("`posterior_decomposition` is deprecated; use `decompose(result; kind=:fitted)` instead.", :posterior_decomposition)
-    return decompose(result; kind=:fitted, kwargs...)
-end
-
-function prior_covariance(result::GMRFResult; kwargs...)
-    Base.depwarn("`prior_covariance` is deprecated; use `covariance(result; kind=:model)` instead.", :prior_covariance)
-    return covariance(result; kind=:model, kwargs...)
-end
-
-function posterior_covariance(result::GMRFResult; kwargs...)
-    Base.depwarn("`posterior_covariance` is deprecated; use `covariance(result; kind=:fitted)` instead.", :posterior_covariance)
-    return covariance(result; kind=:fitted, kwargs...)
-end
-
-# ═══════════════════════════════════════════════════════════════════════════
 # StatsAPI and accessors
 # ═══════════════════════════════════════════════════════════════════════════
 
