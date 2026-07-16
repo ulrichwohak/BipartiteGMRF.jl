@@ -69,7 +69,7 @@
     @test maxdeg.N_firms <= 3
     @test maxdeg.N_workers <= 4
 
-    @test_warn "variance-stable prior no longer guarantees" GMRFProblem(
+    @test_warn "variance-stable model no longer guarantees" GMRFProblem(
         synthetic_df();
         prior=VarianceStablePrior(),
     )

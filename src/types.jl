@@ -505,6 +505,7 @@ struct GMRFProblem{F,W}
     y_std::Float64
     standardize::Bool
     prior::AbstractGMRFPrior
+    model::AbstractBipartiteModel
     weighting::Weighting
     rho_eps_likelihood::Union{Nothing,Float64}
     within_ss::Float64

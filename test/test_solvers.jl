@@ -46,7 +46,7 @@
     @test fixed.rho ≈ 0.2
     @test abs(fixed.rho) < limited.prior.rho_limit
 
-    p = @test_warn "variance-stable prior no longer guarantees" GMRFProblem(
+    p = @test_warn "variance-stable model no longer guarantees" GMRFProblem(
         synthetic_df();
         prior=VarianceStablePrior(),
     )

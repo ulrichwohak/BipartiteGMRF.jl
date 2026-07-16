@@ -37,6 +37,10 @@ function (op::QOp)(y::Vector{Float64}, x::Vector{Float64})
 end
 
 function make_qop(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    return make_qop(problem.model, problem, rho, sigma_a, sigma_z)
+end
+
+function make_qop(::AbstractBipartiteModel, problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
     inv_sa2 = 1.0 / sigma_a^2
     inv_sz2 = 1.0 / sigma_z^2
     cross = rho / (sigma_a * sigma_z)

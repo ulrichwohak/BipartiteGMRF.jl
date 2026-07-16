@@ -13,7 +13,7 @@
     end
     @test GMRFProblem(synthetic_df(); prior=SpectralPrior(seed=7)).prior.seed == 7
 
-    pvs = @test_warn "variance-stable prior no longer guarantees" GMRFProblem(
+    pvs = @test_warn "variance-stable model no longer guarantees" GMRFProblem(
         synthetic_df();
         prior=VarianceStablePrior(),
     )

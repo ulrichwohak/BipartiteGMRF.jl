@@ -329,11 +329,6 @@ function GMRFProblem(
     padj == :binary && (A_prior.nzval .= 1.0)
     pscale = prepare_prior_scaling(A_prior, prior)
     vs_metadata = NamedTuple()
-    if prior isa VarianceStablePrior && !is_forest(A_prior)
-        msg = "Input graph contains a cycle; variance-stable prior no longer guarantees degree-independent marginal variances."
-        prior.strict_forest && throw(ArgumentError(msg))
-        @warn msg
-    end
     if prior isa VarianceStablePrior
         resolved = prepare_vs_feasibility(prior, A_prior)
         prior = resolved.prior
@@ -397,6 +392,7 @@ function GMRFProblem(
         y_std = Float64(y_std),
         standardize = standardize,
         prior = prior,
+        model = to_model(prior, A_prior),
         weighting = weighting,
         rho_eps_likelihood = rho_eps_likelihood,
         within_ss = Float64(within_ss),

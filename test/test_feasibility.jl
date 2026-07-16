@@ -27,11 +27,11 @@
         y=collect(1.0:length(edges)),
     )
     auto_cyclic = @test_logs (
-        :warn,
-        r"contains a cycle",
-    ) (
         :info,
         r"VS feasibility resolved: lambda_NB=2.0000, rho_ceiling=0.5000, rho_limit=0.4900, source=auto",
+    ) (
+        :warn,
+        r"contains a cycle",
     ) GMRFProblem(
         cyclic_df;
         prior=VarianceStablePrior(rho_limit=:auto),

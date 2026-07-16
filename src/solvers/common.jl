@@ -1,9 +1,10 @@
 function validate_capability(problem::GMRFProblem, solver::AbstractGMRFSolver)
-    if problem.prior isa VarianceStablePrior
+    model = problem.model
+    if model isa BipartiteVarianceStableModel
         problem.weighting.observations == :raw ||
             throw(ArgumentError("VarianceStablePrior currently supports only raw observation weighting."))
     end
-    if problem.prior isa SpectralPrior && solver isa ExactCholesky
+    if model isa BipartiteSpectralModel && solver isa ExactCholesky
         throw(ArgumentError("ExactCholesky for SpectralPrior is not implemented; use HutchSLQ."))
     end
     return nothing
@@ -12,12 +13,9 @@ end
 # ─── Model construction from problem ──────────────────────────────────────
 
 """
-Build an `AbstractBipartiteModel` from a `GMRFProblem`'s prior spec and adjacency.
-Cached on first call per problem via the metadata field.
+Return the `AbstractBipartiteModel` stored on the problem.
 """
-function _build_model(problem::GMRFProblem)
-    return to_model(problem.prior, problem.A_prior)
-end
+_build_model(problem::GMRFProblem) = problem.model
 
 # ─── Precision matrix via model dispatch ──────────────────────────────────
 
@@ -58,31 +56,42 @@ end
 # ─── Matrix-free operators (HutchSLQ path, unchanged) ─────────────────────
 
 function q_operator(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    if problem.prior isa VarianceStablePrior
-        return make_qop_vs(problem, rho, sigma_a, sigma_z)
+    model = problem.model
+    if model isa BipartiteVarianceStableModel
+        return make_qop_vs(model, rho, sigma_a, sigma_z)
     end
-    return make_qop(problem, rho, sigma_a, sigma_z)
+    return make_qop(model, problem, rho, sigma_a, sigma_z)
 end
 
 function q_diag(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    return q_diag(problem.model, problem, rho, sigma_a, sigma_z)
+end
+
+function q_diag(::AbstractBipartiteModel, problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
     inv_sa2 = 1.0 / sigma_a^2
     inv_sz2 = 1.0 / sigma_z^2
     n = problem.N_firms + problem.N_workers
     out = Vector{Float64}(undef, n)
-    if problem.prior isa VarianceStablePrior
-        @inbounds for i in 1:problem.N_firms
-            out[i] = (1.0 + rho^2 * (problem.d_f[i] - 1.0)) * inv_sa2
-        end
-        @inbounds for j in 1:problem.N_workers
-            out[problem.N_firms + j] = (1.0 + rho^2 * (problem.d_w[j] - 1.0)) * inv_sz2
-        end
-    else
-        @inbounds for i in 1:problem.N_firms
-            out[i] = problem.diag_f[i] * inv_sa2
-        end
-        @inbounds for j in 1:problem.N_workers
-            out[problem.N_firms + j] = problem.diag_w[j] * inv_sz2
-        end
+    @inbounds for i in 1:problem.N_firms
+        out[i] = problem.diag_f[i] * inv_sa2
+    end
+    @inbounds for j in 1:problem.N_workers
+        out[problem.N_firms + j] = problem.diag_w[j] * inv_sz2
+    end
+    return out
+end
+
+function q_diag(model::BipartiteVarianceStableModel, problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    inv_sa2 = 1.0 / sigma_a^2
+    inv_sz2 = 1.0 / sigma_z^2
+    g = model.graph
+    n = g.n_firms + g.n_workers
+    out = Vector{Float64}(undef, n)
+    @inbounds for i in 1:g.n_firms
+        out[i] = (1.0 + rho^2 * (g.d_f[i] - 1.0)) * inv_sa2
+    end
+    @inbounds for j in 1:g.n_workers
+        out[g.n_firms + j] = (1.0 + rho^2 * (g.d_w[j] - 1.0)) * inv_sz2
     end
     return out
 end
@@ -259,8 +268,8 @@ function make_hutch_cache(problem::GMRFProblem, solver::HutchSLQ)
     n = problem.N_firms + problem.N_workers
     qop = q_operator(problem, 0.0, 1.0, 1.0)
     mop = MOp(qop, problem.VtV, zeros(n), 1.0)
-    if problem.prior isa VarianceStablePrior
-        bop = make_qop_vs(problem, 0.0, 1.0, 1.0)
+    if problem.model isa BipartiteVarianceStableModel
+        bop = make_qop_vs(problem.model, 0.0, 1.0, 1.0)
         kop = ScaledMOp(bop, problem.VtV, ones(n), zeros(n), zeros(n), 1.0)
         return VSHutchCache(
             Vector{Float64}(diag(problem.VtV)),
