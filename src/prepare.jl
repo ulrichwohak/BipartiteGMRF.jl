@@ -110,7 +110,7 @@ function filter_max_degree(df::DataFrame, max_degree::Int, firm_id::Symbol, work
     return filter(row -> row[firm_id] in keep_firms && row[worker_id] in keep_workers, df)
 end
 
-function prior_adjacency(prior::AbstractGMRFPrior)
+function prior_adjacency(prior::ModelSpec)
     prior isa NormalizedPrior && return prior.prior_adjacency
     prior isa UnnormalizedPrior && return prior.prior_adjacency
     prior isa SpectralPrior && return prior.prior_adjacency
@@ -118,51 +118,6 @@ function prior_adjacency(prior::AbstractGMRFPrior)
     error("Unknown prior type $(typeof(prior)).")
 end
 
-function prepare_prior_scaling(A_prior::SparseMatrixCSC{Float64,Int}, prior::AbstractGMRFPrior)
-    n_firms, n_workers = size(A_prior)
-    At_prior = copy(transpose(A_prior))
-    d_f = vec(sum(A_prior; dims=2))
-    d_w = vec(sum(A_prior; dims=1))
-    if any(d_f .<= 0) || any(d_w .<= 0)
-        throw(ArgumentError("Zero-degree node detected; check IDs or filtering."))
-    end
-
-    if prior isa NormalizedPrior
-        df_is = 1.0 ./ sqrt.(d_f)
-        dw_is = 1.0 ./ sqrt.(d_w)
-        diag_f = ones(Float64, n_firms)
-        diag_w = ones(Float64, n_workers)
-    elseif prior isa SpectralPrior
-        s1 = leading_singular_value(A_prior, At_prior; seed=prior.seed)
-        s1 > 0 || throw(ArgumentError("Cannot spectral-normalize an empty adjacency matrix."))
-        df_is = fill(1.0 / sqrt(s1), n_firms)
-        dw_is = fill(1.0 / sqrt(s1), n_workers)
-        diag_f = ones(Float64, n_firms)
-        diag_w = ones(Float64, n_workers)
-    elseif prior isa UnnormalizedPrior
-        df_is = ones(Float64, n_firms)
-        dw_is = ones(Float64, n_workers)
-        diag_f = Float64.(d_f)
-        diag_w = Float64.(d_w)
-    elseif prior isa VarianceStablePrior
-        df_is = ones(Float64, n_firms)
-        dw_is = ones(Float64, n_workers)
-        diag_f = ones(Float64, n_firms)
-        diag_w = ones(Float64, n_workers)
-    else
-        error("Unknown prior type $(typeof(prior)).")
-    end
-
-    return (
-        At_prior = At_prior,
-        d_f = Float64.(d_f),
-        d_w = Float64.(d_w),
-        df_is = df_is,
-        dw_is = dw_is,
-        diag_f = diag_f,
-        diag_w = diag_w,
-    )
-end
 
 function GMRFProblem(; kwargs...)
     fields = fieldnames(GMRFProblem)
@@ -187,7 +142,7 @@ function GMRFProblem(
     outcome::Symbol=:y,
     firm_id::Symbol=:firm_id,
     worker_id::Symbol=:worker_id,
-    prior::AbstractGMRFPrior=NormalizedPrior(),
+    prior::ModelSpec=NormalizedPrior(),
     weighting::Weighting=Weighting(),
     max_degree::Union{Nothing,Int}=nothing,
     standardize::Bool=true,
@@ -327,7 +282,6 @@ function GMRFProblem(
     padj = prior_adjacency(prior)
     A_prior = copy(A_prior_base)
     padj == :binary && (A_prior.nzval .= 1.0)
-    pscale = prepare_prior_scaling(A_prior, prior)
     vs_metadata = NamedTuple()
     if prior isa VarianceStablePrior
         resolved = prepare_vs_feasibility(prior, A_prior)
@@ -351,8 +305,8 @@ function GMRFProblem(
         mean_edge_count = mean_edge_count,
         max_edge_count = max_edge_count,
         total_prior_weight = sum(A_prior.nzval),
-        max_prior_degree_f = maximum(pscale.d_f),
-        max_prior_degree_w = maximum(pscale.d_w),
+        max_prior_degree_f = maximum(vec(sum(A_prior; dims=2))),
+        max_prior_degree_w = maximum(vec(sum(A_prior; dims=1))),
     ), vs_metadata)
 
     return GMRFProblem(;
@@ -360,18 +314,10 @@ function GMRFProblem(
         ydot = Float64(base_stats.ydot),
         projected_y = base_stats.projected_y,
         VtV = base_stats.VtV,
-        A_prior = A_prior,
-        At_prior = pscale.At_prior,
         A_obs = base_stats.A_obs,
         At_obs = base_stats.At_obs,
-        d_f = pscale.d_f,
-        d_w = pscale.d_w,
         cnt_f = base_stats.cnt_f,
         cnt_w = base_stats.cnt_w,
-        df_is = pscale.df_is,
-        dw_is = pscale.dw_is,
-        diag_f = pscale.diag_f,
-        diag_w = pscale.diag_w,
         firm_ids = ids_f,
         worker_ids = ids_w,
         firm_to_index = firm_to_index,

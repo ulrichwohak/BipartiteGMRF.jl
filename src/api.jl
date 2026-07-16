@@ -15,7 +15,7 @@ function gmrf_mle(
     outcome::Symbol=:y,
     firm_id::Symbol=:firm_id,
     worker_id::Symbol=:worker_id,
-    prior::AbstractGMRFPrior=NormalizedPrior(),
+    prior::ModelSpec=NormalizedPrior(),
     solver::AbstractGMRFSolver=ExactCholesky(),
     weighting::Weighting=Weighting(),
     decompose::Union{Bool,Nothing,Int}=200,

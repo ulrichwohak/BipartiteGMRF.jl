@@ -89,7 +89,7 @@ end
     # exact log-dets sidestep the HutchSLQ small-sigma_z cancellation.
     ptree = GMRFProblem(tree_df(); prior=VarianceStablePrior(),
                         weighting=Weighting(observations=:raw))
-    @test BipartiteGMRF.is_forest(ptree.A_prior)
+    @test BipartiteGMRF.is_forest(ptree.model.graph.A)
     res = solve(ptree, ExactCholesky(optim_iters=200, polish=true); decompose=false, seed=1)
     @test res.converged
     @test isfinite(res.nll)
@@ -99,7 +99,7 @@ end
     # Cyclic graph: construction warns by default (strict_forest=false).
     pcyc = @test_warn "contains a cycle" GMRFProblem(synthetic_df();
         prior=VarianceStablePrior(), weighting=Weighting(observations=:raw))
-    @test !BipartiteGMRF.is_forest(pcyc.A_prior)
+    @test !BipartiteGMRF.is_forest(pcyc.model.graph.A)
     # strict_forest=true still errors at construction on a cyclic graph.
     @test_throws ArgumentError GMRFProblem(synthetic_df();
         prior=VarianceStablePrior(strict_forest=true), weighting=Weighting(observations=:raw))

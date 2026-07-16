@@ -60,32 +60,63 @@ function q_operator(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_
     if model isa BipartiteVarianceStableModel
         return make_qop_vs(model, rho, sigma_a, sigma_z)
     end
-    return make_qop(model, problem, rho, sigma_a, sigma_z)
+    return make_qop(model, rho, sigma_a, sigma_z)
 end
 
 function q_diag(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    return q_diag(problem.model, problem, rho, sigma_a, sigma_z)
+    return q_diag(problem.model, rho, sigma_a, sigma_z)
 end
 
-function q_diag(::AbstractBipartiteModel, problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+function q_diag(model::BipartiteNormalizedModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    g = model.graph
+    n = g.n_firms + g.n_workers
     inv_sa2 = 1.0 / sigma_a^2
     inv_sz2 = 1.0 / sigma_z^2
-    n = problem.N_firms + problem.N_workers
     out = Vector{Float64}(undef, n)
-    @inbounds for i in 1:problem.N_firms
-        out[i] = problem.diag_f[i] * inv_sa2
+    @inbounds for i in 1:g.n_firms
+        out[i] = inv_sa2
     end
-    @inbounds for j in 1:problem.N_workers
-        out[problem.N_firms + j] = problem.diag_w[j] * inv_sz2
+    @inbounds for j in 1:g.n_workers
+        out[g.n_firms + j] = inv_sz2
     end
     return out
 end
 
-function q_diag(model::BipartiteVarianceStableModel, problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    inv_sa2 = 1.0 / sigma_a^2
-    inv_sz2 = 1.0 / sigma_z^2
+function q_diag(model::BipartiteUnnormalizedModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
     g = model.graph
     n = g.n_firms + g.n_workers
+    inv_sa2 = 1.0 / sigma_a^2
+    inv_sz2 = 1.0 / sigma_z^2
+    out = Vector{Float64}(undef, n)
+    @inbounds for i in 1:g.n_firms
+        out[i] = g.d_f[i] * inv_sa2
+    end
+    @inbounds for j in 1:g.n_workers
+        out[g.n_firms + j] = g.d_w[j] * inv_sz2
+    end
+    return out
+end
+
+function q_diag(model::BipartiteSpectralModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    g = model.graph
+    n = g.n_firms + g.n_workers
+    inv_sa2 = 1.0 / sigma_a^2
+    inv_sz2 = 1.0 / sigma_z^2
+    out = Vector{Float64}(undef, n)
+    @inbounds for i in 1:g.n_firms
+        out[i] = inv_sa2
+    end
+    @inbounds for j in 1:g.n_workers
+        out[g.n_firms + j] = inv_sz2
+    end
+    return out
+end
+
+function q_diag(model::BipartiteVarianceStableModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    g = model.graph
+    n = g.n_firms + g.n_workers
+    inv_sa2 = 1.0 / sigma_a^2
+    inv_sz2 = 1.0 / sigma_z^2
     out = Vector{Float64}(undef, n)
     @inbounds for i in 1:g.n_firms
         out[i] = (1.0 + rho^2 * (g.d_f[i] - 1.0)) * inv_sa2

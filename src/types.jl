@@ -54,7 +54,7 @@ end
 """
 Abstract supertype for model specifications passed to `gmrf_mle` / `GMRFProblem`.
 """
-abstract type AbstractGMRFPrior end
+abstract type ModelSpec end
 
 function validate_rho_limit(rho_limit::Real)
     limit = Float64(rho_limit)
@@ -68,7 +68,7 @@ end
 
 Degree-normalized bipartite GMRF model specification.
 """
-struct NormalizedPrior <: AbstractGMRFPrior
+struct NormalizedPrior <: ModelSpec
     adjacency::Symbol
     prior_adjacency::Symbol
     rho_limit::Float64
@@ -90,7 +90,7 @@ end
 
 Unnormalized `D - ρA` model specification.
 """
-struct UnnormalizedPrior <: AbstractGMRFPrior
+struct UnnormalizedPrior <: ModelSpec
     prior_adjacency::Symbol
     rho_limit::Float64
     function UnnormalizedPrior(; prior_adjacency::Symbol=:binary, rho_limit::Real=0.99)
@@ -105,7 +105,7 @@ end
 
 Spectral-normalized model specification.
 """
-struct SpectralPrior <: AbstractGMRFPrior
+struct SpectralPrior <: ModelSpec
     prior_adjacency::Symbol
     seed::Int
     rho_limit::Float64
@@ -125,7 +125,7 @@ end
 
 Variance-stable model specification for forest-like graphs.
 """
-struct VarianceStablePrior{L<:Union{Float64,Symbol}} <: AbstractGMRFPrior
+struct VarianceStablePrior{L<:Union{Float64,Symbol}} <: ModelSpec
     strict_forest::Bool
     rho_limit::L
     function VarianceStablePrior(strict_forest::Bool, rho_limit::Float64)
@@ -150,7 +150,7 @@ function VarianceStablePrior(;
     return VarianceStablePrior(strict_forest, validate_rho_limit(rho_limit))
 end
 
-rho_limit(prior::AbstractGMRFPrior) = prior.rho_limit
+rho_limit(prior::ModelSpec) = prior.rho_limit
 rho_limit(::VarianceStablePrior{Symbol}) =
     throw(ArgumentError("rho_limit=:auto must be resolved by constructing a GMRFProblem."))
 
@@ -473,18 +473,10 @@ struct GMRFProblem{F,W}
     ydot::Float64
     projected_y::Vector{Float64}
     VtV::SparseMatrixCSC{Float64,Int}
-    A_prior::SparseMatrixCSC{Float64,Int}
-    At_prior::SparseMatrixCSC{Float64,Int}
     A_obs::SparseMatrixCSC{Float64,Int}
     At_obs::SparseMatrixCSC{Float64,Int}
-    d_f::Vector{Float64}
-    d_w::Vector{Float64}
     cnt_f::Vector{Float64}
     cnt_w::Vector{Float64}
-    df_is::Vector{Float64}
-    dw_is::Vector{Float64}
-    diag_f::Vector{Float64}
-    diag_w::Vector{Float64}
     firm_ids::Vector{F}
     worker_ids::Vector{W}
     firm_to_index::Dict{F,Int}
@@ -504,7 +496,7 @@ struct GMRFProblem{F,W}
     y_mean::Float64
     y_std::Float64
     standardize::Bool
-    prior::AbstractGMRFPrior
+    prior::ModelSpec
     model::AbstractBipartiteModel
     weighting::Weighting
     rho_eps_likelihood::Union{Nothing,Float64}
@@ -550,7 +542,7 @@ Fitted bipartite-GMRF model returned by `solve` and `gmrf_mle`.
 """
 struct GMRFResult{
     P<:GMRFProblem,
-    R<:AbstractGMRFPrior,
+    R<:ModelSpec,
     S<:AbstractGMRFSolver,
 }
     rho::Float64
@@ -603,7 +595,7 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
-    to_model(spec::AbstractGMRFPrior, A_prior) -> AbstractBipartiteModel
+    to_model(spec::ModelSpec, A_prior) -> AbstractBipartiteModel
 
 Convert a lightweight model specification into a full `LatentModel` subtype
 bound to the given adjacency matrix.

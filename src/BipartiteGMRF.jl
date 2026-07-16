@@ -25,7 +25,8 @@ import StatsAPI: coef, loglikelihood, nobs
 using Statistics: mean, std
 
 # Model specification types (lightweight, passed to gmrf_mle)
-export NormalizedPrior,
+export ModelSpec,
+    NormalizedPrior,
     UnnormalizedPrior,
     SpectralPrior,
     VarianceStablePrior,

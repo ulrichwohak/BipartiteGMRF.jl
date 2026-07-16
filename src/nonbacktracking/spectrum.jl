@@ -272,4 +272,4 @@ function nb_spectrum(
     )
 end
 
-nb_spectrum(problem::GMRFProblem; kwargs...) = nb_spectrum(problem.A_prior; kwargs...)
+nb_spectrum(problem::GMRFProblem; kwargs...) = nb_spectrum(problem.model.graph.A; kwargs...)
