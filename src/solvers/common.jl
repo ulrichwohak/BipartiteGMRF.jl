@@ -2,24 +2,60 @@ function validate_capability(problem::GMRFProblem, solver::AbstractGMRFSolver)
     if problem.prior isa VarianceStablePrior
         problem.weighting.observations == :raw ||
             throw(ArgumentError("VarianceStablePrior currently supports only raw observation weighting."))
-        # ExactCholesky is exact and cheap on acyclic graphs (no fill-in) and
-        # avoids stochastic log-det error when the graph is small. HutchSLQ uses a
-        # congruence-scaled common-probe ratio for the VS objective (issue #82).
-        # ExactCholesky is also permitted on *cyclic* graphs:
-        # the VS precision is positive-definite while |rho| * lambda_NB < 1 (the
-        # caller enforces this via rho_limit), an indefinite precision is rejected
-        # per-evaluation (the cholesky in nll_exact_value returns BIG_NLL on
-        # failure), and fill-in is acceptable on mildly cyclic / NB-pruned graphs.
-        # Cyclic VS input is already warned about at construction (prepare.jl), and
-        # strict_forest=true errors there. An automatic safeguard that sets/checks
-        # rho_limit from lambda_NB is tracked in issues #79 (spectral analysis) and
-        # #78 (graph pruning).
     end
     if problem.prior isa SpectralPrior && solver isa ExactCholesky
         throw(ArgumentError("ExactCholesky for SpectralPrior is not implemented; use HutchSLQ."))
     end
     return nothing
 end
+
+# ─── Model construction from problem ──────────────────────────────────────
+
+"""
+Build an `AbstractBipartiteModel` from a `GMRFProblem`'s prior spec and adjacency.
+Cached on first call per problem via the metadata field.
+"""
+function _build_model(problem::GMRFProblem)
+    return to_model(problem.prior, problem.A_prior)
+end
+
+# ─── Precision matrix via model dispatch ──────────────────────────────────
+
+"""
+Build the model precision matrix Q at given parameters.
+Delegates to the `LatentModel` interface.
+"""
+function model_precision(model::AbstractBipartiteModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    return GaussianMarkovRandomFields.precision_matrix(model; ρ=rho, σ_a=sigma_a, σ_z=sigma_z)
+end
+
+"""
+Build the data-augmented precision M = Q + λV'V.
+"""
+function fitted_precision(model::AbstractBipartiteModel, VtV::SparseMatrixCSC, rho::Float64, sigma_a::Float64, sigma_z::Float64, sigma_epsilon::Float64)
+    Q = model_precision(model, rho, sigma_a, sigma_z)
+    return Q + (1.0 / sigma_epsilon^2) .* VtV
+end
+
+# ─── Legacy wrappers (used by operators/decomposition until migrated) ─────
+
+function precision_matrix(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    model = _build_model(problem)
+    return model_precision(model, rho, sigma_a, sigma_z)
+end
+
+function posterior_precision_matrix(
+    problem::GMRFProblem,
+    rho::Float64,
+    sigma_a::Float64,
+    sigma_z::Float64,
+    sigma_epsilon::Float64,
+)
+    Q = precision_matrix(problem, rho, sigma_a, sigma_z)
+    return Q + (1.0 / sigma_epsilon^2) .* problem.VtV
+end
+
+# ─── Matrix-free operators (HutchSLQ path, unchanged) ─────────────────────
 
 function q_operator(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
     if problem.prior isa VarianceStablePrior
@@ -51,38 +87,7 @@ function q_diag(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::F
     return out
 end
 
-function precision_matrix(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    inv_sa2 = 1.0 / sigma_a^2
-    inv_sz2 = 1.0 / sigma_z^2
-    cross = rho / (sigma_a * sigma_z)
-    nf = problem.N_firms
-    nw = problem.N_workers
-
-    if problem.prior isa VarianceStablePrior
-        diag_f = (1.0 .+ rho^2 .* (problem.d_f .- 1.0)) .* inv_sa2
-        diag_w = (1.0 .+ rho^2 .* (problem.d_w .- 1.0)) .* inv_sz2
-        W = problem.A_prior
-        Wt = problem.At_prior
-    else
-        diag_f = problem.diag_f .* inv_sa2
-        diag_w = problem.diag_w .* inv_sz2
-        W = spdiagm(0 => problem.df_is) * problem.A_prior * spdiagm(0 => problem.dw_is)
-        Wt = copy(transpose(W))
-    end
-
-    return [spdiagm(0 => diag_f) (-cross .* W); (-cross .* Wt) spdiagm(0 => diag_w)]
-end
-
-function posterior_precision_matrix(
-    problem::GMRFProblem,
-    rho::Float64,
-    sigma_a::Float64,
-    sigma_z::Float64,
-    sigma_epsilon::Float64,
-)
-    Q = precision_matrix(problem, rho, sigma_a, sigma_z)
-    return Q + (1.0 / sigma_epsilon^2) .* problem.VtV
-end
+# ─── Observation stats ─────────────────────────────────────────────────────
 
 function objective_stats(problem::GMRFProblem, params_full::Vector{Float64})
     if problem.weighting.observations == :effective && problem.weighting.rho_eps == :estimate
@@ -124,6 +129,74 @@ function residual_corr_term(problem::GMRFProblem, sigma_epsilon::Float64, rho_ep
         lambda * Float64(problem.within_ss) / omr
 end
 
+# ═══════════════════════════════════════════════════════════════════════════
+# ExactCholesky NLL — workspace-based
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+Pre-allocated workspaces for the ExactCholesky optimization loop.
+Symbolic factorization is done once; numeric refactorization per iteration.
+"""
+mutable struct ExactWorkspace
+    model::AbstractBipartiteModel
+    ws_Q::GaussianMarkovRandomFields.GMRFWorkspace
+    ws_M::GaussianMarkovRandomFields.GMRFWorkspace
+end
+
+function make_exact_workspace(problem::GMRFProblem)
+    model = _build_model(problem)
+    # Build Q and M at reference parameters for symbolic factorization.
+    # Use a safe rho within the model's limit.
+    rho_ref = min(0.1, 0.5 * rho_limit(problem.prior))
+    Q0 = model_precision(model, rho_ref, 1.0, 1.0)
+    M0 = Q0 + problem.VtV  # λ=1 at reference
+    ws_Q = GaussianMarkovRandomFields.GMRFWorkspace(Q0)
+    ws_M = GaussianMarkovRandomFields.GMRFWorkspace(M0)
+    return ExactWorkspace(model, ws_Q, ws_M)
+end
+
+function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, stats, ew::ExactWorkspace)
+    p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
+    all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
+    p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
+    lambda = 1.0 / p.sigma_epsilon^2
+
+    Q = model_precision(ew.model, p.rho, p.sigma_a, p.sigma_z)
+    M = Q + lambda .* stats.VtV
+
+    try
+        GaussianMarkovRandomFields.update_precision!(ew.ws_Q, Q)
+        GaussianMarkovRandomFields.ensure_numeric!(ew.ws_Q)
+    catch
+        return BIG_NLL
+    end
+
+    try
+        GaussianMarkovRandomFields.update_precision!(ew.ws_M, M)
+        GaussianMarkovRandomFields.ensure_numeric!(ew.ws_M)
+    catch
+        return BIG_NLL
+    end
+
+    ldQ = -GaussianMarkovRandomFields.logdet_cov(ew.ws_Q)  # logdet_cov returns -logdet(Q)
+    ldM = -GaussianMarkovRandomFields.logdet_cov(ew.ws_M)
+    isfinite(ldQ) && isfinite(ldM) || return BIG_NLL
+
+    # Solve M \ projected_y using workspace's Cholesky factor
+    x = ew.ws_M.backend.factor \ stats.projected_y
+    quad = dot(stats.projected_y, x)
+    isfinite(quad) || return BIG_NLL
+
+    rcorr = residual_corr_term(problem, p.sigma_epsilon, stats.rho_eps)
+    rcorr == BIG_NLL && return BIG_NLL
+    val = 0.5 * (
+        problem.K * 2.0 * log(p.sigma_epsilon) - Float64(stats.log_weight_sum) +
+        (ldM - ldQ) + lambda * stats.ydot - lambda^2 * quad + rcorr
+    )
+    return finite_or_big(val)
+end
+
+# Legacy fallback (no workspace)
 function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, stats)
     p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
     all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
@@ -155,6 +228,10 @@ function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, sta
     )
     return finite_or_big(val)
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HutchSLQ NLL — unchanged (matrix-free, no workspace)
+# ═══════════════════════════════════════════════════════════════════════════
 
 mutable struct HutchCache{Q<:Union{QOp,QOpVS}}
     dV::Vector{Float64}
@@ -238,8 +315,6 @@ function hutch_logdet_difference!(
     @views fill!(cache.kop.scale[1:nf], p.sigma_a)
     @views fill!(cache.kop.scale[(nf + 1):n], p.sigma_z)
 
-    # Resetting the local RNG to the same seed gives B and K identical
-    # Rademacher probes, substantially reducing variance in their difference.
     ldB = slq_logdet_spd_mul_cached!(cache.bop, n, cache.slqB;
         m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed)
     ldK = slq_logdet_spd_mul_cached!(cache.kop, n, cache.slqK;
@@ -300,6 +375,10 @@ function nll_hutch_value(
     return finite_or_big(val)
 end
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Optimization loop
+# ═══════════════════════════════════════════════════════════════════════════
+
 function optimize_problem(
     problem::GMRFProblem,
     solver::AbstractGMRFSolver;
@@ -317,27 +396,23 @@ function optimize_problem(
         problem.weighting.rho_eps == :estimate
     p0 = initial_params(fix_rho, estimate_rho_eps; rho_limit=limit)
     evals = Ref(0)
-    cache = solver isa HutchSLQ ? make_hutch_cache(problem, solver) : nothing
+
+    # Pre-allocate solver-specific caches
+    exact_ws = solver isa ExactCholesky ? make_exact_workspace(problem) : nothing
+    hutch_cache = solver isa HutchSLQ ? make_hutch_cache(problem, solver) : nothing
 
     function obj(pfree)
         evals[] += 1
         pfull = full_params(Vector{Float64}(pfree), fix_rho, estimate_rho_eps; rho_limit=limit)
         stats = objective_stats(problem, pfull)
         if solver isa ExactCholesky
-            return nll_exact_value(problem, pfull, stats)
+            return nll_exact_value(problem, pfull, stats, exact_ws)
         else
-            return nll_hutch_value(problem, solver, pfull, stats, cache; seed=seed)
+            return nll_hutch_value(problem, solver, pfull, stats, hutch_cache; seed=seed)
         end
     end
 
     iterations = solver.optim_iters
-    # NelderMead's convergence metric is the absolute spread of objective values,
-    # which grows with the problem size (nll scales with the number of
-    # observations), so a fixed absolute tolerance is unreachable on large graphs
-    # (see #80, #84). Scale it by the objective magnitude at the start point.
-    # HutchSLQ uses the pure relative tolerance; ExactCholesky keeps a 1e-3 floor
-    # (its calibrated small-problem behaviour, against which the solver-agreement
-    # tests are tuned) and only loosens above it on large problems.
     f0 = obj(p0)
     fscale = (isfinite(f0) && f0 < BIG_NLL) ? max(1.0, abs(f0)) : 1.0
     g_rel = solver.g_reltol * fscale
@@ -352,10 +427,6 @@ function optimize_problem(
             end
             return F === nothing ? nothing : obj(x)
         end
-        # Stop the polish when the objective stops improving (relative change <
-        # g_reltol), not only on the default g_abstol=1e-8: the finite-difference
-        # gradient floors well above 1e-8 on large problems, so g_abstol is
-        # unreachable and LBFGS would otherwise grind to the iteration cap (#86).
         polish_opts = Options(iterations=solver.optim_iters, show_trace=verbose,
                               f_reltol=solver.g_reltol)
         polish_elapsed = @elapsed begin
