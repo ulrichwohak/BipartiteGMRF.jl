@@ -19,37 +19,62 @@ end
 
 @testset "E2E: MLE vs LeaveOut parameter recovery (10 reps)" begin
     n_reps = 10
-    n_firms = 100
-    n_workers = 150
-    n_edges = 350
-    truth = (rho=0.3, sigma_a=1.0, sigma_z=0.5, sigma_epsilon=1.0)
+    n_firms = 200
+    n_workers = 300
+    n_edges = 1000
+    truth = (rho=0.2, sigma_a=1.0, sigma_z=0.5, sigma_epsilon=1.0)
 
-    # Fixed graph across reps (seed=42 for graph generation)
+    # --- Build graph and prune to bridgeless core ---
     graph_rng = MersenneTwister(42)
-    edges = connected_random_edges(graph_rng, n_firms, n_workers, n_edges)
-    I_idx = [e[1] for e in edges]
-    J_idx = [e[2] for e in edges]
-    A = sparse(I_idx, J_idx, ones(length(edges)), n_firms, n_workers)
+    raw_edges = connected_random_edges(graph_rng, n_firms, n_workers, n_edges)
 
-    # Resolve VS feasibility once
-    vs_result = BipartiteGMRF.prepare_vs_feasibility(VarianceStablePrior(rho_limit=:auto), A)
+    # Resolve NB spectral radius on full graph (conservative bound)
+    A_full = sparse([e[1] for e in raw_edges], [e[2] for e in raw_edges],
+                    ones(length(raw_edges)), n_firms, n_workers)
+    vs_result = BipartiteGMRF.prepare_vs_feasibility(VarianceStablePrior(rho_limit=:auto), A_full)
     resolved_limit = vs_result.metadata.resolved_rho_limit
     @test resolved_limit > truth.rho
 
+    # Build SimpleGraph and drop bridges
+    g_full = SimpleGraph(n_firms + n_workers)
+    for (f, w) in raw_edges
+        add_edge!(g_full, f, n_firms + w)
+    end
+    d_full = Design(g_full)
+    block, ekeep, nodemap = largest_block(d_full)
+
+    # Map pruned graph back to bipartite adjacency
+    # nodemap[i] = original node id; firms: orig ≤ n_firms, workers: orig > n_firms
+    firm_orig = [nodemap[i] for i in 1:length(nodemap) if nodemap[i] <= n_firms]
+    worker_orig = [nodemap[i] - n_firms for i in 1:length(nodemap) if nodemap[i] > n_firms]
+    firm_reindex = Dict(orig => idx for (idx, orig) in enumerate(firm_orig))
+    worker_reindex = Dict(orig => idx for (idx, orig) in enumerate(worker_orig))
+    nf = length(firm_orig)
+    nw = length(worker_orig)
+
+    # Pruned edges in bipartite (firm_idx, worker_idx) coordinates
+    pruned_edges = Tuple{Int,Int}[]
+    for e in block.edges
+        src_orig, dst_orig = nodemap[e[1]], nodemap[e[2]]
+        if src_orig <= n_firms
+            push!(pruned_edges, (firm_reindex[src_orig], worker_reindex[dst_orig - n_firms]))
+        else
+            push!(pruned_edges, (firm_reindex[dst_orig], worker_reindex[src_orig - n_firms]))
+        end
+    end
+    I_idx = [e[1] for e in pruned_edges]
+    J_idx = [e[2] for e in pruned_edges]
+    A = sparse(I_idx, J_idx, ones(length(pruned_edges)), nf, nw)
+
+    # Build model on pruned graph with resolved rho_limit
     model = BipartiteGMRF.to_model(VarianceStablePrior(rho_limit=resolved_limit), A)
 
-    # Model-implied variance components at TRUE parameters (same across reps)
+    # Model-implied variance components at TRUE parameters
     Q_true = BipartiteGMRF.model_precision(model, truth.rho, truth.sigma_a, truth.sigma_z)
     Σ_true = inv(Matrix(Q_true))
-    vc_true = edge_variance_components(Σ_true, I_idx, J_idx, n_firms)
+    vc_true = edge_variance_components(Σ_true, I_idx, J_idx, nf)
 
-    # LeaveOut design (same across reps)
-    g = SimpleGraph(n_firms + n_workers)
-    for (f, w) in edges
-        add_edge!(g, f, n_firms + w)
-    end
-    d = Design(g)
-    block, ekeep, nodemap = largest_block(d)
+    # LeaveOut design on pruned graph (no further pruning needed)
     managers_in_block = [i for (i, orig) in enumerate(nodemap) if orig <= n_firms]
     pb = prepare(block)
 
@@ -63,22 +88,30 @@ end
             ρ=truth.rho, σ_a=truth.sigma_a, σ_z=truth.sigma_z, σ_ε=truth.sigma_epsilon,
             rng=sim_rng)
 
-        # MLE
-        df = DataFrame(firm_id=sim.firm_ids, worker_id=sim.worker_ids .+ 1000, y=sim.y)
+        # MLE on same pruned graph
+        df = DataFrame(firm_id=sim.firm_ids, worker_id=sim.worker_ids .+ 10000, y=sim.y)
         mle_result = gmrf_mle(df;
-            prior=VarianceStablePrior(rho_limit=:auto),
+            prior=VarianceStablePrior(rho_limit=resolved_limit),
             solver=ExactCholesky(optim_iters=200, polish=true),
             standardize=false, decompose=false, seed=rep, verbose=false)
 
         Q_mle = BipartiteGMRF.model_precision(model, mle_result.rho, mle_result.sigma_a, mle_result.sigma_z)
         Σ_mle = inv(Matrix(Q_mle))
-        vc_mle = edge_variance_components(Σ_mle, I_idx, J_idx, n_firms)
+        vc_mle = edge_variance_components(Σ_mle, I_idx, J_idx, nf)
         mle_acc .+= [vc_mle.var_firm, vc_mle.var_worker, vc_mle.cov, vc_mle.corr, mle_result.sigma_epsilon^2]
 
-        # KSS
-        edge_to_y = Dict((f, n_firms + w) => sim.y[k] for (k, (f, w)) in enumerate(edges))
-        Y_full = [edge_to_y[e] for e in d.edges]
-        lo = LeaveOut.decompose(pb, Y_full[ekeep]; managers=managers_in_block)
+        # KSS on same pruned graph — Y aligned to block.edges
+        edge_to_y = Dict(pruned_edges[k] => sim.y[k] for k in eachindex(pruned_edges))
+        Y_block = Float64[]
+        for e in block.edges
+            src_orig, dst_orig = nodemap[e[1]], nodemap[e[2]]
+            if src_orig <= n_firms
+                push!(Y_block, edge_to_y[(firm_reindex[src_orig], worker_reindex[dst_orig - n_firms])])
+            else
+                push!(Y_block, edge_to_y[(firm_reindex[dst_orig], worker_reindex[src_orig - n_firms])])
+            end
+        end
+        lo = LeaveOut.decompose(pb, Y_block; managers=managers_in_block)
         kss_acc .+= [lo.var_theta, lo.var_psi, lo.cov, lo.corr, lo.var_eps]
     end
 
@@ -96,7 +129,8 @@ end
     @printf("  %s\n", "-"^60)
     @printf("  True params: ρ=%.4f  σ_a=%.4f  σ_z=%.4f  σ_ε=%.4f\n",
             truth.rho, truth.sigma_a, truth.sigma_z, truth.sigma_epsilon)
-    @printf("  Edges: %d total, %d after pruning, %d reps\n", length(edges), length(ekeep), n_reps)
+    @printf("  Graph: %d firms, %d workers, %d edges (from %d raw, %d after pruning), %d reps\n",
+            nf, nw, length(pruned_edges), length(raw_edges), length(ekeep), n_reps)
     println()
 
     # --- Assertions (on averages) ---
