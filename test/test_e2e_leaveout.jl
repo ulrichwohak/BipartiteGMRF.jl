@@ -35,11 +35,11 @@ end
     resolved_limit = vs_result.metadata.resolved_rho_limit
     @test resolved_limit > truth.rho
 
-    # Build SimpleGraph and drop bridges
-    g_full = SimpleGraph(n_firms + n_workers)
-    for (f, w) in raw_edges
-        add_edge!(g_full, f, n_firms + w)
-    end
+    # Build SimpleGraph from bipartite adjacency block matrix [0 A; A' 0]
+    Z1 = spzeros(n_firms, n_firms)
+    Z2 = spzeros(n_workers, n_workers)
+    adj = [Z1 A_full; A_full' Z2]
+    g_full = SimpleGraph(adj)
     d_full = Design(g_full)
     block, ekeep, nodemap = largest_block(d_full)
 
