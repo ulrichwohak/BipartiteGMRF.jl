@@ -19,7 +19,7 @@ function _decompose_fitted(
     rhs = lambda .* problem.projected_y
     local solve_probe
     if result.solver isa ExactCholesky
-        M = posterior_precision_matrix(problem, p.rho, sigma_a, sigma_z, sigma_e)
+        M = fitted_precision(problem.model, problem.VtV, p.rho, sigma_a, sigma_z, sigma_e)
         FM = cholesky(Symmetric(M))
         theta_hat = FM \ rhs
         solve_probe = v -> (FM \ v, true, 0.0)

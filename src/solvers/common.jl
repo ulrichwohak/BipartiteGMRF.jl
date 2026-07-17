@@ -10,13 +10,6 @@ function validate_capability(problem::GMRFProblem, solver::AbstractGMRFSolver)
     return nothing
 end
 
-# ─── Model construction from problem ──────────────────────────────────────
-
-"""
-Return the `AbstractBipartiteModel` stored on the problem.
-"""
-_build_model(problem::GMRFProblem) = problem.model
-
 # ─── Precision matrix via model dispatch ──────────────────────────────────
 
 """
@@ -33,24 +26,6 @@ Build the data-augmented precision M = Q + λV'V.
 function fitted_precision(model::AbstractBipartiteModel, VtV::SparseMatrixCSC, rho::Float64, sigma_a::Float64, sigma_z::Float64, sigma_epsilon::Float64)
     Q = model_precision(model, rho, sigma_a, sigma_z)
     return Q + (1.0 / sigma_epsilon^2) .* VtV
-end
-
-# ─── Legacy wrappers (used by operators/decomposition until migrated) ─────
-
-function precision_matrix(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    model = _build_model(problem)
-    return model_precision(model, rho, sigma_a, sigma_z)
-end
-
-function posterior_precision_matrix(
-    problem::GMRFProblem,
-    rho::Float64,
-    sigma_a::Float64,
-    sigma_z::Float64,
-    sigma_epsilon::Float64,
-)
-    Q = precision_matrix(problem, rho, sigma_a, sigma_z)
-    return Q + (1.0 / sigma_epsilon^2) .* problem.VtV
 end
 
 # ─── Matrix-free operators (HutchSLQ path, unchanged) ─────────────────────
@@ -184,7 +159,7 @@ mutable struct ExactWorkspace
 end
 
 function make_exact_workspace(problem::GMRFProblem)
-    model = _build_model(problem)
+    model = problem.model
     # Build Q and M at reference parameters for symbolic factorization.
     # Use a safe rho within the model's limit.
     rho_ref = min(0.1, 0.5 * rho_limit(problem.prior))
@@ -201,20 +176,15 @@ function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, sta
     p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
     lambda = 1.0 / p.sigma_epsilon^2
 
-    Q = model_precision(ew.model, p.rho, p.sigma_a, p.sigma_z)
-    M = Q + lambda .* stats.VtV
-
     try
+        Q = model_precision(ew.model, p.rho, p.sigma_a, p.sigma_z)
+        M = Q + lambda .* stats.VtV
         GaussianMarkovRandomFields.update_precision!(ew.ws_Q, Q)
         GaussianMarkovRandomFields.ensure_numeric!(ew.ws_Q)
-    catch
-        return BIG_NLL
-    end
-
-    try
         GaussianMarkovRandomFields.update_precision!(ew.ws_M, M)
         GaussianMarkovRandomFields.ensure_numeric!(ew.ws_M)
-    catch
+    catch e
+        e isa InterruptException && rethrow()
         return BIG_NLL
     end
 
@@ -222,8 +192,7 @@ function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, sta
     ldM = -GaussianMarkovRandomFields.logdet_cov(ew.ws_M)
     isfinite(ldQ) && isfinite(ldM) || return BIG_NLL
 
-    # Solve M \ projected_y using workspace's Cholesky factor
-    x = ew.ws_M.backend.factor \ stats.projected_y
+    x = GaussianMarkovRandomFields.workspace_solve(ew.ws_M, stats.projected_y)
     quad = dot(stats.projected_y, x)
     isfinite(quad) || return BIG_NLL
 
@@ -242,16 +211,14 @@ function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, sta
     all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
     p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
     lambda = 1.0 / p.sigma_epsilon^2
-    Q = precision_matrix(problem, p.rho, p.sigma_a, p.sigma_z)
-    M = Q + lambda .* stats.VtV
-    FQ = try
-        cholesky(Symmetric(Q))
-    catch
-        return BIG_NLL
-    end
-    FM = try
-        cholesky(Symmetric(M))
-    catch
+    local FQ, FM
+    try
+        Q = model_precision(problem.model, p.rho, p.sigma_a, p.sigma_z)
+        M = Q + lambda .* stats.VtV
+        FQ = cholesky(Symmetric(Q))
+        FM = cholesky(Symmetric(M))
+    catch e
+        e isa InterruptException && rethrow()
         return BIG_NLL
     end
     ldQ = logdet(FQ)

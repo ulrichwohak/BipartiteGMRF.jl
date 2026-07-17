@@ -26,7 +26,7 @@
     entity_cols = vcat(problem.base_f_rows, problem.N_firms .+ problem.base_w_cols)
     V = sparse(obs_rows, entity_cols, ones(Float64, 2k), k, n)
 
-    Q = BipartiteGMRF.precision_matrix(problem, rho, sigma_a, sigma_z)
+    Q = BipartiteGMRF.model_precision(problem.model, rho, sigma_a, sigma_z)
     prior_cov = inv(Matrix(Q))
     Sigma_y = Matrix(V * prior_cov * transpose(V)) + sigma_epsilon^2 * Matrix{Float64}(I, k, k)
     dense_nll = 0.5 * (

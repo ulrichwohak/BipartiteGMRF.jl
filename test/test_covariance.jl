@@ -3,7 +3,7 @@
     problem = result.problem
     sigma_a = result.sigma_a / problem.y_std
     sigma_z = result.sigma_z / problem.y_std
-    Q = BipartiteGMRF.precision_matrix(problem, result.rho, sigma_a, sigma_z)
+    Q = BipartiteGMRF.model_precision(problem.model, result.rho, sigma_a, sigma_z)
     Sigma = inv(Matrix(Q)) .* problem.y_std^2
 
     op = covariance(result; kind=:model, units=:original)

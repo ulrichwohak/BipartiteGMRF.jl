@@ -95,7 +95,7 @@ function _decompose_model(
     wv_w = Vector{Float64}(undef, problem.N_workers)
 
     if result.solver isa ExactCholesky
-        Q = precision_matrix(problem, p.rho, sigma_a, sigma_z)
+        Q = model_precision(problem.model, p.rho, sigma_a, sigma_z)
         FQ = cholesky(Symmetric(Q))
         for _ in 1:probes
             @inbounds for i in 1:n

@@ -16,7 +16,7 @@ function jet_problem_flow(problem_values)
 end
 
 function jet_exact_solve_flow(problem)
-    Q = BipartiteGMRF.precision_matrix(problem, 0.3, 0.8, 0.6)
+    Q = BipartiteGMRF.model_precision(problem.model, 0.3, 0.8, 0.6)
     M = Q + (1.0 / 0.25^2) .* problem.VtV
     return cholesky(Symmetric(M)) \ problem.projected_y
 end

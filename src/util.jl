@@ -86,8 +86,14 @@ end
 
 function unpack_params(params::AbstractVector{<:Real}; rho_limit::Real=0.99)
     limit = validate_rho_limit(rho_limit)
+    # Clamp to strictly interior: tanh saturates to ±1.0 for |x| ≳ 19,
+    # which would put ρ exactly on the boundary and trip validation in
+    # precision_matrix.  nextfloat(-limit) < ρ < prevfloat(limit) keeps
+    # Q positive-definite and the optimizer probe safe.
+    rho_raw = limit * tanh(Float64(params[1]))
+    rho = clamp(rho_raw, nextfloat(-limit), prevfloat(limit))
     return (
-        rho = limit * tanh(Float64(params[1])),
+        rho = rho,
         sigma_a = exp(Float64(params[2])),
         sigma_z = exp(Float64(params[3])),
         sigma_epsilon = exp(Float64(params[4])),
