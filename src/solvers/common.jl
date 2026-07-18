@@ -2,10 +2,10 @@ function validate_capability(problem::GMRFProblem, solver::AbstractGMRFSolver)
     model = problem.model
     if model isa BipartiteVarianceStableModel
         problem.weighting.observations == :raw ||
-            throw(ArgumentError("VarianceStablePrior currently supports only raw observation weighting."))
+            throw(ArgumentError("BipartiteVarianceStableModel currently supports only raw observation weighting."))
     end
     if model isa BipartiteSpectralModel && solver isa ExactCholesky
-        throw(ArgumentError("ExactCholesky for SpectralPrior is not implemented; use HutchSLQ."))
+        throw(ArgumentError("ExactCholesky for BipartiteSpectralModel is not implemented; use HutchSLQ."))
     end
     return nothing
 end
@@ -162,7 +162,7 @@ function make_exact_workspace(problem::GMRFProblem)
     model = problem.model
     # Build Q and M at reference parameters for symbolic factorization.
     # Use a safe rho within the model's limit.
-    rho_ref = min(0.1, 0.5 * rho_limit(problem.prior))
+    rho_ref = min(0.1, 0.5 * rho_limit(problem.model))
     Q0 = model_precision(model, rho_ref, 1.0, 1.0)
     M0 = Q0 + problem.VtV  # λ=1 at reference
     ws_Q = GaussianMarkovRandomFields.GMRFWorkspace(Q0)
@@ -171,7 +171,7 @@ function make_exact_workspace(problem::GMRFProblem)
 end
 
 function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, stats, ew::ExactWorkspace)
-    p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
+    p = unpack_params(params_full; rho_limit=rho_limit(problem.model))
     all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
     p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
     lambda = 1.0 / p.sigma_epsilon^2
@@ -207,7 +207,7 @@ end
 
 # Legacy fallback (no workspace)
 function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, stats)
-    p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
+    p = unpack_params(params_full; rho_limit=rho_limit(problem.model))
     all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
     p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
     lambda = 1.0 / p.sigma_epsilon^2
@@ -352,7 +352,7 @@ function nll_hutch_value(
     cache::Union{HutchCache,VSHutchCache};
     seed::Int,
 )
-    p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
+    p = unpack_params(params_full; rho_limit=rho_limit(problem.model))
     all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
     p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
 
@@ -394,7 +394,7 @@ function optimize_problem(
     verbose::Bool=false,
 )
     validate_capability(problem, solver)
-    limit = rho_limit(problem.prior)
+    limit = rho_limit(problem.model)
     if fix_rho !== nothing && !(abs(fix_rho) < limit)
         throw(ArgumentError("fix_rho must lie in (-$(limit), $(limit))."))
     end

@@ -92,16 +92,16 @@ import GaussianMarkovRandomFields
     end
 end
 
-@testset "to_model" begin
+@testset "direct model construction" begin
     A = sparse([1, 1, 2, 2, 3], [1, 2, 2, 3, 3], ones(5), 3, 3)
 
-    @test to_model(NormalizedPrior(), A) isa BipartiteNormalizedModel
-    @test to_model(UnnormalizedPrior(), A) isa BipartiteUnnormalizedModel
-    @test to_model(SpectralPrior(), A) isa BipartiteSpectralModel
-    @test to_model(VarianceStablePrior(), sparse([1, 2], [1, 1], ones(2), 2, 1)) isa BipartiteVarianceStableModel
+    @test BipartiteNormalizedModel(A) isa BipartiteNormalizedModel
+    @test BipartiteUnnormalizedModel(A) isa BipartiteUnnormalizedModel
+    @test BipartiteSpectralModel(A) isa BipartiteSpectralModel
+    @test BipartiteVarianceStableModel(sparse([1, 2], [1, 1], ones(2), 2, 1)) isa BipartiteVarianceStableModel
 
     # rho_limit propagates
-    m = to_model(NormalizedPrior(rho_limit=0.95), A)
+    m = BipartiteNormalizedModel(A; rho_limit=0.95)
     @test m.rho_limit == 0.95
 end
 

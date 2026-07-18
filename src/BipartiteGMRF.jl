@@ -24,22 +24,14 @@ using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
 import StatsAPI: coef, loglikelihood, nobs
 using Statistics: mean, std
 
-# Model specification types (lightweight, passed to gmrf_mle)
-export ModelSpec,
-    NormalizedPrior,
-    UnnormalizedPrior,
-    SpectralPrior,
-    VarianceStablePrior,
-    Weighting
-
-# Model types (LatentModel subtypes, graph-bound)
+# Model types (LatentModel subtypes)
 export AbstractBipartiteModel,
     BipartiteNormalizedModel,
     BipartiteUnnormalizedModel,
     BipartiteSpectralModel,
     BipartiteVarianceStableModel,
     BipartiteGraph,
-    to_model
+    Weighting
 
 # Solver types
 export AbstractGMRFSolver,
@@ -66,8 +58,7 @@ export NBSpectrum,
     rho_at_bound
 
 # Public API
-export gmrf_mle,
-    solve,
+export solve,
     decompose,
     covariance,
     cov_block,

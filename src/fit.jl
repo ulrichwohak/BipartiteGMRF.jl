@@ -56,12 +56,10 @@ function fit_mle(
         )
     end
 
-    # Build the model-specification prior (needed by current GMRFProblem path)
-    prior = _make_prior(M, Float64(resolved_rho_limit); seed=seed, strict_forest=strict_forest,
-                        model_adjacency=get(ss.metadata, :model_adjacency, :binary))
+    # Construct the model directly from adjacency
+    model = _build_model(M, ss.A_prior, Float64(resolved_rho_limit); seed=seed, strict_forest=strict_forest)
 
-    # Construct GMRFProblem from stats (bridge to existing solver infrastructure)
-    model = to_model(prior, ss.A_prior)
+    # Construct GMRFProblem from stats + model
     problem = GMRFProblem(;
         y = ss.base_y,
         ydot = ss.ydot,
@@ -90,7 +88,6 @@ function fit_mle(
         y_mean = ss.y_mean,
         y_std = ss.y_std,
         standardize = ss.standardize,
-        prior = prior,
         model = model,
         weighting = ss.weighting,
         rho_eps_likelihood = ss.rho_eps_likelihood,
@@ -157,41 +154,20 @@ function fit_mle(
     )
 end
 
-# ─── Helper: construct legacy Prior from model type + params ─────────────
+# ─── Model construction dispatch ─────────────────────────────────────────
 
-function _make_prior(
-    ::Type{BipartiteNormalizedModel},
-    rho_limit::Float64;
-    model_adjacency::Symbol=:binary,
-    kwargs...,
-)
-    return NormalizedPrior(; prior_adjacency=model_adjacency, rho_limit=rho_limit)
+function _build_model(::Type{BipartiteNormalizedModel}, A::SparseMatrixCSC{Float64,Int}, rho_limit::Float64; kwargs...)
+    return BipartiteNormalizedModel(A; rho_limit=rho_limit)
 end
 
-function _make_prior(
-    ::Type{BipartiteUnnormalizedModel},
-    rho_limit::Float64;
-    model_adjacency::Symbol=:binary,
-    kwargs...,
-)
-    return UnnormalizedPrior(; prior_adjacency=model_adjacency, rho_limit=rho_limit)
+function _build_model(::Type{BipartiteUnnormalizedModel}, A::SparseMatrixCSC{Float64,Int}, rho_limit::Float64; kwargs...)
+    return BipartiteUnnormalizedModel(A; rho_limit=rho_limit)
 end
 
-function _make_prior(
-    ::Type{BipartiteSpectralModel},
-    rho_limit::Float64;
-    seed::Int=12345,
-    model_adjacency::Symbol=:binary,
-    kwargs...,
-)
-    return SpectralPrior(; prior_adjacency=model_adjacency, seed=seed, rho_limit=rho_limit)
+function _build_model(::Type{BipartiteSpectralModel}, A::SparseMatrixCSC{Float64,Int}, rho_limit::Float64; seed::Int=12345, kwargs...)
+    return BipartiteSpectralModel(A; rho_limit=rho_limit, seed=seed)
 end
 
-function _make_prior(
-    ::Type{BipartiteVarianceStableModel},
-    rho_limit::Float64;
-    strict_forest::Bool=false,
-    kwargs...,
-)
-    return VarianceStablePrior(; strict_forest=strict_forest, rho_limit=rho_limit)
+function _build_model(::Type{BipartiteVarianceStableModel}, A::SparseMatrixCSC{Float64,Int}, rho_limit::Float64; strict_forest::Bool=false, kwargs...)
+    return BipartiteVarianceStableModel(A; strict_forest=strict_forest, rho_limit=rho_limit)
 end

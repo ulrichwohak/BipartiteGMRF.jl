@@ -43,116 +43,12 @@ function BipartiteGraph(A::SparseMatrixCSC{Float64,Int})
     return BipartiteGraph(A, At, Float64.(d_f), Float64.(d_w), n_firms, n_workers)
 end
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Model specification types (lightweight, no graph data)
-#
-# These are the user-facing API for specifying which model to use. They
-# are passed to gmrf_mle() / GMRFProblem() and resolved into full
-# AbstractBipartiteModel subtypes by prepare.jl once the adjacency is known.
-# ═══════════════════════════════════════════════════════════════════════════
-
-"""
-Abstract supertype for model specifications passed to `gmrf_mle` / `GMRFProblem`.
-"""
-abstract type ModelSpec end
-
 function validate_rho_limit(rho_limit::Real)
     limit = Float64(rho_limit)
     0.0 < limit < 1.0 ||
         throw(ArgumentError("rho_limit must satisfy 0 < rho_limit < 1; got $(rho_limit)."))
     return limit
 end
-
-"""
-    NormalizedPrior(; adjacency=:degree, prior_adjacency=:binary, rho_limit=0.99)
-
-Degree-normalized bipartite GMRF model specification.
-"""
-struct NormalizedPrior <: ModelSpec
-    adjacency::Symbol
-    prior_adjacency::Symbol
-    rho_limit::Float64
-    function NormalizedPrior(;
-        adjacency::Symbol=:degree,
-        prior_adjacency::Symbol=:binary,
-        rho_limit::Real=0.99,
-    )
-        adjacency == :degree ||
-            throw(ArgumentError("NormalizedPrior only supports adjacency=:degree; got $(adjacency)."))
-        prior_adjacency in (:binary, :counts) ||
-            throw(ArgumentError("prior_adjacency must be :binary or :counts; got $(prior_adjacency)."))
-        new(adjacency, prior_adjacency, validate_rho_limit(rho_limit))
-    end
-end
-
-"""
-    UnnormalizedPrior(; prior_adjacency=:binary, rho_limit=0.99)
-
-Unnormalized `D - ρA` model specification.
-"""
-struct UnnormalizedPrior <: ModelSpec
-    prior_adjacency::Symbol
-    rho_limit::Float64
-    function UnnormalizedPrior(; prior_adjacency::Symbol=:binary, rho_limit::Real=0.99)
-        prior_adjacency in (:binary, :counts) ||
-            throw(ArgumentError("prior_adjacency must be :binary or :counts; got $(prior_adjacency)."))
-        new(prior_adjacency, validate_rho_limit(rho_limit))
-    end
-end
-
-"""
-    SpectralPrior(; prior_adjacency=:binary, seed=12345, rho_limit=0.99)
-
-Spectral-normalized model specification.
-"""
-struct SpectralPrior <: ModelSpec
-    prior_adjacency::Symbol
-    seed::Int
-    rho_limit::Float64
-    function SpectralPrior(;
-        prior_adjacency::Symbol=:binary,
-        seed::Int=12345,
-        rho_limit::Real=0.99,
-    )
-        prior_adjacency in (:binary, :counts) ||
-            throw(ArgumentError("prior_adjacency must be :binary or :counts; got $(prior_adjacency)."))
-        new(prior_adjacency, seed, validate_rho_limit(rho_limit))
-    end
-end
-
-"""
-    VarianceStablePrior(; strict_forest=false, rho_limit=0.99)
-
-Variance-stable model specification for forest-like graphs.
-"""
-struct VarianceStablePrior{L<:Union{Float64,Symbol}} <: ModelSpec
-    strict_forest::Bool
-    rho_limit::L
-    function VarianceStablePrior(strict_forest::Bool, rho_limit::Float64)
-        return new{Float64}(strict_forest, validate_rho_limit(rho_limit))
-    end
-    function VarianceStablePrior(strict_forest::Bool, rho_limit::Symbol)
-        rho_limit == :auto ||
-            throw(ArgumentError("VarianceStablePrior rho_limit symbol must be :auto; got $(rho_limit)."))
-        return new{Symbol}(strict_forest, rho_limit)
-    end
-end
-
-function VarianceStablePrior(;
-    strict_forest::Bool=false,
-    rho_limit::Union{Real,Symbol}=0.99,
-)
-    if rho_limit isa Symbol
-        rho_limit == :auto ||
-            throw(ArgumentError("VarianceStablePrior rho_limit symbol must be :auto; got $(rho_limit)."))
-        return VarianceStablePrior(strict_forest, rho_limit)
-    end
-    return VarianceStablePrior(strict_forest, validate_rho_limit(rho_limit))
-end
-
-rho_limit(prior::ModelSpec) = prior.rho_limit
-rho_limit(::VarianceStablePrior{Symbol}) =
-    throw(ArgumentError("rho_limit=:auto must be resolved by constructing a GMRFProblem."))
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Concrete bipartite model types (graph-bound, implement LatentModel)
@@ -496,7 +392,6 @@ struct GMRFProblem{F,W}
     y_mean::Float64
     y_std::Float64
     standardize::Bool
-    prior::ModelSpec
     model::AbstractBipartiteModel
     weighting::Weighting
     rho_eps_likelihood::Union{Nothing,Float64}
@@ -538,11 +433,10 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
-Fitted bipartite-GMRF model returned by `solve` and `gmrf_mle`.
+Fitted bipartite-GMRF model returned by `solve` and `fit_mle`.
 """
 struct GMRFResult{
     P<:GMRFProblem,
-    R<:ModelSpec,
     S<:AbstractGMRFSolver,
 }
     rho::Float64
@@ -558,7 +452,6 @@ struct GMRFResult{
     model_decomposition::Union{VarianceDecomposition,Nothing}
     fitted_decomposition::Union{VarianceDecomposition,Nothing}
     problem::P
-    prior::R
     solver::S
     theta_unconstrained::Vector{Float64}
     metadata::NamedTuple
@@ -590,31 +483,3 @@ struct CovarianceBlock
     units::Symbol
 end
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Convenience: construct a LatentModel from a spec + adjacency
-# ═══════════════════════════════════════════════════════════════════════════
-
-"""
-    to_model(spec::ModelSpec, A_prior) -> AbstractBipartiteModel
-
-Convert a lightweight model specification into a full `LatentModel` subtype
-bound to the given adjacency matrix.
-"""
-function to_model(spec::NormalizedPrior, A::SparseMatrixCSC{Float64,Int})
-    return BipartiteNormalizedModel(A; rho_limit=spec.rho_limit)
-end
-
-function to_model(spec::UnnormalizedPrior, A::SparseMatrixCSC{Float64,Int})
-    return BipartiteUnnormalizedModel(A; rho_limit=spec.rho_limit)
-end
-
-function to_model(spec::SpectralPrior, A::SparseMatrixCSC{Float64,Int})
-    return BipartiteSpectralModel(A; rho_limit=spec.rho_limit, seed=spec.seed)
-end
-
-function to_model(spec::VarianceStablePrior, A::SparseMatrixCSC{Float64,Int})
-    return BipartiteVarianceStableModel(A;
-        strict_forest=spec.strict_forest,
-        rho_limit=spec.rho_limit,
-    )
-end

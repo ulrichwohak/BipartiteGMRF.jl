@@ -110,14 +110,6 @@ function filter_max_degree(df::DataFrame, max_degree::Int, firm_id::Symbol, work
     return filter(row -> row[firm_id] in keep_firms && row[worker_id] in keep_workers, df)
 end
 
-function prior_adjacency(prior::ModelSpec)
-    prior isa NormalizedPrior && return prior.prior_adjacency
-    prior isa UnnormalizedPrior && return prior.prior_adjacency
-    prior isa SpectralPrior && return prior.prior_adjacency
-    prior isa VarianceStablePrior && return :binary
-    error("Unknown prior type $(typeof(prior)).")
-end
-
 
 function GMRFProblem(; kwargs...)
     fields = fieldnames(GMRFProblem)
@@ -139,14 +131,18 @@ end
 
 function GMRFProblem(
     df::DataFrame;
+    model_type::Type{<:AbstractBipartiteModel}=BipartiteNormalizedModel,
     outcome::Symbol=:y,
     firm_id::Symbol=:firm_id,
     worker_id::Symbol=:worker_id,
-    prior::ModelSpec=NormalizedPrior(),
+    model_adjacency::Symbol=:binary,
+    rho_limit::Union{Float64,Symbol}=0.99,
     weighting::Weighting=Weighting(),
     max_degree::Union{Nothing,Int}=nothing,
     standardize::Bool=true,
     on_missing::Symbol=:drop,
+    seed::Int=12345,
+    strict_forest::Bool=false,
     verbose::Bool=false,
 )
     on_missing in (:drop, :error) ||
@@ -157,8 +153,8 @@ function GMRFProblem(
     end
     nrow(df) > 0 || throw(ArgumentError("Empty dataset."))
 
-    prior isa VarianceStablePrior && weighting.observations != :raw &&
-        throw(ArgumentError("VarianceStablePrior currently supports only Weighting(observations=:raw)."))
+    model_type <: BipartiteVarianceStableModel && weighting.observations != :raw &&
+        throw(ArgumentError("BipartiteVarianceStableModel currently supports only Weighting(observations=:raw)."))
 
     d0 = max_degree === nothing ? df : filter_max_degree(df, max_degree, firm_id, worker_id)
     nrow(d0) > 0 || throw(ArgumentError("No rows remain after max_degree filtering."))
@@ -279,15 +275,44 @@ function GMRFProblem(
         end
     end
 
-    padj = prior_adjacency(prior)
     A_prior = copy(A_prior_base)
-    padj == :binary && (A_prior.nzval .= 1.0)
+    model_adjacency == :binary && (A_prior.nzval .= 1.0)
+
+    # Resolve VS auto rho_limit
     vs_metadata = NamedTuple()
-    if prior isa VarianceStablePrior
-        resolved = prepare_vs_feasibility(prior, A_prior)
-        prior = resolved.prior
-        vs_metadata = resolved.metadata
+    resolved_rho_limit = rho_limit
+    if model_type <: BipartiteVarianceStableModel && rho_limit isa Symbol
+        rho_limit == :auto ||
+            throw(ArgumentError("rho_limit symbol must be :auto; got $(rho_limit)."))
+        spectrum = nb_spectrum(A_prior)
+        spectrum.converged || throw(ArgumentError(
+            "Automatic VS feasibility could not be resolved because the non-backtracking eigensolver did not converge.",
+        ))
+        ceiling = nb_rho_ceiling(spectrum.lambda_nb)
+        resolved_rho_limit = nb_recommended_limit(spectrum.lambda_nb)
+        @info @sprintf(
+            "VS feasibility resolved: lambda_NB=%.4f, rho_ceiling=%.4f, rho_limit=%.4f, source=auto",
+            spectrum.lambda_nb,
+            ceiling,
+            resolved_rho_limit,
+        )
+        vs_metadata = (
+            nb_spectrum=spectrum,
+            rho_limit_source=:auto,
+            rho_ceiling=ceiling,
+            resolved_rho_limit=resolved_rho_limit,
+        )
+    elseif model_type <: BipartiteVarianceStableModel
+        vs_metadata = (
+            nb_spectrum=nothing,
+            rho_limit_source=:explicit,
+            rho_ceiling=nothing,
+            resolved_rho_limit=Float64(rho_limit),
+        )
     end
+
+    model = _build_model(model_type, A_prior, Float64(resolved_rho_limit);
+                         seed=seed, strict_forest=strict_forest)
 
     unique_edges = nnz(sparse(f_rows, w_cols, ones(Float64, length(f_rows)), n_firms, n_workers))
     duplicate_rows = personyear_rows - unique_edges
@@ -299,7 +324,7 @@ function GMRFProblem(
         firm_id = firm_id,
         worker_id = worker_id,
         max_degree = max_degree,
-        prior_adjacency = padj,
+        model_adjacency = model_adjacency,
         unique_edges = unique_edges,
         duplicate_rows = duplicate_rows,
         mean_edge_count = mean_edge_count,
@@ -337,8 +362,7 @@ function GMRFProblem(
         y_mean = Float64(y_mean),
         y_std = Float64(y_std),
         standardize = standardize,
-        prior = prior,
-        model = to_model(prior, A_prior),
+        model = model,
         weighting = weighting,
         rho_eps_likelihood = rho_eps_likelihood,
         within_ss = Float64(within_ss),

@@ -1,5 +1,5 @@
 @testset "prepare" begin
-    p = GMRFProblem(synthetic_df(); prior=NormalizedPrior(), weighting=Weighting())
+    p = GMRFProblem(synthetic_df(); model_type=BipartiteNormalizedModel, weighting=Weighting())
     @test p.N_firms == 3
     @test p.N_workers == 4
     @test p.K == 8
@@ -15,11 +15,11 @@
     @test rebuilt.K == p.K
     @test rebuilt.metadata == p.metadata
 
-    @test NormalizedPrior(rho_limit=0.4).rho_limit == 0.4
-    @test UnnormalizedPrior(rho_limit=0.4).rho_limit == 0.4
-    @test SpectralPrior(rho_limit=0.4).rho_limit == 0.4
-    @test VarianceStablePrior(rho_limit=0.4).rho_limit == 0.4
-    @test_throws ArgumentError NormalizedPrior(rho_limit=1.0)
+    @test BipartiteGMRF.rho_limit(BipartiteNormalizedModel(sparse(ones(2,2)); rho_limit=0.4)) == 0.4
+    @test BipartiteGMRF.rho_limit(BipartiteUnnormalizedModel(sparse(ones(2,2)); rho_limit=0.4)) == 0.4
+    @test BipartiteGMRF.rho_limit(BipartiteSpectralModel(sparse(ones(2,2)); rho_limit=0.4)) == 0.4
+    @test BipartiteGMRF.rho_limit(BipartiteVarianceStableModel(sparse([1.0], [1.0], [1.0], 1, 1); rho_limit=0.4)) == 0.4
+    @test_throws ArgumentError BipartiteNormalizedModel(sparse(ones(2,2)); rho_limit=1.0)
 
     custom = GMRFProblem(
         custom_column_df();
@@ -60,10 +60,11 @@
 
     @test_warn "variance-stable model no longer guarantees" GMRFProblem(
         synthetic_df();
-        prior=VarianceStablePrior(),
+        model_type=BipartiteVarianceStableModel,
     )
     @test_throws ArgumentError GMRFProblem(
         synthetic_df();
-        prior=VarianceStablePrior(strict_forest=true),
+        model_type=BipartiteVarianceStableModel,
+        strict_forest=true,
     )
 end

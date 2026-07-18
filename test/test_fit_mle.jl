@@ -1,61 +1,43 @@
 @testset "fit_mle interface" begin
     df = synthetic_df()
 
-    @testset "fit_mle matches gmrf_mle for NormalizedPrior" begin
-        old = gmrf_mle(df;
-            prior=NormalizedPrior(),
-            solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=false,
-            seed=1,
-        )
-        new = fit_mle(BipartiteNormalizedModel, df;
+    @testset "fit_mle NormalizedModel" begin
+        result = fit_mle(BipartiteNormalizedModel, df;
             solver=ExactCholesky(optim_iters=5, polish=false),
             decompose=false,
             seed=1,
             rho_limit=0.99,
             model_adjacency=:binary,
         )
-        @test old.nll ≈ new.nll
-        @test old.rho ≈ new.rho
-        @test old.sigma_a ≈ new.sigma_a
-        @test old.sigma_z ≈ new.sigma_z
-        @test old.sigma_epsilon ≈ new.sigma_epsilon
+        @test isfinite(result.nll)
+        @test isfinite(result.rho)
+        @test result.sigma_a > 0
+        @test result.sigma_z > 0
+        @test result.sigma_epsilon > 0
     end
 
-    @testset "fit_mle matches gmrf_mle for UnnormalizedPrior" begin
-        old = gmrf_mle(df;
-            prior=UnnormalizedPrior(),
+    @testset "fit_mle UnnormalizedModel" begin
+        result = fit_mle(BipartiteUnnormalizedModel, df;
             solver=ExactCholesky(optim_iters=5, polish=false),
             decompose=false,
             seed=1,
         )
-        new = fit_mle(BipartiteUnnormalizedModel, df;
-            solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=false,
-            seed=1,
-        )
-        @test old.nll ≈ new.nll
-        @test old.rho ≈ new.rho
-        @test old.sigma_a ≈ new.sigma_a
+        @test isfinite(result.nll)
+        @test isfinite(result.rho)
+        @test result.sigma_a > 0
     end
 
-    @testset "fit_mle matches gmrf_mle for VarianceStablePrior" begin
+    @testset "fit_mle VarianceStableModel" begin
         tdf = tree_df()
-        old = gmrf_mle(tdf;
-            prior=VarianceStablePrior(rho_limit=0.95),
-            solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=false,
-            seed=1,
-        )
-        new = fit_mle(BipartiteVarianceStableModel, tdf;
+        result = fit_mle(BipartiteVarianceStableModel, tdf;
             solver=ExactCholesky(optim_iters=5, polish=false),
             decompose=false,
             seed=1,
             rho_limit=0.95,
         )
-        @test old.nll ≈ new.nll
-        @test old.rho ≈ new.rho
-        @test old.sigma_a ≈ new.sigma_a
+        @test isfinite(result.nll)
+        @test isfinite(result.rho)
+        @test result.sigma_a > 0
     end
 
     @testset "two-step suffstats + fit_mle" begin

@@ -1,7 +1,7 @@
 @testset "integration" begin
-    result = gmrf_mle(
+    result = fit_mle(
+        BipartiteNormalizedModel,
         synthetic_df();
-        prior=NormalizedPrior(),
         solver=ExactCholesky(optim_iters=5, polish=false),
         weighting=Weighting(observations=:raw),
         decompose=3,

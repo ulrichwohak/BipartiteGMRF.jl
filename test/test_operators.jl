@@ -1,6 +1,6 @@
 @testset "operators" begin
-    for prior in (NormalizedPrior(), UnnormalizedPrior(), SpectralPrior())
-        p = GMRFProblem(synthetic_df(); prior=prior)
+    for model_type in (BipartiteNormalizedModel, BipartiteUnnormalizedModel, BipartiteSpectralModel)
+        p = GMRFProblem(synthetic_df(); model_type=model_type)
         rho, sa, sz = 0.25, 0.7, 0.4
         qop = BipartiteGMRF.q_operator(p, rho, sa, sz)
         Q = BipartiteGMRF.model_precision(p.model, rho, sa, sz)
@@ -11,11 +11,12 @@
         mop = BipartiteGMRF.MOp(qop, p.VtV, similar(x), 1.0)
         @test mop isa BipartiteGMRF.MOp{typeof(qop)}
     end
-    @test GMRFProblem(synthetic_df(); prior=SpectralPrior(seed=7)).prior.seed == 7
+    p_spectral = GMRFProblem(synthetic_df(); model_type=BipartiteSpectralModel, seed=7)
+    @test p_spectral.model isa BipartiteSpectralModel
 
     pvs = @test_warn "variance-stable model no longer guarantees" GMRFProblem(
         synthetic_df();
-        prior=VarianceStablePrior(),
+        model_type=BipartiteVarianceStableModel,
     )
     rho, sa, sz = 0.2, 0.6, 0.5
     qop = BipartiteGMRF.q_operator(pvs, rho, sa, sz)

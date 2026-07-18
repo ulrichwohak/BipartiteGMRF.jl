@@ -31,8 +31,8 @@ end
     # Resolve NB spectral radius on full graph (conservative bound)
     A_full = sparse([e[1] for e in raw_edges], [e[2] for e in raw_edges],
                     ones(length(raw_edges)), n_firms, n_workers)
-    vs_result = BipartiteGMRF.prepare_vs_feasibility(VarianceStablePrior(rho_limit=:auto), A_full)
-    resolved_limit = vs_result.metadata.resolved_rho_limit
+    spectrum = nb_spectrum(A_full)
+    resolved_limit = BipartiteGMRF.nb_recommended_limit(spectrum.lambda_nb)
     @test resolved_limit > truth.rho
 
     # Build SimpleGraph from bipartite adjacency block matrix [0 A; A' 0]
@@ -67,7 +67,7 @@ end
     A = sparse(I_idx, J_idx, ones(length(pruned_edges)), nf, nw)
 
     # Build model on pruned graph with resolved rho_limit
-    model = BipartiteGMRF.to_model(VarianceStablePrior(rho_limit=resolved_limit), A)
+    model = BipartiteVarianceStableModel(A; rho_limit=resolved_limit)
 
     # Model-implied variance components at TRUE parameters
     Q_true = BipartiteGMRF.model_precision(model, truth.rho, truth.sigma_a, truth.sigma_z)
@@ -90,8 +90,8 @@ end
 
         # MLE on same pruned graph
         df = DataFrame(firm_id=sim.firm_ids, worker_id=sim.worker_ids .+ 10000, y=sim.y)
-        mle_result = gmrf_mle(df;
-            prior=VarianceStablePrior(rho_limit=resolved_limit),
+        mle_result = fit_mle(BipartiteVarianceStableModel, df;
+            rho_limit=resolved_limit,
             solver=ExactCholesky(optim_iters=200, polish=true),
             standardize=false, decompose=false, seed=rep, verbose=false)
 

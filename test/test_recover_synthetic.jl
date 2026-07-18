@@ -3,7 +3,8 @@
     seeds = [203]
     estimates = map(seeds) do seed
         df, _ = simulate_gmrf_panel(seed)
-        gmrf_mle(
+        fit_mle(
+            BipartiteNormalizedModel,
             df;
             standardize=false,
             solver=ExactCholesky(optim_iters=160, polish=true),

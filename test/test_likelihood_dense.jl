@@ -1,7 +1,7 @@
 @testset "dense likelihood reference" begin
     problem = GMRFProblem(
         synthetic_df();
-        prior=NormalizedPrior(),
+        model_type=BipartiteNormalizedModel,
         weighting=Weighting(observations=:raw),
         standardize=false,
     )
@@ -41,7 +41,7 @@ end
 @testset "variance-stable paired HutchSLQ logdet" begin
     problem = @test_warn "contains a cycle" GMRFProblem(
         synthetic_df();
-        prior=VarianceStablePrior(),
+        model_type=BipartiteVarianceStableModel,
         weighting=Weighting(observations=:raw),
         standardize=false,
     )

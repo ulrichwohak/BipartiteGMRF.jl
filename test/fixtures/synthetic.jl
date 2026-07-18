@@ -25,8 +25,7 @@ function custom_column_df()
 end
 
 function fitted_exact(; decompose=false)
-    return gmrf_mle(
-        synthetic_df();
+    return fit_mle(BipartiteNormalizedModel, synthetic_df();
         solver=ExactCholesky(optim_iters=5, polish=false),
         decompose=decompose,
         seed=1,
@@ -35,8 +34,8 @@ function fitted_exact(; decompose=false)
 end
 
 # Acyclic firm-worker graph (a caterpillar path: f1-w1-f2-w2-...-f_n-w_n), used
-# to exercise the VarianceStablePrior + ExactCholesky path, which is only valid
-# on forests.
+# to exercise the BipartiteVarianceStableModel + ExactCholesky path, which is
+# only valid on forests.
 function tree_df(; n=12, seed=11)
     rng = MersenneTwister(seed)
     firm = Int[]

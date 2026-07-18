@@ -31,7 +31,6 @@ function solve(
         nothing,
         nothing,
         fit.problem,
-        fit.problem.prior,
         solver,
         fit.theta_unconstrained,
         fit_result_metadata(fit.problem, fit.rho, fix_rho),
@@ -43,7 +42,7 @@ function solve(
             result.rho, result.sigma_a, result.sigma_z, result.sigma_epsilon,
             result.rho_eps, result.nll, result.converged, result.iterations,
             result.obj_evals, result.optimization_time, pd, result.fitted_decomposition,
-            result.problem, result.prior, result.solver, result.theta_unconstrained,
+            result.problem, result.solver, result.theta_unconstrained,
             result.metadata,
         )
     end

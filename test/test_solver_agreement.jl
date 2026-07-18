@@ -4,7 +4,8 @@
         weighting = Weighting(observations=:edge)
         fixed_rho = 0.25
 
-        exact = gmrf_mle(
+        exact = fit_mle(
+            BipartiteNormalizedModel,
             df;
             solver=ExactCholesky(optim_iters=80, polish=true),
             weighting=weighting,
@@ -12,7 +13,8 @@
             decompose=false,
             seed=11,
         )
-        hutch = gmrf_mle(
+        hutch = fit_mle(
+            BipartiteNormalizedModel,
             df;
             solver=HutchSLQ(
                 logdet_probes=300,
