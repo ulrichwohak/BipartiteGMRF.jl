@@ -116,24 +116,49 @@ or `estimates.txt` files &mdash; pass it a `DataFrame`, receive typed results.
 
 ### Estimation
 
+The package follows the [Distributions.jl](https://juliastats.org/Distributions.jl/stable/fit/)
+`suffstats` / `fit_mle` pattern:
+
 ```julia
 using BipartiteGMRF, DataFrames
 
-result = gmrf_mle(
-    df;
-    outcome    = :y,
-    firm_id    = :firm_id,
-    worker_id  = :worker_id,
-    prior      = NormalizedPrior(),
-    solver     = ExactCholesky(),
-    decompose  = 200,
-    seed       = 42,
+# One-step: pass a DataFrame directly
+result = fit_mle(BipartiteNormalizedModel, df;
+    outcome   = :y,
+    firm_id   = :firm_id,
+    worker_id = :worker_id,
+    solver    = ExactCholesky(),
+    decompose = 200,
+    seed      = 42,
 )
 
 result.rho           # local dependence parameter
 result.sigma_a       # firm effect SD
 result.sigma_z       # worker effect SD
 result.sigma_epsilon # residual SD
+```
+
+Or separate data preparation from estimation:
+
+```julia
+# Precompute sufficient statistics (reusable across model types)
+ss = suffstats(BipartiteNormalizedModel, df)
+
+# Fit
+result = fit_mle(BipartiteNormalizedModel, ss; solver = ExactCholesky())
+```
+
+`GMRFResult` implements `StatsAPI.StatisticalModel`:
+
+```julia
+using StatsAPI
+
+coef(result)         # (rho=..., sigma_a=..., sigma_z=..., sigma_epsilon=..., rho_eps=...)
+loglikelihood(result)
+nobs(result)
+dof(result)          # 4 (or 5 with rho_eps)
+aic(result)
+bic(result)
 ```
 
 ### Variance Decomposition
@@ -184,24 +209,22 @@ l = logpdf(gmrf, x)    # log-density
 
 ## Models and Solvers
 
-The library separates the **model specification** (the shape of
-$\mathbf{Q}$) from the **numerical solver** (how the likelihood is evaluated
-and optimized).
+The library separates the **model type** (the shape of $\mathbf{Q}$) from
+the **numerical solver** (how the likelihood is evaluated and optimized).
 
-Model specifications (`ModelSpec` subtypes):
+Model types (`AbstractBipartiteModel <: LatentModel` subtypes):
 
-- `NormalizedPrior()` &mdash; degree-normalized Laplacian (default).
-- `UnnormalizedPrior()` &mdash; the $\mathbf{D} - \rho\mathbf{A}$ precision
-  used in the paper.
-- `SpectralPrior()` &mdash; spectral normalization by $\sigma_1(\mathbf{A})$.
-- `VarianceStablePrior()` &mdash; variance-stable $\mathbf{Q}$ with diagonal
-  $[1 + \rho^2 (d_i - 1)] / \sigma_i^2$, intended for spanning-tree
-  subgraphs where it gives degree-independent marginal variances.
+- `BipartiteNormalizedModel` &mdash; degree-normalized Laplacian (default).
+- `BipartiteUnnormalizedModel` &mdash; the $\mathbf{D} - \rho\mathbf{A}$
+  precision used in the paper.
+- `BipartiteSpectralModel` &mdash; spectral normalization by
+  $\sigma_1(\mathbf{A})$.
+- `BipartiteVarianceStableModel` &mdash; variance-stable $\mathbf{Q}$ with
+  diagonal $[1 + \rho^2 (d_i - 1)] / \sigma_i^2$, intended for
+  spanning-tree subgraphs where it gives degree-independent marginal
+  variances.
 
-Each spec is resolved into a full `LatentModel` subtype
-(`BipartiteNormalizedModel`, etc.) when the data is prepared.
-
-Solvers:
+Solvers (`AbstractGMRFSolver` subtypes):
 
 - `ExactCholesky()` &mdash; deterministic sparse CHOLMOD factorization with
   symbolic reuse via `GMRFWorkspace`, finite-difference gradients fed to
@@ -235,8 +258,10 @@ Decomposition targets are `:estimation`, `:personyear`, and `:edge`.
 ```
 src/
 ├── BipartiteGMRF.jl       # module entry point
-├── types.jl               # ModelSpec, LatentModel subtypes, BipartiteGraph
-├── prepare.jl, util.jl
+├── types.jl               # LatentModel subtypes, BipartiteGraph, BipartiteGMRFStats, GMRFResult
+├── stats.jl               # suffstats() implementation
+├── fit.jl                 # fit_mle() implementation
+├── prepare.jl, util.jl   # V'V construction, weighting helpers
 ├── operators/             # QOp/QOpVS per model type
 ├── linalg/                # PCG, SLQ
 ├── solvers/               # ExactCholesky (GMRFWorkspace), HutchSLQ
@@ -244,7 +269,7 @@ src/
 ├── nonbacktracking/       # NB spectrum, feasibility
 ├── covariance/            # operator, block extraction
 ├── simulate.jl            # Monte Carlo simulation
-└── api.jl                 # gmrf_mle, solve, decompose, covariance, accessors
+└── api.jl                 # decompose, covariance, StatsAPI methods
 ```
 
 Project-specific data preparation, estimation, and post-estimation scripts
