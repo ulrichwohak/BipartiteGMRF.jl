@@ -4,7 +4,7 @@
     @testset "fit_mle NormalizedModel" begin
         result = fit_mle(BipartiteNormalizedModel, df;
             solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=false,
+            decompose=nothing,
             seed=1,
             rho_limit=0.99,
             model_adjacency=:binary,
@@ -19,7 +19,7 @@
     @testset "fit_mle UnnormalizedModel" begin
         result = fit_mle(BipartiteUnnormalizedModel, df;
             solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=false,
+            decompose=nothing,
             seed=1,
         )
         @test isfinite(result.nll)
@@ -31,7 +31,7 @@
         tdf = tree_df()
         result = fit_mle(BipartiteVarianceStableModel, tdf;
             solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=false,
+            decompose=nothing,
             seed=1,
             rho_limit=0.95,
         )
@@ -44,7 +44,7 @@
         ss = suffstats(BipartiteNormalizedModel, df)
         result = fit_mle(BipartiteNormalizedModel, ss;
             solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=false,
+            decompose=nothing,
             seed=1,
         )
         @test result.converged || result.nll < Inf

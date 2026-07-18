@@ -5,24 +5,34 @@
 """
     fit_mle(::Type{M}, ss::BipartiteGMRFStats; solver=ExactCholesky(),
             rho_limit=0.99, decompose=nothing, fix_rho=nothing, seed=42,
-            verbose=false, kwargs...)
+            strict_forest=false, verbose=false)
 
 Fit a bipartite GMRF model by maximum likelihood using precomputed sufficient statistics.
 
-Returns a `GMRFResult`. This is the standard estimation entry point,
-following the Distributions.jl `fit_mle(D, suffstats)` pattern.
+Returns a [`GMRFResult`](@ref). This extends `Distributions.fit_mle` and follows its
+`fit_mle(D, suffstats)` pattern.
+
+`decompose` controls the optional model variance decomposition attached to the
+result: `nothing` (default) skips it, a positive integer runs it with that many
+probes. `rho_limit=:auto` (variance-stable model only) resolves the limit from
+the non-backtracking spectrum.
 """
 function fit_mle(
     ::Type{M},
     ss::BipartiteGMRFStats;
     solver::AbstractGMRFSolver=ExactCholesky(),
     rho_limit::Union{Float64,Symbol}=0.99,
-    decompose::Union{Bool,Nothing,Int}=nothing,
+    decompose::Union{Nothing,Int}=nothing,
     fix_rho::Union{Nothing,Float64}=nothing,
     seed::Int=42,
     strict_forest::Bool=false,
     verbose::Bool=false,
 ) where {M<:AbstractBipartiteModel}
+    if rho_limit isa Symbol && !(M <: BipartiteVarianceStableModel)
+        throw(ArgumentError(
+            "rho_limit=:$(rho_limit) is only supported for BipartiteVarianceStableModel; pass a numeric rho_limit for $(nameof(M)).",
+        ))
+    end
     # Resolve VS auto rho_limit via NB spectrum
     vs_metadata = NamedTuple()
     resolved_rho_limit = rho_limit
@@ -70,7 +80,7 @@ end
             solver=ExactCholesky(), rho_limit=0.99, weighting=Weighting(),
             model_adjacency=:binary, max_degree=nothing, standardize=true,
             on_missing=:drop, decompose=nothing, fix_rho=nothing, seed=42,
-            verbose=false, kwargs...)
+            strict_forest=false, verbose=false)
 
 One-step convenience: compute sufficient statistics from a DataFrame and fit.
 """
@@ -87,7 +97,7 @@ function fit_mle(
     max_degree::Union{Nothing,Int}=nothing,
     standardize::Bool=true,
     on_missing::Symbol=:drop,
-    decompose::Union{Bool,Nothing,Int}=nothing,
+    decompose::Union{Nothing,Int}=nothing,
     fix_rho::Union{Nothing,Float64}=nothing,
     seed::Int=42,
     strict_forest::Bool=false,
@@ -112,6 +122,26 @@ function fit_mle(
         strict_forest=strict_forest,
         verbose=verbose,
     )
+end
+
+"""
+    fit_mle(model::AbstractBipartiteModel, ss::BipartiteGMRFStats;
+            solver=ExactCholesky(), decompose=nothing, fix_rho=nothing,
+            seed=42, verbose=false)
+
+Fit a prebuilt bipartite model (e.g. one constructed with a custom `rho_limit`
+or adjacency) by maximum likelihood. Equivalent to `solve(model, ss, solver; ...)`.
+"""
+function fit_mle(
+    model::AbstractBipartiteModel,
+    ss::BipartiteGMRFStats;
+    solver::AbstractGMRFSolver=ExactCholesky(),
+    decompose::Union{Nothing,Int}=nothing,
+    fix_rho::Union{Nothing,Float64}=nothing,
+    seed::Int=42,
+    verbose::Bool=false,
+)
+    return solve(model, ss, solver; decompose=decompose, fix_rho=fix_rho, seed=seed, verbose=verbose)
 end
 
 # ─── Model construction dispatch ─────────────────────────────────────────

@@ -9,7 +9,9 @@
     )
     @test result.model_decomposition !== nothing
     @test StatsAPI.coef(result) == coef(result)
-    @test StatsAPI.loglikelihood(result) == -nll(result)
+    n_dims = result.stats.personyear_rows
+    @test StatsAPI.loglikelihood(result) ≈
+        -(nll(result) + n_dims * log(result.stats.y_std) + 0.5 * n_dims * log(2pi))
     @test StatsAPI.nobs(result) == result.stats.K
 
     fd = decompose(result; kind=:fitted, probes=3, seed=3)

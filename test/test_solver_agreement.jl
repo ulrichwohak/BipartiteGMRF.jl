@@ -10,7 +10,7 @@
             solver=ExactCholesky(optim_iters=80, polish=true),
             weighting=weighting,
             fix_rho=fixed_rho,
-            decompose=false,
+            decompose=nothing,
             seed=11,
         )
         hutch = fit_mle(
@@ -25,7 +25,7 @@
             ),
             weighting=weighting,
             fix_rho=fixed_rho,
-            decompose=false,
+            decompose=nothing,
             seed=11,
         )
 
@@ -58,7 +58,7 @@
             model,
             ss,
             ExactCholesky(optim_iters=160, polish=true);
-            decompose=false,
+            decompose=nothing,
             seed=52,
         )
         hutch = solve(
@@ -72,7 +72,7 @@
                 cg_maxiter=300,
                 optim_iters=220,
             );
-            decompose=false,
+            decompose=nothing,
             seed=52,
         )
 

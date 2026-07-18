@@ -353,8 +353,12 @@ function nll_hutch_value(
     lambda = 1.0 / p.sigma_epsilon^2
     set_q_params!(cache.qop, p.rho, p.sigma_a, p.sigma_z)
     cache.mop.lambda = lambda
-    cache.mop.VtV = obs_stats.VtV
-    cache.dV .= Vector{Float64}(diag(obs_stats.VtV))
+    # VtV only changes across evaluations when rho_eps is re-estimated;
+    # skip the O(n) diagonal extraction otherwise.
+    if cache.mop.VtV !== obs_stats.VtV
+        cache.mop.VtV = obs_stats.VtV
+        cache.dV .= diag(obs_stats.VtV)
+    end
     Qdiag = q_diag(model, p.rho, p.sigma_a, p.sigma_z)
     @. cache.Mdiag = Qdiag + lambda * cache.dV
 
@@ -379,6 +383,43 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 # Optimization loop
 # ═══════════════════════════════════════════════════════════════════════════
+
+# ─── Shared result assembly for solve methods ─────────────────────────────
+
+function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothing,Float64})
+    return GMRFResult(
+        fit.rho,
+        fit.sigma_a,
+        fit.sigma_z,
+        fit.sigma_epsilon,
+        fit.rho_eps,
+        fit.nll,
+        fit.converged,
+        fit.iterations,
+        fit.obj_evals,
+        fit.optimization_time,
+        nothing,
+        nothing,
+        fit.model,
+        fit.stats,
+        solver,
+        fit.theta_unconstrained,
+        fit_result_metadata(fit.model, fit.rho, fix_rho),
+    )
+end
+
+function attach_model_decomposition(result::GMRFResult, decompose::Union{Nothing,Int}, seed::Int, verbose::Bool)
+    decompose === nothing && return result
+    decompose > 0 || throw(ArgumentError("decompose probe count must be positive; got $(decompose)."))
+    pd = _decompose_model(result; probes=decompose, seed=seed, verbose=verbose)
+    return GMRFResult(
+        result.rho, result.sigma_a, result.sigma_z, result.sigma_epsilon,
+        result.rho_eps, result.nll, result.converged, result.iterations,
+        result.obj_evals, result.optimization_time, pd, result.fitted_decomposition,
+        result.model, result.stats, result.solver, result.theta_unconstrained,
+        result.metadata,
+    )
+end
 
 function optimize_problem(
     model::AbstractBipartiteModel,
@@ -457,7 +498,7 @@ function optimize_problem(
         sigma_epsilon = decoded.sigma_epsilon * final_stats.y_std,
         rho_eps = rho_eps,
         nll = val,
-        converged = optim_converged(res),
+        converged = converged(res),
         iterations = optim_iterations(res),
         obj_evals = evals[],
         optimization_time = elapsed,

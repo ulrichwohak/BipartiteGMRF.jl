@@ -10,7 +10,12 @@
 
 Compute sufficient statistics for bipartite GMRF MLE from a DataFrame.
 
-Returns a `BipartiteGMRFStats` that can be passed to `fit_mle`.
+Returns a [`BipartiteGMRFStats`](@ref) that can be passed to [`fit_mle`](@ref).
+Extends `Distributions.suffstats`.
+
+`max_degree` filters on the number of *observation rows* per firm and per
+worker (not the number of distinct partners); entities with more rows than
+`max_degree` are dropped together with their rows.
 """
 function suffstats(
     ::Type{M},

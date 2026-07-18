@@ -24,7 +24,7 @@ function custom_column_df()
     )
 end
 
-function fitted_exact(; decompose=false)
+function fitted_exact(; decompose=nothing)
     return fit_mle(BipartiteNormalizedModel, synthetic_df();
         solver=ExactCholesky(optim_iters=5, polish=false),
         decompose=decompose,

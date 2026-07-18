@@ -1,52 +1,27 @@
 """
-    solve(model::AbstractBipartiteModel, stats::BipartiteGMRFStats, solver::ExactCholesky;
+    solve(model::AbstractBipartiteModel, stats::BipartiteGMRFStats, solver::AbstractGMRFSolver;
           decompose=nothing, fix_rho=nothing, seed=42, verbose=false)
 
-Fit a bipartite GMRF with the ExactCholesky solver.
+Fit a bipartite GMRF by maximum likelihood with the given solver. Extends
+`CommonSolve.solve`, so it composes with `using LinearSolve` or other
+SciML-style packages without name clashes. [`fit_mle`](@ref) is the
+higher-level entry point and delegates here.
 
-`decompose` controls optional prior variance decomposition: pass `false` or
-`nothing` to skip, `true` to use the default probe count, or an integer probe
-count. `fix_rho` fixes the local-dependence parameter during optimization.
+`decompose` controls the optional model variance decomposition attached to
+the result: pass `nothing` (default) to skip it, or a positive integer probe
+count to run it. `fix_rho` fixes the local-dependence parameter during
+optimization.
 """
 function solve(
     model::AbstractBipartiteModel,
     stats::BipartiteGMRFStats,
     solver::ExactCholesky;
-    decompose::Union{Bool,Nothing,Int}=nothing,
+    decompose::Union{Nothing,Int}=nothing,
     fix_rho::Union{Nothing,Float64}=nothing,
     seed::Int=42,
     verbose::Bool=false,
 )
     fit = optimize_problem(model, stats, solver; fix_rho=fix_rho, seed=seed, verbose=verbose)
-    result = GMRFResult(
-        fit.rho,
-        fit.sigma_a,
-        fit.sigma_z,
-        fit.sigma_epsilon,
-        fit.rho_eps,
-        fit.nll,
-        fit.converged,
-        fit.iterations,
-        fit.obj_evals,
-        fit.optimization_time,
-        nothing,
-        nothing,
-        fit.model,
-        fit.stats,
-        solver,
-        fit.theta_unconstrained,
-        fit_result_metadata(fit.model, fit.rho, fix_rho),
-    )
-    probes = decompose === true ? 200 : decompose isa Int ? decompose : 0
-    if probes > 0
-        pd = _decompose_model(result; probes=probes, seed=seed, verbose=verbose)
-        result = GMRFResult(
-            result.rho, result.sigma_a, result.sigma_z, result.sigma_epsilon,
-            result.rho_eps, result.nll, result.converged, result.iterations,
-            result.obj_evals, result.optimization_time, pd, result.fitted_decomposition,
-            result.model, result.stats, result.solver, result.theta_unconstrained,
-            result.metadata,
-        )
-    end
-    return result
+    result = build_gmrf_result(fit, solver, fix_rho)
+    return attach_model_decomposition(result, decompose, seed, verbose)
 end

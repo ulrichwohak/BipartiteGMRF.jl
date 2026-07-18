@@ -356,17 +356,12 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
-Abstract supertype for sufficient statistics (mirrors Distributions.jl convention).
-"""
-abstract type SufficientStats end
-
-"""
-    BipartiteGMRFStats
+    BipartiteGMRFStats <: Distributions.SufficientStats
 
 Sufficient statistics for bipartite GMRF maximum-likelihood estimation.
 
 Contains all data-derived quantities needed by the NLL objective. Computed
-once via `suffstats` and reused across all optimizer iterations.
+once via [`suffstats`](@ref) and reused across all optimizer iterations.
 """
 struct BipartiteGMRFStats{F,W} <: SufficientStats
     # Precomputed design products

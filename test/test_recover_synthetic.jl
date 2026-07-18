@@ -8,7 +8,7 @@
             df;
             standardize=false,
             solver=ExactCholesky(optim_iters=160, polish=true),
-            decompose=false,
+            decompose=nothing,
             seed=seed,
         )
     end

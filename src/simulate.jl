@@ -13,6 +13,12 @@ Returns a `NamedTuple` with fields:
 - `firm_effects`: sampled firm effects α
 - `worker_effects`: sampled worker effects z
 - `firm_ids`, `worker_ids`: the input ID vectors
+
+Residuals are drawn i.i.d.; the within-match residual correlation `rho_eps`
+of `Weighting(observations=:effective)` is not simulated. To simulate that
+data-generating process, add a match-level `N(0, √rho_eps ⋅ σ_ε)` draw shared
+by repeated `(firm, worker)` pairs on top of an i.i.d. part scaled by
+`√(1 − rho_eps)`.
 """
 function simulate(
     model::AbstractBipartiteModel,

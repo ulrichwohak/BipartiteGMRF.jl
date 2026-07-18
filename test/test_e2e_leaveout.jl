@@ -1,3 +1,8 @@
+# NOT part of the default test suite (see runtests.jl): requires the
+# unregistered LeaveOut package and Graphs. To run manually:
+#   julia --project -e 'using Pkg; Pkg.add("Graphs"); Pkg.develop(path="/path/to/LeaveOut")'
+#   julia --project -e 'using Test, DataFrames, SparseArrays, LinearAlgebra, Random, BipartiteGMRF;
+#                       include("test/fixtures/synthetic.jl"); include("test/test_e2e_leaveout.jl")'
 using Graphs
 using LeaveOut
 using Printf
@@ -93,7 +98,7 @@ end
         mle_result = fit_mle(BipartiteVarianceStableModel, df;
             rho_limit=resolved_limit,
             solver=ExactCholesky(optim_iters=200, polish=true),
-            standardize=false, decompose=false, seed=rep, verbose=false)
+            standardize=false, decompose=nothing, seed=rep, verbose=false)
 
         Q_mle = BipartiteGMRF.model_precision(model, mle_result.rho, mle_result.sigma_a, mle_result.sigma_z)
         Σ_mle = inv(Matrix(Q_mle))

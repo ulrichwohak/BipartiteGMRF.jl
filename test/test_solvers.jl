@@ -15,7 +15,7 @@
         BipartiteNormalizedModel,
         synthetic_df();
         solver=HutchSLQ(logdet_probes=2, lanczos_iters=3, optim_iters=2, cg_maxiter=50),
-        decompose=false,
+        decompose=nothing,
         seed=1,
         verbose=false,
     )
@@ -26,7 +26,7 @@
         repeated_df();
         solver=ExactCholesky(optim_iters=3, polish=false),
         weighting=Weighting(observations=:edge),
-        decompose=false,
+        decompose=nothing,
         seed=1,
     )
     @test isfinite(edge.nll)
@@ -36,7 +36,7 @@
         repeated_df();
         solver=ExactCholesky(optim_iters=3, polish=false),
         weighting=Weighting(observations=:effective, rho_eps=:estimate),
-        decompose=false,
+        decompose=nothing,
         seed=1,
     )
     @test isfinite(effective.nll)
@@ -45,9 +45,9 @@
     ss_limited = suffstats(BipartiteNormalizedModel, synthetic_df())
     model_limited = BipartiteNormalizedModel(ss_limited.A_prior; rho_limit=0.4)
     @test_throws ArgumentError solve(model_limited, ss_limited, ExactCholesky(optim_iters=2, polish=false);
-        fix_rho=0.41, decompose=false)
+        fix_rho=0.41, decompose=nothing)
     fixed = solve(model_limited, ss_limited, ExactCholesky(optim_iters=2, polish=false);
-        fix_rho=0.2, decompose=false)
+        fix_rho=0.2, decompose=nothing)
     @test fixed.rho ≈ 0.2
     @test abs(fixed.rho) < BipartiteGMRF.rho_limit(model_limited)
 
@@ -57,12 +57,12 @@
     )
     # VS + ExactCholesky on a cyclic graph is now permitted (was: capability throw);
     # PD is enforced by the caller via rho_limit < 1/lambda_NB.
-    rvs = solve(model_vs, ss_vs, ExactCholesky(optim_iters=2); decompose=false, seed=1)
+    rvs = solve(model_vs, ss_vs, ExactCholesky(optim_iters=2); decompose=nothing, seed=1)
     @test isfinite(rvs.nll)
 
     ss_sp = suffstats(BipartiteSpectralModel, synthetic_df())
     model_sp = BipartiteSpectralModel(ss_sp.A_prior)
-    @test_throws ArgumentError solve(model_sp, ss_sp, ExactCholesky(optim_iters=2); decompose=false)
+    @test_throws ArgumentError solve(model_sp, ss_sp, ExactCholesky(optim_iters=2); decompose=nothing)
 end
 
 @testset "g_reltol convergence tolerance" begin
@@ -83,10 +83,10 @@ end
     base = (logdet_probes=8, lanczos_iters=10, optim_iters=500, cg_maxiter=200)
     tight = fit_mle(BipartiteNormalizedModel, synthetic_df();
                     solver=HutchSLQ(; base..., g_reltol=1e-7),
-                    decompose=false, seed=1, verbose=false)
+                    decompose=nothing, seed=1, verbose=false)
     loose = fit_mle(BipartiteNormalizedModel, synthetic_df();
                     solver=HutchSLQ(; base..., g_reltol=1e-2),
-                    decompose=false, seed=1, verbose=false)
+                    decompose=nothing, seed=1, verbose=false)
     @test tight.converged
     @test loose.converged
     @test loose.iterations <= tight.iterations
@@ -99,7 +99,7 @@ end
     ss_tree = suffstats(BipartiteVarianceStableModel, tdf)
     model_tree = BipartiteVarianceStableModel(ss_tree.A_prior)
     @test BipartiteGMRF.is_forest(model_tree.graph.A)
-    res = solve(model_tree, ss_tree, ExactCholesky(optim_iters=200, polish=true); decompose=false, seed=1)
+    res = solve(model_tree, ss_tree, ExactCholesky(optim_iters=200, polish=true); decompose=nothing, seed=1)
     @test res.converged
     @test isfinite(res.nll)
     @test isfinite(res.rho)
@@ -113,10 +113,10 @@ end
     @test_throws ArgumentError BipartiteVarianceStableModel(ss_cyc.A_prior; strict_forest=true)
     # ExactCholesky is now permitted on cyclic graphs (PD enforced via rho_limit <
     # 1/lambda_NB); the old capability throw is gone and the solver returns a result.
-    rce = solve(model_cyc, ss_cyc, ExactCholesky(optim_iters=10); decompose=false, seed=1)
+    rce = solve(model_cyc, ss_cyc, ExactCholesky(optim_iters=10); decompose=nothing, seed=1)
     @test isfinite(rce.nll)
     # HutchSLQ remains available on cyclic graphs.
     resh = solve(model_cyc, ss_cyc, HutchSLQ(logdet_probes=4, lanczos_iters=6, optim_iters=10, cg_maxiter=50);
-                 decompose=false, seed=1)
+                 decompose=nothing, seed=1)
     @test isfinite(resh.nll)
 end

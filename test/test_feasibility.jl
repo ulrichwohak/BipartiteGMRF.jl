@@ -14,7 +14,7 @@
         tree_df();
         rho_limit=:auto,
         solver=ExactCholesky(optim_iters=2, polish=false),
-        decompose=false,
+        decompose=nothing,
         seed=7,
     )
     @test BipartiteGMRF.rho_limit(auto_forest_result.model) == 0.99
@@ -42,7 +42,7 @@
         rho_limit=:auto,
         solver=ExactCholesky(optim_iters=2, polish=false),
         standardize=false,
-        decompose=false,
+        decompose=nothing,
         seed=7,
     )
     @test BipartiteGMRF.rho_limit(auto_cyclic_result.model) ≈ 0.49
@@ -80,7 +80,7 @@
         auto_forest_result.stats,
         ExactCholesky(optim_iters=2, polish=false);
         fix_rho=0.2,
-        decompose=false,
+        decompose=nothing,
         seed=7,
     )
     @test !rho_at_bound(fixed_result)

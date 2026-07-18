@@ -1,7 +1,9 @@
 module BipartiteGMRF
 
 using ArnoldiMethod: partialeigen, partialschur
+import CommonSolve: solve
 using DataFrames: DataFrame, combine, groupby, nrow
+import Distributions: SufficientStats, fit_mle, params, suffstats
 using FiniteDiff: finite_difference_gradient!
 import GaussianMarkovRandomFields
 import GaussianMarkovRandomFields: LatentModel, precision_matrix, model_name, hyperparameters, constraints
@@ -11,7 +13,7 @@ import Optim:
     LBFGS,
     NelderMead,
     Options,
-    converged as optim_converged,
+    converged,
     iterations as optim_iterations,
     minimum as optim_minimum,
     minimizer,
@@ -21,7 +23,7 @@ using Printf: @sprintf
 import Random
 using Random: AbstractRNG, MersenneTwister, rand, randn
 using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
-import StatsAPI: StatisticalModel, coef, dof, loglikelihood, nobs, aic, bic, isfitted, islinear
+import StatsAPI: StatisticalModel, aic, bic, coef, coefnames, dof, isfitted, islinear, loglikelihood, nobs
 using Statistics: mean, std
 
 # Model types (LatentModel subtypes)
@@ -38,7 +40,7 @@ export AbstractGMRFSolver,
     HutchSLQ,
     ExactCholesky
 
-# Sufficient statistics
+# Sufficient statistics (extends the Distributions.jl fit_mle/suffstats API)
 export SufficientStats,
     BipartiteGMRFStats,
     suffstats,
@@ -63,11 +65,15 @@ export solve,
     cov_block,
     simulate,
     coef,
+    coefnames,
+    params,
     dof,
     loglikelihood,
     nobs,
     aic,
     bic,
+    isfitted,
+    islinear,
     nll,
     converged
 
