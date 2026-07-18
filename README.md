@@ -108,16 +108,18 @@ Pkg.test("BipartiteGMRF")
 ```
 
 The library requires Julia 1.10 or newer and depends on
-`GaussianMarkovRandomFields`, `DataFrames`, `Optim`, `LinearSolve`, and
-`FiniteDiff`. It deliberately does not read or write Parquet, CSV, JSON,
-or `estimates.txt` files &mdash; pass it a `DataFrame`, receive typed results.
+`GaussianMarkovRandomFields`, `DataFrames`, `Distributions`, `Optim`,
+`LinearSolve`, and `FiniteDiff`. It deliberately does not read or write
+Parquet, CSV, JSON, or `estimates.txt` files &mdash; pass it a `DataFrame`,
+receive typed results.
 
 ## Quick Start
 
 ### Estimation
 
-The package follows the [Distributions.jl](https://juliastats.org/Distributions.jl/stable/fit/)
-`suffstats` / `fit_mle` pattern:
+The package extends the [Distributions.jl](https://juliastats.org/Distributions.jl/stable/fit/)
+`suffstats` / `fit_mle` generic functions (so `using Distributions,
+BipartiteGMRF` involves no name clashes):
 
 ```julia
 using BipartiteGMRF, DataFrames
@@ -153,10 +155,12 @@ result = fit_mle(BipartiteNormalizedModel, ss; solver = ExactCholesky())
 ```julia
 using StatsAPI
 
-coef(result)         # (rho=..., sigma_a=..., sigma_z=..., sigma_epsilon=..., rho_eps=...)
-loglikelihood(result)
+coef(result)          # [rho, sigma_a, sigma_z, sigma_epsilon]  (+ rho_eps if used)
+coefnames(result)     # ["rho", "sigma_a", "sigma_z", "sigma_epsilon"]
+params(result)        # (rho=..., sigma_a=..., sigma_z=..., sigma_epsilon=..., rho_eps=...)
+loglikelihood(result) # original-units log-likelihood (constants included)
 nobs(result)
-dof(result)          # 4 (or 5 with rho_eps)
+dof(result)           # number of *estimated* parameters
 aic(result)
 bic(result)
 ```
@@ -227,8 +231,8 @@ Model types (`AbstractBipartiteModel <: LatentModel` subtypes):
 Solvers (`AbstractGMRFSolver` subtypes):
 
 - `ExactCholesky()` &mdash; deterministic sparse CHOLMOD factorization with
-  symbolic reuse via `GMRFWorkspace`, finite-difference gradients fed to
-  L-BFGS / Nelder-Mead.
+  symbolic reuse via `GMRFWorkspace`; gradient-free Nelder-Mead search
+  followed by an optional finite-difference L-BFGS polish.
 - `HutchSLQ()` &mdash; Hutchinson trace estimator plus stochastic Lanczos
   quadrature for the log-determinant, preconditioned conjugate gradient for
   the quadratic form, and Nelder-Mead for optimization.

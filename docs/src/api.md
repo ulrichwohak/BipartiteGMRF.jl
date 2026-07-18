@@ -1,27 +1,36 @@
 # API
 
-## Core Calls
-
-```@docs
-gmrf_mle
-solve
-coef
-loglikelihood
-nobs
-nll
-converged
+```@meta
+CurrentModule = BipartiteGMRF
 ```
 
-`coef`, `loglikelihood`, and `nobs` extend `StatsAPI`.
+## Estimation
 
-## Priors And Weighting
+The estimation entry points extend the
+[Distributions.jl](https://juliastats.org/Distributions.jl/stable/fit/)
+`suffstats` / `fit_mle` generic functions, so they compose with
+`using Distributions` without name clashes. `BipartiteGMRFStats` subtypes
+`Distributions.SufficientStats`.
 
 ```@docs
-AbstractGMRFPrior
-NormalizedPrior
-UnnormalizedPrior
-SpectralPrior
-VarianceStablePrior
+suffstats(::Type{<:AbstractBipartiteModel}, ::DataFrame)
+fit_mle(::Type{<:AbstractBipartiteModel}, ::BipartiteGMRFStats)
+fit_mle(::Type{<:AbstractBipartiteModel}, ::DataFrame)
+fit_mle(::AbstractBipartiteModel, ::BipartiteGMRFStats)
+solve(::AbstractBipartiteModel, ::BipartiteGMRFStats, ::ExactCholesky)
+BipartiteGMRFStats
+GMRFResult
+```
+
+## Models
+
+```@docs
+AbstractBipartiteModel
+BipartiteNormalizedModel
+BipartiteUnnormalizedModel
+BipartiteSpectralModel
+BipartiteVarianceStableModel
+BipartiteGraph
 Weighting
 ```
 
@@ -33,23 +42,48 @@ ExactCholesky
 HutchSLQ
 ```
 
-## Results And Decompositions
+## StatsAPI Interface
+
+`GMRFResult` implements `StatsAPI.StatisticalModel`. `coef`, `coefnames`,
+`loglikelihood`, `nobs`, `dof`, `aic`, `bic`, `isfitted`, and `islinear`
+extend StatsAPI; `params` extends the Distributions.jl generic; `converged`
+extends `Optim.converged`.
 
 ```@docs
-GMRFResult
+coef(::GMRFResult)
+coefnames(::GMRFResult)
+params(::GMRFResult)
+loglikelihood(::GMRFResult)
+nobs(::GMRFResult)
+dof(::GMRFResult)
+aic(::GMRFResult)
+bic(::GMRFResult)
+isfitted(::GMRFResult)
+islinear(::GMRFResult)
+nll
+converged(::GMRFResult)
+```
+
+## Decompositions
+
+```@docs
+decompose
 VarianceDecomposition
-prior_decomposition
-posterior_decomposition
 ```
 
 ## Covariance
 
 ```@docs
+covariance
+cov_block
 CovarianceOperator
 CovarianceBlock
-prior_covariance
-posterior_covariance
-cov_block
+```
+
+## Simulation
+
+```@docs
+simulate
 ```
 
 ## Non-Backtracking Diagnostics

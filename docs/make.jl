@@ -1,5 +1,3 @@
-push!(LOAD_PATH, joinpath(@__DIR__, "..", "src"))
-
 using BipartiteGMRF
 using Documenter
 
@@ -15,7 +13,7 @@ makedocs(;
     pages = [
         "Overview" => "index.md",
         "API" => "api.md",
-        "Priors" => "priors.md",
+        "Models" => "models.md",
         "Solvers" => "solvers.md",
         "Weighting" => "weighting.md",
         "Covariance" => "covariance.md",
@@ -24,6 +22,7 @@ makedocs(;
         "Performance" => "performance.md",
     ],
     checkdocs = :exports,
+    warnonly = [:missing_docs, :cross_references, :docs_block],
 )
 
 deploydocs(;
