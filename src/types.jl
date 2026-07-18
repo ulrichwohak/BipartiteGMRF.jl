@@ -452,12 +452,14 @@ end
 
 """
 Fitted bipartite-GMRF model returned by `solve` and `fit_mle`.
+
+Implements the `StatsAPI.StatisticalModel` interface.
 """
 struct GMRFResult{
     M<:AbstractBipartiteModel,
     ST<:BipartiteGMRFStats,
     S<:AbstractGMRFSolver,
-}
+} <: StatisticalModel
     rho::Float64
     sigma_a::Float64
     sigma_z::Float64

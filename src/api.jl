@@ -94,6 +94,30 @@ Return the number of model observations used by the likelihood.
 nobs(result::GMRFResult) = result.stats.K
 
 """
+    dof(result::GMRFResult)
+
+Return the number of estimated parameters (ρ, σ_a, σ_z, σ_ε, and optionally ρ_ε).
+"""
+dof(result::GMRFResult) = result.rho_eps === nothing ? 4 : 5
+
+"""
+    aic(result::GMRFResult)
+
+Akaike Information Criterion: -2logℓ + 2k.
+"""
+aic(result::GMRFResult) = -2.0 * loglikelihood(result) + 2.0 * dof(result)
+
+"""
+    bic(result::GMRFResult)
+
+Bayesian Information Criterion: -2logℓ + k⋅log(n).
+"""
+bic(result::GMRFResult) = -2.0 * loglikelihood(result) + dof(result) * log(nobs(result))
+
+isfitted(::GMRFResult) = true
+islinear(::GMRFResult) = false
+
+"""
     nll(result::GMRFResult)
 
 Return the fitted negative log-likelihood objective value.

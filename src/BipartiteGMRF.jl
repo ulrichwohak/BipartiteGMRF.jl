@@ -21,7 +21,7 @@ using Printf: @sprintf
 import Random
 using Random: AbstractRNG, MersenneTwister, rand, randn
 using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
-import StatsAPI: coef, loglikelihood, nobs
+import StatsAPI: StatisticalModel, coef, dof, loglikelihood, nobs, aic, bic, isfitted, islinear
 using Statistics: mean, std
 
 # Model types (LatentModel subtypes)
@@ -63,8 +63,11 @@ export solve,
     cov_block,
     simulate,
     coef,
+    dof,
     loglikelihood,
     nobs,
+    aic,
+    bic,
     nll,
     converged
 
