@@ -46,6 +46,12 @@ export AbstractGMRFSolver,
     HutchSLQ,
     ExactCholesky
 
+# Sufficient statistics
+export SufficientStats,
+    BipartiteGMRFStats,
+    suffstats,
+    fit_mle
+
 # Data and result types
 export GMRFProblem,
     GMRFResult,
@@ -90,7 +96,9 @@ include("decomposition/model.jl")
 include("decomposition/fitted.jl")
 include("covariance/operator.jl")
 include("covariance/extract.jl")
+include("stats.jl")
 include("simulate.jl")
 include("api.jl")
+include("fit.jl")
 
 end
