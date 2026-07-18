@@ -4,7 +4,6 @@
 
 ```@docs
 gmrf_mle
-GMRFProblem
 solve
 coef
 loglikelihood

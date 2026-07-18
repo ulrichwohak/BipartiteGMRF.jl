@@ -11,16 +11,6 @@
     @test ss.worker_to_index[10] == 1
     @test ss.metadata.outcome == :y
 
-    # GMRFProblem backward compatibility
-    p = GMRFProblem(synthetic_df(); model_type=BipartiteNormalizedModel, weighting=Weighting())
-    @test p.N_firms == 3
-    @test p.N_workers == 4
-    @test p.K == 8
-    fields = fieldnames(GMRFProblem)
-    rebuilt = GMRFProblem(; NamedTuple{fields}(map(field -> getfield(p, field), fields))...)
-    @test rebuilt.K == p.K
-    @test rebuilt.metadata == p.metadata
-
     @test BipartiteGMRF.rho_limit(BipartiteNormalizedModel(sparse(ones(2,2)); rho_limit=0.4)) == 0.4
     @test BipartiteGMRF.rho_limit(BipartiteUnnormalizedModel(sparse(ones(2,2)); rho_limit=0.4)) == 0.4
     @test BipartiteGMRF.rho_limit(BipartiteSpectralModel(sparse(ones(2,2)); rho_limit=0.4)) == 0.4

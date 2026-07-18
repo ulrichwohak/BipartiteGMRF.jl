@@ -352,61 +352,6 @@ struct ExactCholesky <: AbstractGMRFSolver
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Prepared estimation problem
-# ═══════════════════════════════════════════════════════════════════════════
-
-"""
-    GMRFProblem(df; outcome=:y, firm_id=:firm_id, worker_id=:worker_id, ...)
-
-Prepared bipartite-GMRF estimation problem.
-
-The constructor validates and standardizes an input `DataFrame`, maps firm and
-worker IDs to graph indices, builds sparse observation/prior matrices, and
-stores metadata used by `solve`.
-"""
-struct GMRFProblem{F,W}
-    y::Vector{Float64}
-    ydot::Float64
-    projected_y::Vector{Float64}
-    VtV::SparseMatrixCSC{Float64,Int}
-    A_obs::SparseMatrixCSC{Float64,Int}
-    At_obs::SparseMatrixCSC{Float64,Int}
-    cnt_f::Vector{Float64}
-    cnt_w::Vector{Float64}
-    firm_ids::Vector{F}
-    worker_ids::Vector{W}
-    firm_to_index::Dict{F,Int}
-    worker_to_index::Dict{W,Int}
-    base_f_rows::Vector{Int}
-    base_w_cols::Vector{Int}
-    base_y::Vector{Float64}
-    base_T::Vector{Int}
-    decomp_f_rows::Vector{Int}
-    decomp_w_cols::Vector{Int}
-    decomp_y::Vector{Float64}
-    decomp_T::Vector{Int}
-    N_firms::Int
-    N_workers::Int
-    K::Int
-    personyear_rows::Int
-    y_mean::Float64
-    y_std::Float64
-    standardize::Bool
-    model::AbstractBipartiteModel
-    weighting::Weighting
-    rho_eps_likelihood::Union{Nothing,Float64}
-    within_ss::Float64
-    within_df::Int
-    personyear_within_ss::Float64
-    log_weight_sum::Float64
-    effective_weight_sum::Float64
-    effective_weight_over_T_sum::Float64
-    mean_effective_weight::Float64
-    max_effective_weight::Float64
-    metadata::NamedTuple
-end
-
-# ═══════════════════════════════════════════════════════════════════════════
 # Sufficient statistics
 # ═══════════════════════════════════════════════════════════════════════════
 
