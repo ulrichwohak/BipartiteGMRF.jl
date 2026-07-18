@@ -130,12 +130,11 @@ function _decompose_model(
             end
             u, ok, _, relres = pcg_solve!(ws, qop, v;
                 tol=result.solver.cg_tol, maxiter=result.solver.cg_maxiter, Mdiag=Qdiag)
-            if ok
-                ok_count += 1
-            elseif verbose
-                @info "model decomposition PCG did not converge" probe=t relres=relres
+            if !ok
+                verbose && @info "model decomposition PCG did not converge" probe=t relres=relres
                 continue
             end
+            ok_count += 1
             vf = view(v, 1:stats.N_firms)
             vw = view(v, stats.N_firms + 1:n)
             uf = view(u, 1:stats.N_firms)

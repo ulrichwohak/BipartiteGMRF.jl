@@ -64,12 +64,11 @@ function _decompose_fitted(
             v[i] = rand(rng, Bool) ? 1.0 : -1.0
         end
         u, ok, relres = solve_probe(v)
-        if ok
-            ok_count += 1
-        elseif verbose
-            @info "fitted decomposition PCG did not converge" probe=t relres=relres
+        if !ok
+            verbose && @info "fitted decomposition PCG did not converge" probe=t relres=relres
             continue
         end
+        ok_count += 1
         vf = view(v, 1:stats.N_firms)
         vw = view(v, stats.N_firms + 1:n)
         uf = view(u, 1:stats.N_firms)
