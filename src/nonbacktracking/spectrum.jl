@@ -177,10 +177,10 @@ function nb_component_spectrum(
 end
 
 """
-    nb_spectrum(problem_or_A; seed=12345, nev=6, tol=1e-7)
+    nb_spectrum(A_prior; seed=12345, nev=6, tol=1e-7)
 
-Compute non-backtracking spectral diagnostics from a `GMRFProblem` or directly
-from its rectangular sparse prior adjacency matrix. Each connected 2-core
+Compute non-backtracking spectral diagnostics from a rectangular sparse
+prior adjacency matrix. Each connected 2-core
 component is solved separately using an Ihara-Bass companion matrix. Forests
 return `lambda_nb == 0`; simple cycle components return radius one.
 
@@ -272,4 +272,3 @@ function nb_spectrum(
     )
 end
 
-nb_spectrum(problem::GMRFProblem; kwargs...) = nb_spectrum(problem.model.graph.A; kwargs...)

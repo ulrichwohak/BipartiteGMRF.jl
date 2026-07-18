@@ -1,35 +1,35 @@
 entity_ref(side::Symbol, id) = (side = side, id = id)
 
-function resolve_firms(problem::GMRFProblem, ids)
+function resolve_firms(stats::BipartiteGMRFStats, ids)
     refs = Any[]
     idx = Int[]
     for id in ids
-        haskey(problem.firm_to_index, id) ||
+        haskey(stats.firm_to_index, id) ||
             throw(ArgumentError("Firm ID $(id) not found in the fitted problem."))
-        i = problem.firm_to_index[id]
+        i = stats.firm_to_index[id]
         push!(refs, entity_ref(:firm, id))
         push!(idx, i)
     end
     return refs, idx
 end
 
-function resolve_workers(problem::GMRFProblem, ids)
+function resolve_workers(stats::BipartiteGMRFStats, ids)
     refs = Any[]
     idx = Int[]
-    offset = problem.N_firms
+    offset = stats.N_firms
     for id in ids
-        haskey(problem.worker_to_index, id) ||
+        haskey(stats.worker_to_index, id) ||
             throw(ArgumentError("Worker ID $(id) not found in the fitted problem."))
-        i = problem.worker_to_index[id]
+        i = stats.worker_to_index[id]
         push!(refs, entity_ref(:worker, id))
         push!(idx, offset + i)
     end
     return refs, idx
 end
 
-function resolve_entities(problem::GMRFProblem; firms=Any[], workers=Any[])
-    f_refs, f_idx = resolve_firms(problem, collect(firms))
-    w_refs, w_idx = resolve_workers(problem, collect(workers))
+function resolve_entities(stats::BipartiteGMRFStats; firms=Any[], workers=Any[])
+    f_refs, f_idx = resolve_firms(stats, collect(firms))
+    w_refs, w_idx = resolve_workers(stats, collect(workers))
     return vcat(f_refs, w_refs), vcat(f_idx, w_idx)
 end
 
@@ -87,14 +87,14 @@ function cov_block(
     col_workers=Any[],
     batch_size::Int=16,
 )
-    problem = op.result.problem
+    stats = op.result.stats
     principal = !isempty(firms) || !isempty(workers)
     rectangular = !isempty(row_firms) || !isempty(row_workers) || !isempty(col_firms) || !isempty(col_workers)
     principal && rectangular &&
         throw(ArgumentError("Use either firms/workers for a principal block or row_/col_ arguments for a rectangular block."))
 
     if principal
-        rows, row_idx = resolve_entities(problem; firms=firms, workers=workers)
+        rows, row_idx = resolve_entities(stats; firms=firms, workers=workers)
         cols, col_idx = rows, row_idx
     else
         isempty(row_firms) && isempty(row_workers) && isempty(col_firms) && isempty(col_workers) &&
@@ -107,14 +107,14 @@ function cov_block(
             col_firms = row_firms
             col_workers = row_workers
         end
-        rows, row_idx = resolve_entities(problem; firms=row_firms, workers=row_workers)
-        cols, col_idx = resolve_entities(problem; firms=col_firms, workers=col_workers)
+        rows, row_idx = resolve_entities(stats; firms=row_firms, workers=row_workers)
+        cols, col_idx = resolve_entities(stats; firms=col_firms, workers=col_workers)
     end
 
     isempty(row_idx) && throw(ArgumentError("Requested row set is empty."))
     isempty(col_idx) && throw(ArgumentError("Requested column set is empty."))
-    n = problem.N_firms + problem.N_workers
+    n = stats.N_firms + stats.N_workers
     mat = extract_submatrix(op.factor, n, row_idx, col_idx; batch_size=batch_size)
-    op.units == :original && (mat .*= problem.y_std^2)
+    op.units == :original && (mat .*= stats.y_std^2)
     return CovarianceBlock(mat, rows, cols, op.kind, op.units)
 end

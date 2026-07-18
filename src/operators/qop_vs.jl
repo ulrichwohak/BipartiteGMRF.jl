@@ -34,10 +34,6 @@ function (op::QOpVS)(y::Vector{Float64}, x::Vector{Float64})
     return y
 end
 
-function make_qop_vs(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    return make_qop_vs(problem.model, rho, sigma_a, sigma_z)
-end
-
 function make_qop_vs(model::BipartiteVarianceStableModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
     g = model.graph
     inv_sa2 = 1.0 / sigma_a^2

@@ -45,7 +45,7 @@ export SufficientStats,
     fit_mle
 
 # Data and result types
-export GMRFProblem,
+export GMRFProblem,  # kept for backward compatibility; will be removed
     GMRFResult,
     VarianceDecomposition,
     CovarianceOperator,

@@ -4,7 +4,7 @@
 
 """
     decompose(result::GMRFResult; kind=:model, probes=200, seed=42,
-              target=result.problem.weighting.target, verbose=false)
+              target=result.stats.weighting.target, verbose=false)
 
 Estimate the variance decomposition implied by a fitted bipartite GMRF.
 
@@ -20,7 +20,7 @@ function decompose(
     kind::Symbol=:model,
     probes::Int=200,
     seed::Int=42,
-    target::Symbol=result.problem.weighting.target,
+    target::Symbol=result.stats.weighting.target,
     verbose::Bool=false,
 )
     if kind == :model
@@ -91,7 +91,7 @@ loglikelihood(result::GMRFResult) = -result.nll
 
 Return the number of model observations used by the likelihood.
 """
-nobs(result::GMRFResult) = result.problem.K
+nobs(result::GMRFResult) = result.stats.K
 
 """
     nll(result::GMRFResult)
@@ -113,7 +113,7 @@ function Base.show(io::IO, result::GMRFResult)
         "sigma_z=$(result.sigma_z), sigma_epsilon=$(result.sigma_epsilon), ",
         "nll=$(result.nll), converged=$(result.converged)",
     )
-    result.problem.model isa BipartiteVarianceStableModel &&
+    result.model isa BipartiteVarianceStableModel &&
         print(io, ", rho_status=$(get(result.metadata, :rho_status, :unknown))")
     print(io, ")")
 end
@@ -124,8 +124,8 @@ function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
     println(io, "  nll: ", result.nll)
     println(io, "  parameters:")
     println(io, "    rho: ", result.rho)
-    if result.problem.model isa BipartiteVarianceStableModel
-        println(io, "    rho limit: ", rho_limit(result.problem.model))
+    if result.model isa BipartiteVarianceStableModel
+        println(io, "    rho limit: ", rho_limit(result.model))
         println(io, "    rho utilization: ", get(result.metadata, :rho_utilization, NaN))
         println(io, "    rho status: ", get(result.metadata, :rho_status, :unknown))
     end
@@ -134,10 +134,10 @@ function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
     println(io, "    sigma_epsilon: ", result.sigma_epsilon)
     result.rho_eps !== nothing && println(io, "    rho_eps: ", result.rho_eps)
     println(io, "  model:")
-    println(io, "    model: ", nameof(typeof(result.problem.model)))
+    println(io, "    model: ", nameof(typeof(result.model)))
     println(io, "    solver: ", nameof(typeof(result.solver)))
-    println(io, "    observations: ", result.problem.K)
-    println(io, "    person-year rows: ", result.problem.personyear_rows)
-    println(io, "    firms: ", result.problem.N_firms)
-    print(io, "    workers: ", result.problem.N_workers)
+    println(io, "    observations: ", result.stats.K)
+    println(io, "    person-year rows: ", result.stats.personyear_rows)
+    println(io, "    firms: ", result.stats.N_firms)
+    print(io, "    workers: ", result.stats.N_workers)
 end

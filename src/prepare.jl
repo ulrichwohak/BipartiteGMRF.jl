@@ -377,26 +377,45 @@ function GMRFProblem(
     )
 end
 
-function with_observation_stats(problem::GMRFProblem, stats, rho_eps::Union{Nothing,Float64})
-    return GMRFProblem(;
-        merge(problem_fields(problem), (
-            ydot = Float64(stats.ydot),
-            projected_y = stats.projected_y,
-            VtV = stats.VtV,
-            A_obs = stats.A_obs,
-            At_obs = stats.At_obs,
-            cnt_f = stats.cnt_f,
-            cnt_w = stats.cnt_w,
-            rho_eps_likelihood = rho_eps,
-            log_weight_sum = Float64(get(stats, :log_weight_sum, problem.log_weight_sum)),
-            effective_weight_sum = Float64(get(stats, :effective_weight_sum, problem.effective_weight_sum)),
-            effective_weight_over_T_sum = Float64(get(
-                stats,
-                :effective_weight_over_T_sum,
-                problem.effective_weight_over_T_sum,
-            )),
-            mean_effective_weight = Float64(get(stats, :mean_effective_weight, problem.mean_effective_weight)),
-            max_effective_weight = Float64(get(stats, :max_effective_weight, problem.max_effective_weight)),
-        ))...
+function with_observation_stats(gmrf_stats::BipartiteGMRFStats, obs_stats, rho_eps::Union{Nothing,Float64})
+    return BipartiteGMRFStats(
+        obs_stats.VtV,
+        obs_stats.projected_y,
+        Float64(obs_stats.ydot),
+        obs_stats.A_obs,
+        obs_stats.At_obs,
+        obs_stats.cnt_f,
+        obs_stats.cnt_w,
+        gmrf_stats.A_prior,
+        gmrf_stats.base_f_rows,
+        gmrf_stats.base_w_cols,
+        gmrf_stats.base_y,
+        gmrf_stats.base_T,
+        gmrf_stats.decomp_f_rows,
+        gmrf_stats.decomp_w_cols,
+        gmrf_stats.decomp_y,
+        gmrf_stats.decomp_T,
+        gmrf_stats.firm_ids,
+        gmrf_stats.worker_ids,
+        gmrf_stats.firm_to_index,
+        gmrf_stats.worker_to_index,
+        gmrf_stats.N_firms,
+        gmrf_stats.N_workers,
+        gmrf_stats.K,
+        gmrf_stats.personyear_rows,
+        gmrf_stats.y_mean,
+        gmrf_stats.y_std,
+        gmrf_stats.standardize,
+        gmrf_stats.weighting,
+        rho_eps,
+        gmrf_stats.within_ss,
+        gmrf_stats.within_df,
+        gmrf_stats.personyear_within_ss,
+        Float64(get(obs_stats, :log_weight_sum, gmrf_stats.log_weight_sum)),
+        Float64(get(obs_stats, :effective_weight_sum, gmrf_stats.effective_weight_sum)),
+        Float64(get(obs_stats, :effective_weight_over_T_sum, gmrf_stats.effective_weight_over_T_sum)),
+        Float64(get(obs_stats, :mean_effective_weight, gmrf_stats.mean_effective_weight)),
+        Float64(get(obs_stats, :max_effective_weight, gmrf_stats.max_effective_weight)),
+        gmrf_stats.metadata,
     )
 end

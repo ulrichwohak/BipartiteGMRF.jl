@@ -2,7 +2,8 @@
     exact = fitted_exact()
     @test isfinite(exact.nll)
     @test isfinite(exact.rho)
-    @test exact.problem isa GMRFProblem
+    @test exact.model isa AbstractBipartiteModel
+    @test exact.stats isa BipartiteGMRFStats
     @test startswith(sprint(show, exact), "GMRFResult(rho=")
     text_plain = sprint(show, MIME"text/plain"(), exact)
     @test occursin("GMRFResult\n", text_plain)
@@ -41,25 +42,27 @@
     @test isfinite(effective.nll)
     @test 0 <= effective.rho_eps < 1
 
-    limited = GMRFProblem(synthetic_df(); rho_limit=0.4)
-    @test_throws ArgumentError solve(limited, ExactCholesky(optim_iters=2, polish=false);
+    ss_limited = suffstats(BipartiteNormalizedModel, synthetic_df())
+    model_limited = BipartiteNormalizedModel(ss_limited.A_prior; rho_limit=0.4)
+    @test_throws ArgumentError solve(model_limited, ss_limited, ExactCholesky(optim_iters=2, polish=false);
         fix_rho=0.41, decompose=false)
-    fixed = solve(limited, ExactCholesky(optim_iters=2, polish=false);
+    fixed = solve(model_limited, ss_limited, ExactCholesky(optim_iters=2, polish=false);
         fix_rho=0.2, decompose=false)
     @test fixed.rho ≈ 0.2
-    @test abs(fixed.rho) < BipartiteGMRF.rho_limit(limited.model)
+    @test abs(fixed.rho) < BipartiteGMRF.rho_limit(model_limited)
 
-    p = @test_warn "variance-stable model no longer guarantees" GMRFProblem(
-        synthetic_df();
-        model_type=BipartiteVarianceStableModel,
+    ss_vs = suffstats(BipartiteVarianceStableModel, synthetic_df())
+    model_vs = @test_warn "variance-stable model no longer guarantees" BipartiteVarianceStableModel(
+        ss_vs.A_prior,
     )
     # VS + ExactCholesky on a cyclic graph is now permitted (was: capability throw);
     # PD is enforced by the caller via rho_limit < 1/lambda_NB.
-    rvs = solve(p, ExactCholesky(optim_iters=2); decompose=false, seed=1)
+    rvs = solve(model_vs, ss_vs, ExactCholesky(optim_iters=2); decompose=false, seed=1)
     @test isfinite(rvs.nll)
 
-    ps = GMRFProblem(synthetic_df(); model_type=BipartiteSpectralModel)
-    @test_throws ArgumentError solve(ps, ExactCholesky(optim_iters=2); decompose=false)
+    ss_sp = suffstats(BipartiteSpectralModel, synthetic_df())
+    model_sp = BipartiteSpectralModel(ss_sp.A_prior)
+    @test_throws ArgumentError solve(model_sp, ss_sp, ExactCholesky(optim_iters=2); decompose=false)
 end
 
 @testset "g_reltol convergence tolerance" begin
@@ -92,28 +95,28 @@ end
 @testset "VS + ExactCholesky on acyclic graphs (issue #82)" begin
     # Forest (caterpillar path): ExactCholesky is now allowed for the VS model;
     # exact log-dets sidestep the HutchSLQ small-sigma_z cancellation.
-    ptree = GMRFProblem(tree_df(); model_type=BipartiteVarianceStableModel,
-                        weighting=Weighting(observations=:raw))
-    @test BipartiteGMRF.is_forest(ptree.model.graph.A)
-    res = solve(ptree, ExactCholesky(optim_iters=200, polish=true); decompose=false, seed=1)
+    tdf = tree_df()
+    ss_tree = suffstats(BipartiteVarianceStableModel, tdf)
+    model_tree = BipartiteVarianceStableModel(ss_tree.A_prior)
+    @test BipartiteGMRF.is_forest(model_tree.graph.A)
+    res = solve(model_tree, ss_tree, ExactCholesky(optim_iters=200, polish=true); decompose=false, seed=1)
     @test res.converged
     @test isfinite(res.nll)
     @test isfinite(res.rho)
     @test res.sigma_a > 0 && res.sigma_z > 0 && res.sigma_epsilon > 0
 
     # Cyclic graph: construction warns by default (strict_forest=false).
-    pcyc = @test_warn "contains a cycle" GMRFProblem(synthetic_df();
-        model_type=BipartiteVarianceStableModel, weighting=Weighting(observations=:raw))
-    @test !BipartiteGMRF.is_forest(pcyc.model.graph.A)
+    ss_cyc = suffstats(BipartiteVarianceStableModel, synthetic_df())
+    model_cyc = @test_warn "contains a cycle" BipartiteVarianceStableModel(ss_cyc.A_prior)
+    @test !BipartiteGMRF.is_forest(model_cyc.graph.A)
     # strict_forest=true still errors at construction on a cyclic graph.
-    @test_throws ArgumentError GMRFProblem(synthetic_df();
-        model_type=BipartiteVarianceStableModel, strict_forest=true, weighting=Weighting(observations=:raw))
+    @test_throws ArgumentError BipartiteVarianceStableModel(ss_cyc.A_prior; strict_forest=true)
     # ExactCholesky is now permitted on cyclic graphs (PD enforced via rho_limit <
     # 1/lambda_NB); the old capability throw is gone and the solver returns a result.
-    rce = solve(pcyc, ExactCholesky(optim_iters=10); decompose=false, seed=1)
+    rce = solve(model_cyc, ss_cyc, ExactCholesky(optim_iters=10); decompose=false, seed=1)
     @test isfinite(rce.nll)
     # HutchSLQ remains available on cyclic graphs.
-    resh = solve(pcyc, HutchSLQ(logdet_probes=4, lanczos_iters=6, optim_iters=10, cg_maxiter=50);
+    resh = solve(model_cyc, ss_cyc, HutchSLQ(logdet_probes=4, lanczos_iters=6, optim_iters=10, cg_maxiter=50);
                  decompose=false, seed=1)
     @test isfinite(resh.nll)
 end

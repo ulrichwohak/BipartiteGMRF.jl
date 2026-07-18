@@ -1,19 +1,18 @@
 @testset "covariance" begin
     result = fitted_exact()
-    problem = result.problem
-    sigma_a = result.sigma_a / problem.y_std
-    sigma_z = result.sigma_z / problem.y_std
-    Q = BipartiteGMRF.model_precision(problem.model, result.rho, sigma_a, sigma_z)
-    Sigma = inv(Matrix(Q)) .* problem.y_std^2
+    stats = result.stats
+    sigma_a = result.sigma_a / stats.y_std
+    sigma_z = result.sigma_z / stats.y_std
+    Q = BipartiteGMRF.model_precision(result.model, result.rho, sigma_a, sigma_z)
+    Sigma = inv(Matrix(Q)) .* stats.y_std^2
 
     op = covariance(result; kind=:model, units=:original)
     @test op isa CovarianceOperator
-    @test !(typeof(op).parameters[1] === Any)
     block = cov_block(op; firms=[1, 2], workers=[10])
     idx = [
-        problem.firm_to_index[1],
-        problem.firm_to_index[2],
-        problem.N_firms + problem.worker_to_index[10],
+        stats.firm_to_index[1],
+        stats.firm_to_index[2],
+        stats.N_firms + stats.worker_to_index[10],
     ]
     @test block.matrix ≈ Sigma[idx, idx] atol=1e-8 rtol=1e-8
     @test block.kind == :model

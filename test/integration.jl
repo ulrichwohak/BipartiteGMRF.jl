@@ -10,7 +10,7 @@
     @test result.model_decomposition !== nothing
     @test StatsAPI.coef(result) == coef(result)
     @test StatsAPI.loglikelihood(result) == -nll(result)
-    @test StatsAPI.nobs(result) == result.problem.K
+    @test StatsAPI.nobs(result) == result.stats.K
 
     fd = decompose(result; kind=:fitted, probes=3, seed=3)
     @test isfinite(fd.V_total)

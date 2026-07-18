@@ -52,15 +52,18 @@
             reps=4,
             truth=truth,
         )
-        problem = GMRFProblem(df; standardize=false)
+        ss = suffstats(BipartiteNormalizedModel, df; standardize=false)
+        model = BipartiteNormalizedModel(ss.A_prior; rho_limit=0.99)
         exact = solve(
-            problem,
+            model,
+            ss,
             ExactCholesky(optim_iters=160, polish=true);
             decompose=false,
             seed=52,
         )
         hutch = solve(
-            problem,
+            model,
+            ss,
             HutchSLQ(
                 # Finite probes trade stochastic precision for CI runtime.
                 logdet_probes=400,

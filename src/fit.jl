@@ -59,50 +59,10 @@ function fit_mle(
     # Construct the model directly from adjacency
     model = _build_model(M, ss.A_prior, Float64(resolved_rho_limit); seed=seed, strict_forest=strict_forest)
 
-    # Construct GMRFProblem from stats + model
-    problem = GMRFProblem(;
-        y = ss.base_y,
-        ydot = ss.ydot,
-        projected_y = ss.projected_y,
-        VtV = ss.VtV,
-        A_obs = ss.A_obs,
-        At_obs = ss.At_obs,
-        cnt_f = ss.cnt_f,
-        cnt_w = ss.cnt_w,
-        firm_ids = ss.firm_ids,
-        worker_ids = ss.worker_ids,
-        firm_to_index = ss.firm_to_index,
-        worker_to_index = ss.worker_to_index,
-        base_f_rows = ss.base_f_rows,
-        base_w_cols = ss.base_w_cols,
-        base_y = ss.base_y,
-        base_T = ss.base_T,
-        decomp_f_rows = ss.decomp_f_rows,
-        decomp_w_cols = ss.decomp_w_cols,
-        decomp_y = ss.decomp_y,
-        decomp_T = ss.decomp_T,
-        N_firms = ss.N_firms,
-        N_workers = ss.N_workers,
-        K = ss.K,
-        personyear_rows = ss.personyear_rows,
-        y_mean = ss.y_mean,
-        y_std = ss.y_std,
-        standardize = ss.standardize,
-        model = model,
-        weighting = ss.weighting,
-        rho_eps_likelihood = ss.rho_eps_likelihood,
-        within_ss = ss.within_ss,
-        within_df = ss.within_df,
-        personyear_within_ss = ss.personyear_within_ss,
-        log_weight_sum = ss.log_weight_sum,
-        effective_weight_sum = ss.effective_weight_sum,
-        effective_weight_over_T_sum = ss.effective_weight_over_T_sum,
-        mean_effective_weight = ss.mean_effective_weight,
-        max_effective_weight = ss.max_effective_weight,
-        metadata = merge(ss.metadata, vs_metadata),
-    )
+    # Merge VS metadata into stats metadata
+    merged_stats = isempty(vs_metadata) ? ss : _with_merged_metadata(ss, vs_metadata)
 
-    return solve(problem, solver; decompose=decompose, fix_rho=fix_rho, seed=seed, verbose=verbose)
+    return solve(model, merged_stats, solver; decompose=decompose, fix_rho=fix_rho, seed=seed, verbose=verbose)
 end
 
 """
@@ -170,4 +130,21 @@ end
 
 function _build_model(::Type{BipartiteVarianceStableModel}, A::SparseMatrixCSC{Float64,Int}, rho_limit::Float64; strict_forest::Bool=false, kwargs...)
     return BipartiteVarianceStableModel(A; strict_forest=strict_forest, rho_limit=rho_limit)
+end
+
+# ─── Helper to merge VS metadata into stats ──────────────────────────────
+
+function _with_merged_metadata(ss::BipartiteGMRFStats, extra::NamedTuple)
+    return BipartiteGMRFStats(
+        ss.VtV, ss.projected_y, ss.ydot, ss.A_obs, ss.At_obs, ss.cnt_f, ss.cnt_w,
+        ss.A_prior, ss.base_f_rows, ss.base_w_cols, ss.base_y, ss.base_T,
+        ss.decomp_f_rows, ss.decomp_w_cols, ss.decomp_y, ss.decomp_T,
+        ss.firm_ids, ss.worker_ids, ss.firm_to_index, ss.worker_to_index,
+        ss.N_firms, ss.N_workers, ss.K, ss.personyear_rows,
+        ss.y_mean, ss.y_std, ss.standardize,
+        ss.weighting, ss.rho_eps_likelihood, ss.within_ss, ss.within_df,
+        ss.personyear_within_ss, ss.log_weight_sum, ss.effective_weight_sum,
+        ss.effective_weight_over_T_sum, ss.mean_effective_weight, ss.max_effective_weight,
+        merge(ss.metadata, extra),
+    )
 end

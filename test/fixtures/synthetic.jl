@@ -81,13 +81,14 @@ function simulate_gmrf_panel(
     end
 
     template = DataFrame(firm_id=firm_id, worker_id=worker_id, y=zeros(length(firm_id)))
-    problem = GMRFProblem(template; standardize=false)
-    Q = BipartiteGMRF.model_precision(problem.model, truth.rho, truth.sigma_a, truth.sigma_z)
+    ss = suffstats(BipartiteNormalizedModel, template; standardize=false)
+    model = BipartiteNormalizedModel(ss.A_prior; rho_limit=0.99)
+    Q = BipartiteGMRF.model_precision(model, truth.rho, truth.sigma_a, truth.sigma_z)
     L = cholesky(Symmetric(Matrix(Q))).L
     theta = transpose(L) \ randn(rng, n_firms + n_workers)
     y = [
-        theta[problem.firm_to_index[firm_id[k]]] +
-        theta[problem.N_firms + problem.worker_to_index[worker_id[k]]] +
+        theta[ss.firm_to_index[firm_id[k]]] +
+        theta[ss.N_firms + ss.worker_to_index[worker_id[k]]] +
         truth.sigma_epsilon * randn(rng)
         for k in eachindex(firm_id)
     ]
