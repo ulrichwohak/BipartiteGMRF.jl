@@ -492,10 +492,10 @@ end
 """
 Covariance block returned by `cov_block`.
 """
-struct CovarianceBlock
+struct CovarianceBlock{R,C}
     matrix::Matrix{Float64}
-    rows::Vector{Any}
-    cols::Vector{Any}
+    rows::Vector{R}
+    cols::Vector{C}
     kind::Symbol
     units::Symbol
 end

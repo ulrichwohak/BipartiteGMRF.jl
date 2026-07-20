@@ -1,7 +1,7 @@
 entity_ref(side::Symbol, id) = (side = side, id = id)
 
-function resolve_firms(stats::BipartiteGMRFStats, ids)
-    refs = Any[]
+function resolve_firms(stats::BipartiteGMRFStats{F,W}, ids) where {F,W}
+    refs = NamedTuple{(:side, :id), Tuple{Symbol, F}}[]
     idx = Int[]
     for id in ids
         haskey(stats.firm_to_index, id) ||
@@ -13,8 +13,8 @@ function resolve_firms(stats::BipartiteGMRFStats, ids)
     return refs, idx
 end
 
-function resolve_workers(stats::BipartiteGMRFStats, ids)
-    refs = Any[]
+function resolve_workers(stats::BipartiteGMRFStats{F,W}, ids) where {F,W}
+    refs = NamedTuple{(:side, :id), Tuple{Symbol, W}}[]
     idx = Int[]
     offset = stats.N_firms
     for id in ids
@@ -27,7 +27,7 @@ function resolve_workers(stats::BipartiteGMRFStats, ids)
     return refs, idx
 end
 
-function resolve_entities(stats::BipartiteGMRFStats; firms=Any[], workers=Any[])
+function resolve_entities(stats::BipartiteGMRFStats; firms=(), workers=())
     f_refs, f_idx = resolve_firms(stats, collect(firms))
     w_refs, w_idx = resolve_workers(stats, collect(workers))
     return vcat(f_refs, w_refs), vcat(f_idx, w_idx)
@@ -79,12 +79,12 @@ reduce temporary memory. The extraction allocates the returned block plus an
 """
 function cov_block(
     op::CovarianceOperator;
-    firms=Any[],
-    workers=Any[],
-    row_firms=Any[],
-    row_workers=Any[],
-    col_firms=Any[],
-    col_workers=Any[],
+    firms=(),
+    workers=(),
+    row_firms=(),
+    row_workers=(),
+    col_firms=(),
+    col_workers=(),
     batch_size::Int=16,
 )
     stats = op.result.stats
