@@ -8,7 +8,8 @@ matrix and extracts requested entity blocks by batched solves.
 - `covariance(result; kind=:fitted, units=:original)`: factor the
   data-augmented precision `Q + λV'V`.
 - `cov_block(op; ..., batch_size=16)`: extract principal or rectangular blocks
-  by firm and worker IDs.
+  by firm and worker node indices (the same 1-based indices passed to
+  `suffstats`).
 - `CovarianceOperator`: cached factorization and metadata for extraction.
 
 `units=:original` reports covariances in original outcome units;
@@ -30,6 +31,6 @@ Examples:
 model_op = covariance(result; kind=:model, units=:original)
 fitted_op = covariance(result; kind=:fitted, units=:scaled)
 
-principal = cov_block(model_op; firms=[1, 2], workers=[10, 11])
-rect = cov_block(fitted_op; row_firms=[1], col_workers=[10, 11])
+principal = cov_block(model_op; firms=[1, 2], workers=[1, 2])
+rect = cov_block(fitted_op; row_firms=[1], col_workers=[1, 2])
 ```

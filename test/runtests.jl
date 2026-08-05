@@ -1,5 +1,4 @@
 using Test
-using DataFrames
 using LinearAlgebra
 using SparseArrays
 using StatsAPI
@@ -25,4 +24,8 @@ include("test_statsapi.jl")
 # test_e2e_leaveout.jl is excluded from the default suite: it depends on the
 # unregistered LeaveOut package (KSS leave-one-out reference implementation)
 # and Graphs. Run it manually in an environment that provides both.
+# test_jet.jl is excluded from the default suite to keep JET (and its heavy
+# compile times) out of the test dependencies. Run it manually with:
+#   julia --project -e 'using Pkg; Pkg.add("JET")' then include the file
+# after fixtures/synthetic.jl.
 include("test_aqua.jl")

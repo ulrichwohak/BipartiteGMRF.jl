@@ -1,26 +1,21 @@
 using JET
 
 function setup_jet_fixture()
-    ss = suffstats(BipartiteNormalizedModel, synthetic_df())
+    ss = suffstats_synthetic()
     model = BipartiteNormalizedModel(ss.A_prior; rho_limit=0.99)
-    result = solve(
-        model,
-        ss,
-        ExactCholesky(optim_iters=2, polish=false);
-        decompose=nothing,
-    )
+    result = solve(model, ss, ExactCholesky(optim_iters=2, polish=false))
     return model, ss, result
 end
 
 function jet_exact_solve_flow(model, ss)
     Q = BipartiteGMRF.model_precision(model, 0.3, 0.8, 0.6)
-    M = Q + (1.0 / 0.25^2) .* ss.VtV
-    return cholesky(Symmetric(M)) \ ss.projected_y
+    M = Q + (1.0 / 0.25^2) .* ss.design.VtV
+    return cholesky(Symmetric(M)) \ ss.design.projected_y
 end
 
 function jet_covariance_flow(result)
     op = covariance(result; kind=:model)
-    return cov_block(op; firms=(1,), workers=(10,))
+    return cov_block(op; firms=(1,), workers=(1,))
 end
 
 @testset "JET" begin

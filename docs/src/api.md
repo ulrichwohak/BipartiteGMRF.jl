@@ -12,12 +12,17 @@ The estimation entry points extend the
 `using Distributions` without name clashes. `BipartiteGMRFStats` subtypes
 `Distributions.SufficientStats`.
 
+Data enters as three parallel vectors — firm index, worker index, outcome —
+with 1-based dense integer indices on each side. The package is an estimator,
+not a data manipulator: mapping entity identifiers to indices and filtering
+unusable rows happen before the data reaches it.
+
 ```@docs
-suffstats(::Type{<:AbstractBipartiteModel}, ::DataFrame)
+suffstats(::Type{<:AbstractBipartiteModel}, ::AbstractVector{<:Integer}, ::AbstractVector{<:Integer}, ::AbstractVector{<:Real})
 fit_mle(::Type{<:AbstractBipartiteModel}, ::BipartiteGMRFStats)
-fit_mle(::Type{<:AbstractBipartiteModel}, ::DataFrame)
+fit_mle(::Type{<:AbstractBipartiteModel}, ::AbstractVector{<:Integer}, ::AbstractVector{<:Integer}, ::AbstractVector{<:Real})
 fit_mle(::AbstractBipartiteModel, ::BipartiteGMRFStats)
-solve(::AbstractBipartiteModel, ::BipartiteGMRFStats, ::ExactCholesky)
+solve(::AbstractBipartiteModel, ::BipartiteGMRFStats, ::AbstractGMRFSolver)
 BipartiteGMRFStats
 GMRFResult
 ```

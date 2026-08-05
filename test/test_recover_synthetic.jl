@@ -2,13 +2,11 @@
     # TODO #58: recovery remains deferred pending amended acceptance criteria.
     seeds = [203]
     estimates = map(seeds) do seed
-        df, _ = simulate_gmrf_panel(seed)
+        data, _ = simulate_gmrf_panel(seed)
         fit_mle(
-            BipartiteNormalizedModel,
-            df;
+            BipartiteNormalizedModel, data.f, data.w, data.y;
             standardize=false,
             solver=ExactCholesky(optim_iters=160, polish=true),
-            decompose=nothing,
             seed=seed,
         )
     end

@@ -143,7 +143,7 @@ function dof(result::GMRFResult)
     k = 4
     get(result.metadata, :fix_rho, nothing) === nothing || (k -= 1)
     w = result.stats.weighting
-    w.observations == :effective && w.rho_eps == :estimate && (k += 1)
+    w.observations == :effective && w.estimate_rho_eps && (k += 1)
     return k
 end
 

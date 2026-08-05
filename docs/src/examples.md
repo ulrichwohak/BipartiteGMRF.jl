@@ -1,16 +1,22 @@
 # Examples
 
+Throughout, `f`, `w`, and `y` are parallel vectors: `f[k]` and `w[k]` are the
+1-based firm and worker indices of observation `k`, and `y[k]` its outcome.
+If your data lives in a table with entity identifiers, map the identifiers to
+dense indices first, e.g.
+
+```julia
+firm_index = Dict(id => i for (i, id) in enumerate(unique(table.firm_id)))
+f = [firm_index[id] for id in table.firm_id]
+```
+
 ## One-Step API
 
 ```julia
-using BipartiteGMRF, DataFrames
+using BipartiteGMRF
 
-result = fit_mle(BipartiteNormalizedModel, df;
-    outcome=:y,
-    firm_id=:firm_id,
-    worker_id=:worker_id,
+result = fit_mle(BipartiteNormalizedModel, f, w, y;
     solver=ExactCholesky(),
-    decompose=100,
     seed=42,
 )
 ```
@@ -20,16 +26,12 @@ result = fit_mle(BipartiteNormalizedModel, df;
 Precompute sufficient statistics once and reuse them across fits:
 
 ```julia
-ss = suffstats(BipartiteNormalizedModel, df;
-    outcome=:y,
-    firm_id=:firm_id,
-    worker_id=:worker_id,
+ss = suffstats(BipartiteNormalizedModel, f, w, y;
     weighting=Weighting(observations=:raw),
 )
 
 result = fit_mle(BipartiteNormalizedModel, ss;
     solver=ExactCholesky(),
-    decompose=100,
     seed=42,
 )
 ```
@@ -53,13 +55,19 @@ loglikelihood(result) # original-units log-likelihood, constants included
 aic(result); bic(result); dof(result); nobs(result)
 ```
 
+## Variance Decomposition
+
+```julia
+model_vd  = decompose(result; kind=:model,  probes=100, seed=42)
+fitted_vd = decompose(result; kind=:fitted, probes=100, seed=42)
+```
+
 ## Effective Weighting
 
 ```julia
-result = fit_mle(BipartiteNormalizedModel, df;
+result = fit_mle(BipartiteNormalizedModel, f, w, y;
     weighting=Weighting(observations=:effective, rho_eps=:estimate),
     solver=ExactCholesky(),
-    decompose=100,
 )
 result.rho_eps        # estimated within-match residual correlation
 ```

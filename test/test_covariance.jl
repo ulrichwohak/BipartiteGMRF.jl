@@ -8,17 +8,13 @@
 
     op = covariance(result; kind=:model, units=:original)
     @test op isa CovarianceOperator
-    block = cov_block(op; firms=[1, 2], workers=[10])
-    idx = [
-        stats.firm_to_index[1],
-        stats.firm_to_index[2],
-        stats.N_firms + stats.worker_to_index[10],
-    ]
+    block = cov_block(op; firms=[1, 2], workers=[1])
+    idx = [1, 2, stats.N_firms + 1]
     @test block.matrix ≈ Sigma[idx, idx] atol=1e-8 rtol=1e-8
     @test block.kind == :model
     @test block.units == :original
 
-    rect = cov_block(op; row_firms=[1], col_workers=[10, 11])
+    rect = cov_block(op; row_firms=[1], col_workers=[1, 2])
     @test size(rect.matrix) == (1, 2)
     @test rect.rows[1].side == :firm
     @test rect.cols[1].side == :worker

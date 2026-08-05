@@ -16,6 +16,7 @@ import Optim
     end
 
     result = fitted_exact()
+    rep = repeated_data()
 
     @testset "coef / coefnames / params" begin
         @test coef(result) ==
@@ -38,19 +39,19 @@ import Optim
     end
 
     @testset "dof excludes fixed parameters" begin
-        ss = suffstats(BipartiteNormalizedModel, synthetic_df())
+        ss = suffstats_synthetic()
         model = BipartiteNormalizedModel(ss.A_prior)
         fixed = solve(model, ss, ExactCholesky(optim_iters=2, polish=false);
-            fix_rho=0.2, decompose=nothing, seed=1)
+            fix_rho=0.2, seed=1)
         @test dof(fixed) == 3
         @test length(coef(fixed)) == 4  # coef reports all parameters, fixed included
     end
 
     @testset "fixed rho_eps fit" begin
-        eff = fit_mle(BipartiteNormalizedModel, repeated_df();
+        eff = fit_mle(BipartiteNormalizedModel, rep.f, rep.w, rep.y;
             solver=ExactCholesky(optim_iters=3, polish=false),
             weighting=Weighting(observations=:effective, rho_eps=0.3),
-            decompose=nothing, seed=1)
+            seed=1)
         @test isfinite(eff.nll)
         @test eff.rho_eps == 0.3
         @test dof(eff) == 4          # rho_eps fixed, not estimated
@@ -61,37 +62,38 @@ import Optim
     end
 
     @testset "estimated rho_eps dof" begin
-        eff = fit_mle(BipartiteNormalizedModel, repeated_df();
+        eff = fit_mle(BipartiteNormalizedModel, rep.f, rep.w, rep.y;
             solver=ExactCholesky(optim_iters=3, polish=false),
             weighting=Weighting(observations=:effective, rho_eps=:estimate),
-            decompose=nothing, seed=1)
+            seed=1)
         @test dof(eff) == 5
         @test length(coef(eff)) == 5
     end
 
     @testset "loglikelihood: dense reference, standardization-invariant" begin
+        d = synthetic_data()
         for standardize in (true, false)
-            r = fit_mle(BipartiteNormalizedModel, synthetic_df();
+            r = fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y;
                 solver=ExactCholesky(optim_iters=5, polish=false),
-                standardize=standardize, decompose=nothing, seed=1)
+                standardize=standardize, seed=1)
             stats = r.stats
             k = stats.K
             n = stats.N_firms + stats.N_workers
             obs_rows = repeat(1:k, 2)
-            entity_cols = vcat(stats.base_f_rows, stats.N_firms .+ stats.base_w_cols)
+            entity_cols = vcat(stats.base.f, stats.N_firms .+ stats.base.w)
             V = sparse(obs_rows, entity_cols, ones(Float64, 2k), k, n)
             # Original-units parameters and mean-centered original-units outcome.
             Q = BipartiteGMRF.model_precision(r.model, r.rho, r.sigma_a, r.sigma_z)
             Sigma_y = Matrix(V * inv(Matrix(Q)) * transpose(V)) +
                 r.sigma_epsilon^2 * Matrix{Float64}(I, k, k)
-            yc = stats.base_y .* stats.y_std
+            yc = stats.base.y .* stats.y_std
             ll_dense = -0.5 * (k * log(2pi) + logdet(Symmetric(Sigma_y)) + dot(yc, Sigma_y \ yc))
             @test loglikelihood(r) ≈ ll_dense atol=1e-6 rtol=1e-6
         end
     end
 
     @testset "fit_mle(model, ss) overload matches solve" begin
-        ss = suffstats(BipartiteNormalizedModel, synthetic_df())
+        ss = suffstats_synthetic()
         model = BipartiteNormalizedModel(ss.A_prior; rho_limit=0.9)
         r1 = fit_mle(model, ss; solver=ExactCholesky(optim_iters=3, polish=false), seed=1)
         r2 = solve(model, ss, ExactCholesky(optim_iters=3, polish=false); seed=1)
@@ -101,10 +103,8 @@ import Optim
     end
 
     @testset "argument validation" begin
-        ss = suffstats(BipartiteNormalizedModel, synthetic_df())
+        ss = suffstats_synthetic()
         @test_throws ArgumentError fit_mle(BipartiteNormalizedModel, ss; rho_limit=:auto)
-        @test_throws ArgumentError fit_mle(BipartiteNormalizedModel, ss;
-            solver=ExactCholesky(optim_iters=2, polish=false), decompose=0)
     end
 end
 
@@ -113,6 +113,7 @@ end
 
     @testset "invalid kinds and units" begin
         @test_throws ArgumentError decompose(result; kind=:bogus)
+        @test_throws ArgumentError decompose(result; kind=:model, probes=0)
         @test_throws ArgumentError covariance(result; kind=:bogus)
         @test_throws ArgumentError covariance(result; kind=:model, units=:bogus)
     end
@@ -125,9 +126,10 @@ end
     end
 
     @testset "decomposition invariant to verbose" begin
-        hutch = fit_mle(BipartiteNormalizedModel, synthetic_df();
+        d = synthetic_data()
+        hutch = fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y;
             solver=HutchSLQ(logdet_probes=2, lanczos_iters=3, optim_iters=2, cg_maxiter=200),
-            decompose=nothing, seed=1)
+            seed=1)
         quiet = decompose(hutch; kind=:model, probes=5, seed=9, verbose=false)
         loud = decompose(hutch; kind=:model, probes=5, seed=9, verbose=true)
         @test quiet.V_firm == loud.V_firm
@@ -144,11 +146,11 @@ end
         @test_throws ArgumentError cov_block(op)
         @test_throws ArgumentError cov_block(op; firms=[1], row_firms=[1])
         @test_throws ArgumentError cov_block(op; firms=[999])
-        @test_throws ArgumentError cov_block(op; workers=["nope"])
-        full = cov_block(op; firms=[1, 2], workers=[10, 11])
-        small = cov_block(op; firms=[1, 2], workers=[10, 11], batch_size=1)
+        @test_throws ArgumentError cov_block(op; workers=[999])
+        full = cov_block(op; firms=[1, 2], workers=[1, 2])
+        small = cov_block(op; firms=[1, 2], workers=[1, 2], batch_size=1)
         @test full.matrix ≈ small.matrix atol=1e-12
-        rect = cov_block(op; row_firms=[1, 2, 3], col_workers=[10])
+        rect = cov_block(op; row_firms=[1, 2, 3], col_workers=[1])
         @test size(rect.matrix) == (3, 1)
     end
 end

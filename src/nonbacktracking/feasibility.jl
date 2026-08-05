@@ -10,23 +10,21 @@ end
 
 
 """
-    feasibility(model, stats; seed=12345, kwargs...)
+    feasibility(model::BipartiteVarianceStableModel; seed=12345, kwargs...)
 
-Report variance-stable feasibility for a prepared problem. The result contains
-the non-backtracking radius, the model-theoretic `rho_ceiling`, the active
-numeric `rho_limit`, the recommended guarded limit, its source, and whether the
-active limit is below the ceiling.
+Report variance-stable feasibility for a model. The result contains the
+non-backtracking spectrum and radius, the model-theoretic `rho_ceiling`, the
+active numeric `rho_limit`, the recommended guarded limit, its source, and
+whether the active limit is below the ceiling.
 
-Automatic problems reuse their preparation-time spectrum. Explicit numeric
-limits are audited without being changed; an unsafe explicit limit emits a
-warning and remains active for estimation.
+A model constructed with `rho_limit=:auto` reuses its construction-time
+spectrum. Explicit numeric limits are audited without being changed; an
+unsafe explicit limit emits a warning and remains active for estimation.
 """
-function feasibility(model::AbstractBipartiteModel, stats::BipartiteGMRFStats; seed::Int=12345, kwargs...)
-    model isa BipartiteVarianceStableModel ||
-        throw(ArgumentError("feasibility is defined only for BipartiteVarianceStableModel problems."))
-    cached = get(stats.metadata, :nb_spectrum, nothing)
-    spectrum = cached isa NBSpectrum ? cached : nb_spectrum(stats.A_prior; seed=seed, kwargs...)
-    source = get(stats.metadata, :rho_limit_source, :explicit)
+function feasibility(model::BipartiteVarianceStableModel; seed::Int=12345, kwargs...)
+    spectrum = model.spectrum === nothing ?
+        nb_spectrum(model.graph.A; seed=seed, kwargs...) : model.spectrum
+    source = model.rho_limit_source
     limit = rho_limit(model)
     ceiling = spectrum.converged ? nb_rho_ceiling(spectrum.lambda_nb) : NaN
     recommended = spectrum.converged ? nb_recommended_limit(spectrum.lambda_nb) : NaN
@@ -52,6 +50,9 @@ function feasibility(model::AbstractBipartiteModel, stats::BipartiteGMRFStats; s
         safe=safe,
     )
 end
+
+feasibility(model::AbstractBipartiteModel; kwargs...) =
+    throw(ArgumentError("feasibility is defined only for BipartiteVarianceStableModel."))
 
 """
     rho_at_bound(result)

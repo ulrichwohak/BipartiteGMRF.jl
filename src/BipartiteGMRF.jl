@@ -2,7 +2,6 @@ module BipartiteGMRF
 
 using ArnoldiMethod: partialeigen, partialschur
 import CommonSolve: solve
-using DataFrames: DataFrame, combine, groupby, nrow
 import Distributions: SufficientStats, fit_mle, params, suffstats
 using FiniteDiff: finite_difference_gradient!
 import GaussianMarkovRandomFields
@@ -77,10 +76,12 @@ export solve,
     nll,
     converged
 
-include("types.jl")
 include("util.jl")
+# graph.jl/spectrum.jl come before types.jl: BipartiteVarianceStableModel
+# stores an NBSpectrum field.
 include("nonbacktracking/graph.jl")
 include("nonbacktracking/spectrum.jl")
+include("types.jl")
 include("nonbacktracking/feasibility.jl")
 include("prepare.jl")
 include("operators/qop.jl")

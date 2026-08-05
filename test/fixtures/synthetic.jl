@@ -1,33 +1,38 @@
 using Random
 
-function synthetic_df()
-    return DataFrame(
-        firm_id = [1, 1, 2, 2, 3, 3, 1, 2],
-        worker_id = [10, 11, 11, 12, 12, 13, 13, 10],
+# Parallel (firm index, worker index, outcome) observation vectors — the
+# package's data interface.
+
+function synthetic_data()
+    return (
+        f = [1, 1, 2, 2, 3, 3, 1, 2],
+        w = [1, 2, 2, 3, 3, 4, 4, 1],
         y = [1.2, 0.7, 0.9, 1.5, 1.1, 0.4, 1.0, 0.8],
     )
 end
 
-function repeated_df()
-    return DataFrame(
-        firm_id = [1, 1, 1, 2, 2, 3, 3, 1, 2, 2],
-        worker_id = [10, 10, 11, 11, 12, 12, 13, 13, 10, 10],
+function repeated_data()
+    return (
+        f = [1, 1, 1, 2, 2, 3, 3, 1, 2, 2],
+        w = [1, 1, 2, 2, 3, 3, 4, 4, 1, 1],
         y = [1.2, 1.1, 0.7, 0.9, 1.5, 1.1, 0.4, 1.0, 0.8, 0.85],
     )
 end
 
-function custom_column_df()
-    return DataFrame(
-        employer = ["a", "a", "b", "b", "c", "c"],
-        person = ["p1", "p2", "p2", "p3", "p3", "p4"],
-        outcome = [1.0, missing, 0.8, 1.1, 0.9, 1.2],
-    )
+function suffstats_synthetic(M=BipartiteNormalizedModel; kwargs...)
+    d = synthetic_data()
+    return suffstats(M, d.f, d.w, d.y; kwargs...)
 end
 
-function fitted_exact(; decompose=nothing)
-    return fit_mle(BipartiteNormalizedModel, synthetic_df();
+function suffstats_repeated(M=BipartiteNormalizedModel; kwargs...)
+    d = repeated_data()
+    return suffstats(M, d.f, d.w, d.y; kwargs...)
+end
+
+function fitted_exact()
+    d = synthetic_data()
+    return fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y;
         solver=ExactCholesky(optim_iters=5, polish=false),
-        decompose=decompose,
         seed=1,
         verbose=false,
     )
@@ -36,7 +41,7 @@ end
 # Acyclic firm-worker graph (a caterpillar path: f1-w1-f2-w2-...-f_n-w_n), used
 # to exercise the BipartiteVarianceStableModel + ExactCholesky path, which is
 # only valid on forests.
-function tree_df(; n=12, seed=11)
+function tree_data(; n=12, seed=11)
     rng = MersenneTwister(seed)
     firm = Int[]
     worker = Int[]
@@ -44,7 +49,7 @@ function tree_df(; n=12, seed=11)
         push!(firm, i); push!(worker, i)                 # f_i — w_i
         i < n && (push!(firm, i + 1); push!(worker, i))  # w_i — f_{i+1}
     end
-    return DataFrame(firm_id = firm, worker_id = worker, y = randn(rng, length(firm)))
+    return (f = firm, w = worker, y = randn(rng, length(firm)))
 end
 
 function connected_random_edges(rng::AbstractRNG, n_firms::Int, n_workers::Int, n_edges::Int)
@@ -71,26 +76,24 @@ function simulate_gmrf_panel(
 )
     rng = MersenneTwister(seed)
     edges = connected_random_edges(rng, n_firms, n_workers, n_edges)
-    firm_id = Int[]
-    worker_id = Int[]
-    sizehint!(firm_id, length(edges) * reps)
-    sizehint!(worker_id, length(edges) * reps)
+    f_idx = Int[]
+    w_idx = Int[]
+    sizehint!(f_idx, length(edges) * reps)
+    sizehint!(w_idx, length(edges) * reps)
     for (firm, worker) in edges, _ in 1:reps
-        push!(firm_id, firm)
-        push!(worker_id, 1000 + worker)
+        push!(f_idx, firm)
+        push!(w_idx, worker)
     end
 
-    template = DataFrame(firm_id=firm_id, worker_id=worker_id, y=zeros(length(firm_id)))
-    ss = suffstats(BipartiteNormalizedModel, template; standardize=false)
+    ss = suffstats(BipartiteNormalizedModel, f_idx, w_idx, zeros(length(f_idx));
+        n_firms=n_firms, n_workers=n_workers, standardize=false)
     model = BipartiteNormalizedModel(ss.A_prior; rho_limit=0.99)
     Q = BipartiteGMRF.model_precision(model, truth.rho, truth.sigma_a, truth.sigma_z)
     L = cholesky(Symmetric(Matrix(Q))).L
     theta = transpose(L) \ randn(rng, n_firms + n_workers)
     y = [
-        theta[ss.firm_to_index[firm_id[k]]] +
-        theta[ss.N_firms + ss.worker_to_index[worker_id[k]]] +
-        truth.sigma_epsilon * randn(rng)
-        for k in eachindex(firm_id)
+        theta[f_idx[k]] + theta[n_firms + w_idx[k]] + truth.sigma_epsilon * randn(rng)
+        for k in eachindex(f_idx)
     ]
-    return DataFrame(firm_id=firm_id, worker_id=worker_id, y=y), truth
+    return (f = f_idx, w = w_idx, y = y), truth
 end

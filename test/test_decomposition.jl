@@ -1,8 +1,8 @@
 @testset "decomposition" begin
-    result = fitted_exact(; decompose=3)
-    md = result.model_decomposition
-    @test md !== nothing
+    result = fitted_exact()
+    md = decompose(result; kind=:model, probes=3, seed=1)
     @test md.kind == :model
+    @test md.V_firm > 0
     @test md.V_total ≈ md.V_firm + md.V_worker + md.V_cross + md.V_epsilon
 
     fd = decompose(result; kind=:fitted, probes=3, seed=1)

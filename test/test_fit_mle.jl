@@ -1,10 +1,9 @@
 @testset "fit_mle interface" begin
-    df = synthetic_df()
+    d = synthetic_data()
 
     @testset "fit_mle NormalizedModel" begin
-        result = fit_mle(BipartiteNormalizedModel, df;
+        result = fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y;
             solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=nothing,
             seed=1,
             rho_limit=0.99,
             model_adjacency=:binary,
@@ -17,9 +16,8 @@
     end
 
     @testset "fit_mle UnnormalizedModel" begin
-        result = fit_mle(BipartiteUnnormalizedModel, df;
+        result = fit_mle(BipartiteUnnormalizedModel, d.f, d.w, d.y;
             solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=nothing,
             seed=1,
         )
         @test isfinite(result.nll)
@@ -28,10 +26,9 @@
     end
 
     @testset "fit_mle VarianceStableModel" begin
-        tdf = tree_df()
-        result = fit_mle(BipartiteVarianceStableModel, tdf;
+        td = tree_data()
+        result = fit_mle(BipartiteVarianceStableModel, td.f, td.w, td.y;
             solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=nothing,
             seed=1,
             rho_limit=0.95,
         )
@@ -41,10 +38,9 @@
     end
 
     @testset "two-step suffstats + fit_mle" begin
-        ss = suffstats(BipartiteNormalizedModel, df)
+        ss = suffstats(BipartiteNormalizedModel, d.f, d.w, d.y)
         result = fit_mle(BipartiteNormalizedModel, ss;
             solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=nothing,
             seed=1,
         )
         @test result.converged || result.nll < Inf
@@ -54,22 +50,17 @@
     end
 
     @testset "suffstats preserves dimensions" begin
-        ss = suffstats(BipartiteNormalizedModel, df)
+        ss = suffstats(BipartiteNormalizedModel, d.f, d.w, d.y)
         @test ss.N_firms == 3
         @test ss.N_workers == 4
         @test ss.K == 8
         @test ss.personyear_rows == 8
-        @test size(ss.VtV) == (7, 7)
+        @test size(ss.design.VtV) == (7, 7)
         @test size(ss.A_prior) == (3, 4)
     end
 
-    @testset "fit_mle with decompose" begin
-        result = fit_mle(BipartiteNormalizedModel, df;
-            solver=ExactCholesky(optim_iters=5, polish=false),
-            decompose=50,
-            seed=1,
-        )
-        @test result.model_decomposition !== nothing
-        @test result.model_decomposition.V_firm > 0
+    @testset "rho_limit symbol rejected for non-VS models" begin
+        ss = suffstats(BipartiteNormalizedModel, d.f, d.w, d.y)
+        @test_throws ArgumentError fit_mle(BipartiteNormalizedModel, ss; rho_limit=:auto)
     end
 end

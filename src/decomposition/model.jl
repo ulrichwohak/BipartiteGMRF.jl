@@ -1,13 +1,25 @@
+# Fitted parameters rescaled to the standardized outcome units used
+# internally by the objective and the precision matrices.
+function scaled_params(result::GMRFResult)
+    s = result.stats.y_std
+    return (
+        rho = result.rho,
+        sigma_a = result.sigma_a / s,
+        sigma_z = result.sigma_z / s,
+        sigma_epsilon = result.sigma_epsilon / s,
+    )
+end
+
 function target_weight_vector(stats::BipartiteGMRFStats, target::Symbol)
     t = normalize_decomp_target(target)
-    T = Float64.(stats.decomp_T)
+    T = Float64.(stats.decomp.T)
     if t == :estimation
         if stats.weighting.observations == :raw
             return T, :annual
         elseif stats.weighting.observations == :edge
             return ones(Float64, length(T)), :mean
         else
-            return effective_match_weights(stats.decomp_T, stats.rho_eps_likelihood), :mean
+            return effective_match_weights(stats.decomp.T, stats.rho_eps_likelihood), :mean
         end
     elseif t == :personyear
         return T, :annual
@@ -19,26 +31,27 @@ end
 function decomp_target_stats(stats::BipartiteGMRFStats, target::Symbol)
     t = normalize_decomp_target(target)
     weights, residual_level = target_weight_vector(stats, t)
-    vstats = build_weighted_V_stats(
-        stats.decomp_f_rows,
-        stats.decomp_w_cols,
-        stats.decomp_y,
+    design = build_weighted_V_stats(
+        stats.decomp.f,
+        stats.decomp.w,
+        stats.decomp.y,
         weights,
         stats.N_firms,
         stats.N_workers,
     )
     W = sum(weights)
-    T = Float64.(stats.decomp_T)
-    ydot_total = residual_level == :annual ? vstats.ydot + stats.personyear_within_ss : vstats.ydot
+    T = Float64.(stats.decomp.T)
+    ydot_total = residual_level == :annual ? design.ydot + stats.personyear_within_ss : design.ydot
     observed_second_moment = stats.y_std^2 * ydot_total / W
-    return merge(vstats, (
+    return (
+        design = design,
         target = t,
         residual_level = residual_level,
         weights = weights,
         weight_sum = W,
         weight_over_T_sum = sum(weights ./ T),
         observed_second_moment = observed_second_moment,
-    ))
+    )
 end
 
 function residual_decomp_components(stats::BipartiteGMRFStats, sigma_epsilon_original::Float64, target_stats)
@@ -69,6 +82,58 @@ function residual_decomp_components(stats::BipartiteGMRFStats, sigma_epsilon_ori
     )
 end
 
+"""
+Run `probes` Hutchinson probes through `solve_probe(v) -> (u, ok, relres)` and
+accumulate the firm, worker, and cross quadratic-form estimates weighted by
+the decomposition design. Returns the accumulators and the count of probes
+that converged.
+"""
+function hutchinson_trace_blocks(
+    solve_probe,
+    design::DesignStats,
+    N_firms::Int,
+    n::Int,
+    probes::Int,
+    seed::Int,
+    verbose::Bool,
+    label::String,
+)
+    rng = MersenneTwister(seed)
+    v = Vector{Float64}(undef, n)
+    wv_f = Vector{Float64}(undef, N_firms)
+    wv_w = Vector{Float64}(undef, n - N_firms)
+    acc_f = 0.0
+    acc_w = 0.0
+    acc_cross = 0.0
+    ok_count = 0
+
+    for t in 1:probes
+        @inbounds for i in 1:n
+            v[i] = rand(rng, Bool) ? 1.0 : -1.0
+        end
+        u, ok, relres = solve_probe(v)
+        if !ok
+            verbose && @info "$(label) PCG did not converge" probe=t relres=relres
+            continue
+        end
+        ok_count += 1
+        vf = view(v, 1:N_firms)
+        vw = view(v, N_firms + 1:n)
+        uf = view(u, 1:N_firms)
+        uw = view(u, N_firms + 1:n)
+        @inbounds for i in 1:N_firms
+            acc_f += design.cnt_f[i] * vf[i] * uf[i]
+        end
+        @inbounds for j in 1:(n - N_firms)
+            acc_w += design.cnt_w[j] * vw[j] * uw[j]
+        end
+        mul!(wv_f, design.A_obs, uw)
+        mul!(wv_w, design.At_obs, uf)
+        acc_cross += dot(vf, wv_f) + dot(vw, wv_w)
+    end
+    return (f=acc_f, w=acc_w, cross=acc_cross, ok=ok_count)
+end
+
 function _decompose_model(
     result::GMRFResult;
     probes::Int=200,
@@ -79,86 +144,39 @@ function _decompose_model(
     probes > 0 || throw(ArgumentError("probes must be positive."))
     model = result.model
     stats = result.stats
-    p = unpack_params(result.theta_unconstrained; rho_limit=rho_limit(model))
-    sigma_a = result.sigma_a / stats.y_std
-    sigma_z = result.sigma_z / stats.y_std
-    sigma_e = result.sigma_epsilon / stats.y_std
+    p = scaled_params(result)
     n = stats.N_firms + stats.N_workers
     dstats = decomp_target_stats(stats, target)
-    cnt_f, cnt_w = dstats.cnt_f, dstats.cnt_w
-    acc_f = 0.0
-    acc_w = 0.0
-    acc_cross = 0.0
-    ok_count = 0
-    rng = MersenneTwister(seed + 77_777)
-    v = Vector{Float64}(undef, n)
-    wv_f = Vector{Float64}(undef, stats.N_firms)
-    wv_w = Vector{Float64}(undef, stats.N_workers)
 
+    local solve_probe
     if result.solver isa ExactCholesky
-        Q = model_precision(model, p.rho, sigma_a, sigma_z)
+        Q = model_precision(model, p.rho, p.sigma_a, p.sigma_z)
         FQ = cholesky(Symmetric(Q))
-        for _ in 1:probes
-            @inbounds for i in 1:n
-                v[i] = rand(rng, Bool) ? 1.0 : -1.0
-            end
-            u = FQ \ v
-            vf = view(v, 1:stats.N_firms)
-            vw = view(v, stats.N_firms + 1:n)
-            uf = view(u, 1:stats.N_firms)
-            uw = view(u, stats.N_firms + 1:n)
-            @inbounds for i in 1:stats.N_firms
-                acc_f += cnt_f[i] * vf[i] * uf[i]
-            end
-            @inbounds for j in 1:stats.N_workers
-                acc_w += cnt_w[j] * vw[j] * uw[j]
-            end
-            mul!(wv_f, dstats.A_obs, uw)
-            mul!(wv_w, dstats.At_obs, uf)
-            acc_cross += dot(vf, wv_f) + dot(vw, wv_w)
-        end
-        ok_count = probes
+        solve_probe = v -> (FQ \ v, true, 0.0)
         method = :hutch_cholesky
-        pcg_count = nothing
     else
-        qop = q_operator(model, p.rho, sigma_a, sigma_z)
+        qop = q_operator(model, p.rho, p.sigma_a, p.sigma_z)
         ws = PCGWorkspace(n)
-        Qdiag = q_diag(model, p.rho, sigma_a, sigma_z)
-        for t in 1:probes
-            @inbounds for i in 1:n
-                v[i] = rand(rng, Bool) ? 1.0 : -1.0
-            end
+        Qdiag = q_diag(model, p.rho, p.sigma_a, p.sigma_z)
+        solve_probe = function (v)
             u, ok, _, relres = pcg_solve!(ws, qop, v;
                 tol=result.solver.cg_tol, maxiter=result.solver.cg_maxiter, Mdiag=Qdiag)
-            if !ok
-                verbose && @info "model decomposition PCG did not converge" probe=t relres=relres
-                continue
-            end
-            ok_count += 1
-            vf = view(v, 1:stats.N_firms)
-            vw = view(v, stats.N_firms + 1:n)
-            uf = view(u, 1:stats.N_firms)
-            uw = view(u, stats.N_firms + 1:n)
-            @inbounds for i in 1:stats.N_firms
-                acc_f += cnt_f[i] * vf[i] * uf[i]
-            end
-            @inbounds for j in 1:stats.N_workers
-                acc_w += cnt_w[j] * vw[j] * uw[j]
-            end
-            mul!(wv_f, dstats.A_obs, uw)
-            mul!(wv_w, dstats.At_obs, uf)
-            acc_cross += dot(vf, wv_f) + dot(vw, wv_w)
+            (u, ok, relres)
         end
         method = :hutch_pcg
-        pcg_count = ok_count
     end
 
-    ok_count > 0 || throw(ErrorException("All model decomposition probes failed."))
-    scale = stats.y_std^2 / (Float64(ok_count) * dstats.weight_sum)
-    V_firm = acc_f * scale
-    V_worker = acc_w * scale
-    V_cross = acc_cross * scale
-    resid = residual_decomp_components(stats, sigma_e * stats.y_std, dstats)
+    acc = hutchinson_trace_blocks(
+        solve_probe, dstats.design, stats.N_firms, n, probes, seed + 77_777, verbose,
+        "model decomposition",
+    )
+    acc.ok > 0 || throw(ErrorException("All model decomposition probes failed."))
+
+    scale = stats.y_std^2 / (Float64(acc.ok) * dstats.weight_sum)
+    V_firm = acc.f * scale
+    V_worker = acc.w * scale
+    V_cross = acc.cross * scale
+    resid = residual_decomp_components(stats, result.sigma_epsilon, dstats)
     V_epsilon = resid.V_eps_target
     V_total = V_firm + V_worker + V_cross + V_epsilon
     return VarianceDecomposition(
@@ -171,7 +189,7 @@ function _decompose_model(
         dstats.target,
         :model,
         method,
-        pcg_count,
+        method == :hutch_pcg ? acc.ok : nothing,
         (
             residual_model = resid.model,
             residual_level = dstats.residual_level,

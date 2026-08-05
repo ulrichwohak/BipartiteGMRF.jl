@@ -108,10 +108,10 @@ Pkg.test("BipartiteGMRF")
 ```
 
 The library requires Julia 1.10 or newer and depends on
-`GaussianMarkovRandomFields`, `DataFrames`, `Distributions`, `Optim`,
-`LinearSolve`, and `FiniteDiff`. It deliberately does not read or write
-Parquet, CSV, JSON, or `estimates.txt` files &mdash; pass it a `DataFrame`,
-receive typed results.
+`GaussianMarkovRandomFields`, `Distributions`, `Optim`, `LinearSolve`, and
+`FiniteDiff`. It is an estimator, not a data manipulator: it does not read or
+write files and does not know about tables or column names &mdash; pass it
+integer-indexed observation vectors, receive typed results.
 
 ## Quick Start
 
@@ -119,19 +119,22 @@ receive typed results.
 
 The package extends the [Distributions.jl](https://juliastats.org/Distributions.jl/stable/fit/)
 `suffstats` / `fit_mle` generic functions (so `using Distributions,
-BipartiteGMRF` involves no name clashes):
+BipartiteGMRF` involves no name clashes). Data enters as three parallel
+vectors: 1-based firm index, 1-based worker index, and outcome, one entry per
+observed spell. Mapping entity identifiers to dense indices is the caller's
+job:
 
 ```julia
-using BipartiteGMRF, DataFrames
+using BipartiteGMRF
 
-# One-step: pass a DataFrame directly
-result = fit_mle(BipartiteNormalizedModel, df;
-    outcome   = :y,
-    firm_id   = :firm_id,
-    worker_id = :worker_id,
-    solver    = ExactCholesky(),
-    decompose = 200,
-    seed      = 42,
+f = [1, 1, 2, 2, 3, 3]      # firm index per observation
+w = [1, 2, 2, 3, 3, 4]      # worker index per observation
+y = [1.2, 0.7, 0.9, 1.5, 1.1, 0.4]
+
+# One-step
+result = fit_mle(BipartiteNormalizedModel, f, w, y;
+    solver = ExactCholesky(),
+    seed   = 42,
 )
 
 result.rho           # local dependence parameter
@@ -140,11 +143,11 @@ result.sigma_z       # worker effect SD
 result.sigma_epsilon # residual SD
 ```
 
-Or separate data preparation from estimation:
+Or separate sufficient-statistics computation from estimation:
 
 ```julia
 # Precompute sufficient statistics (reusable across model types)
-ss = suffstats(BipartiteNormalizedModel, df)
+ss = suffstats(BipartiteNormalizedModel, f, w, y)
 
 # Fit
 result = fit_mle(BipartiteNormalizedModel, ss; solver = ExactCholesky())
@@ -179,7 +182,7 @@ alone. `kind = :fitted` includes fitted effects (mode + trace correction).
 
 ```julia
 op    = covariance(result; kind = :model, units = :original)
-block = cov_block(op; firms = [1, 2], workers = [10, 11])
+block = cov_block(op; firms = [1, 2], workers = [1, 2])  # node indices
 ```
 
 ### Simulation
@@ -265,10 +268,10 @@ src/
 ├── types.jl               # LatentModel subtypes, BipartiteGraph, BipartiteGMRFStats, GMRFResult
 ├── stats.jl               # suffstats() implementation
 ├── fit.jl                 # fit_mle() implementation
-├── prepare.jl, util.jl   # V'V construction, weighting helpers
+├── prepare.jl, util.jl   # V'V construction, edge collapse, weighting helpers
 ├── operators/             # QOp/QOpVS per model type
 ├── linalg/                # PCG, SLQ
-├── solvers/               # ExactCholesky (GMRFWorkspace), HutchSLQ
+├── solvers/               # shared optimize loop + ExactCholesky / HutchSLQ methods
 ├── decomposition/         # model.jl, fitted.jl
 ├── nonbacktracking/       # NB spectrum, feasibility
 ├── covariance/            # operator, block extraction

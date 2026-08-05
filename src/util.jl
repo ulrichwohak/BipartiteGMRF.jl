@@ -1,7 +1,5 @@
 const BIG_NLL = 1e30
 
-to_float_nan(x) = x isa Missing ? NaN : Float64(x)
-
 function normalize_decomp_target(target::Symbol)
     target in (:estimation, :likelihood, :likelihood_mean) && return :estimation
     target in (:personyear, :edge) && return target
@@ -20,16 +18,6 @@ function effective_match_weights(T::AbstractVector{<:Real}, rho_eps::Float64)
     0.0 <= rho_eps < 1.0 ||
         throw(ArgumentError("rho_eps must satisfy 0 <= rho_eps < 1; got $(rho_eps)."))
     return Float64.(T) ./ (1.0 .+ rho_eps .* (Float64.(T) .- 1.0))
-end
-
-function edge_ssw(x)
-    mu = mean(x)
-    s = 0.0
-    @inbounds for v in x
-        d = Float64(v) - mu
-        s += d * d
-    end
-    return s
 end
 
 function leading_singular_value(
@@ -84,8 +72,10 @@ function is_forest(A::SparseMatrixCSC{Float64,Int})
     return true
 end
 
+# The rho_limit passed to the parameter codecs below always comes from a
+# constructed model, where it was validated once; they only convert.
 function unpack_params(params::AbstractVector{<:Real}; rho_limit::Real=0.99)
-    limit = validate_rho_limit(rho_limit)
+    limit = Float64(rho_limit)
     # Clamp to strictly interior: tanh saturates to ±1.0 for |x| ≳ 19,
     # which would put ρ exactly on the boundary and trip validation in
     # precision_matrix.  nextfloat(-limit) < ρ < prevfloat(limit) keeps
@@ -100,14 +90,18 @@ function unpack_params(params::AbstractVector{<:Real}; rho_limit::Real=0.99)
     )
 end
 
-default_rho_start(rho_limit::Real) = min(0.5, 0.5 * validate_rho_limit(rho_limit))
+default_rho_start(rho_limit::Real) = min(0.5, 0.5 * Float64(rho_limit))
 
+# Starting values assume the outcome has been standardized to unit variance
+# (the suffstats default): a mid-range rho, most variance in the residual and
+# the firm side, little in the worker side. They are heuristics, not tuned
+# per dataset; the optimizer is expected to move far from them.
 function initial_params(
     rho_fixed::Union{Nothing,Float64},
     estimate_rho_eps::Bool;
     rho_limit::Real=0.99,
 )
-    limit = validate_rho_limit(rho_limit)
+    limit = Float64(rho_limit)
     p = rho_fixed === nothing ?
         [atanh(default_rho_start(limit) / limit), log(0.7), log(0.04), log(0.4)] :
         [log(0.7), log(0.04), log(0.4)]
@@ -124,7 +118,7 @@ function full_params(
     if rho_fixed === nothing
         return params
     end
-    limit = validate_rho_limit(rho_limit)
+    limit = Float64(rho_limit)
     abs(rho_fixed) < limit ||
         throw(ArgumentError("rho_fixed must lie in (-$(limit), $(limit)); got $(rho_fixed)."))
     rho_code = atanh(rho_fixed / limit)

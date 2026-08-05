@@ -24,8 +24,9 @@ Large core components use Arnoldi iteration with a local seeded start vector.
 Always check `spectrum.converged` before using the radius: a failed component
 sets the global `lambda_nb` to `NaN` rather than returning a partial bound.
 
-For `fit_mle(BipartiteVarianceStableModel, df; rho_limit=:auto)`, the fit uses
-this diagnostic to resolve a guarded optimization limit and records it in
-`result.stats.metadata`. The default numeric `rho_limit=0.99` remains the
-explicit behavior. `feasibility(model, stats)` audits an explicit limit
+For `BipartiteVarianceStableModel(A; rho_limit=:auto)` (or
+`fit_mle(BipartiteVarianceStableModel, f, w, y; rho_limit=:auto)`), model
+construction uses this diagnostic to resolve a guarded optimization limit
+and stores the spectrum on the model. The default numeric `rho_limit=0.99`
+remains the explicit behavior. `feasibility(model)` audits an explicit limit
 against the ceiling after the fact.

@@ -40,7 +40,7 @@ function BipartiteGraph(A::SparseMatrixCSC{Float64,Int})
     d_w = vec(sum(A; dims=1))
     any(d_f .<= 0) && throw(ArgumentError("Zero-degree firm node detected."))
     any(d_w .<= 0) && throw(ArgumentError("Zero-degree worker node detected."))
-    return BipartiteGraph(A, At, Float64.(d_f), Float64.(d_w), n_firms, n_workers)
+    return BipartiteGraph(A, At, d_f, d_w, n_firms, n_workers)
 end
 
 function validate_rho_limit(rho_limit::Real)
@@ -119,11 +119,17 @@ end
 """
 Variance-stable bipartite GMRF for forest-like graphs.
 Implements `GaussianMarkovRandomFields.LatentModel`.
+
+`rho_limit=:auto` resolves the limit from the non-backtracking spectrum of the
+(binarized) adjacency at construction time; the computed [`NBSpectrum`](@ref)
+is stored on the model and reused by [`feasibility`](@ref).
 """
-struct BipartiteVarianceStableModel{L<:Union{Float64,Symbol},Alg} <: AbstractBipartiteModel
+struct BipartiteVarianceStableModel{Alg} <: AbstractBipartiteModel
     graph::BipartiteGraph
     strict_forest::Bool
-    rho_limit::L
+    rho_limit::Float64
+    rho_limit_source::Symbol            # :auto or :explicit
+    spectrum::Union{Nothing,NBSpectrum}
     alg::Alg
 end
 
@@ -144,15 +150,26 @@ function BipartiteVarianceStableModel(
     if rho_limit isa Symbol
         rho_limit == :auto ||
             throw(ArgumentError("rho_limit symbol must be :auto; got $(rho_limit)."))
-        return BipartiteVarianceStableModel(g, strict_forest, rho_limit, alg)
+        spectrum = nb_spectrum(g.A)
+        spectrum.converged || throw(ArgumentError(
+            "Automatic VS feasibility could not be resolved because the non-backtracking eigensolver did not converge.",
+        ))
+        resolved = nb_recommended_limit(spectrum.lambda_nb)
+        @info @sprintf(
+            "VS feasibility resolved: lambda_NB=%.4f, rho_ceiling=%.4f, rho_limit=%.4f, source=auto",
+            spectrum.lambda_nb,
+            nb_rho_ceiling(spectrum.lambda_nb),
+            resolved,
+        )
+        return BipartiteVarianceStableModel(g, strict_forest, resolved, :auto, spectrum, alg)
     end
-    return BipartiteVarianceStableModel(g, strict_forest, validate_rho_limit(rho_limit), alg)
+    return BipartiteVarianceStableModel(
+        g, strict_forest, validate_rho_limit(rho_limit), :explicit, nothing, alg,
+    )
 end
 
 # ─── rho_limit for model types ────────────────────────────────────────────
 rho_limit(m::AbstractBipartiteModel) = m.rho_limit
-rho_limit(::BipartiteVarianceStableModel{Symbol}) =
-    throw(ArgumentError("rho_limit=:auto must be resolved before use."))
 
 # ─── GaussianMarkovRandomFields.jl LatentModel interface ──────────────────
 
@@ -221,7 +238,7 @@ function GaussianMarkovRandomFields.precision_matrix(
 end
 
 function GaussianMarkovRandomFields.precision_matrix(
-    m::BipartiteVarianceStableModel{Float64};
+    m::BipartiteVarianceStableModel;
     ρ::Real, σ_a::Real, σ_z::Real, kwargs...,
 )
     _validate_bipartite_params(ρ, σ_a, σ_z, m.rho_limit)
@@ -261,14 +278,20 @@ end
 
 Configure how repeated firm-worker observations enter the likelihood and
 variance decompositions.
+
+`observations` is `:raw` (each row an independent draw), `:edge` (collapse to
+match means), or `:effective` (match-effective weights with within-match
+residual correlation). With `:effective`, pass `rho_eps` as a number in
+`[0, 1)` to fix the correlation or `:estimate` to estimate it jointly.
 """
 struct Weighting
     observations::Symbol
-    rho_eps::Union{Nothing,Float64,Symbol}
+    rho_eps::Float64            # fixed value, or the starting value when estimated
+    estimate_rho_eps::Bool
     target::Symbol
     function Weighting(;
         observations::Symbol=:raw,
-        rho_eps::Union{Nothing,Float64,Symbol}=nothing,
+        rho_eps::Union{Nothing,Real,Symbol}=nothing,
         target::Symbol=:estimation,
     )
         observations in (:raw, :edge, :effective) ||
@@ -276,17 +299,19 @@ struct Weighting
         target = normalize_decomp_target(target)
         if observations == :effective
             rho_eps === nothing &&
-                throw(ArgumentError("effective weighting requires rho_eps as a Float64 or :estimate."))
+                throw(ArgumentError("effective weighting requires rho_eps as a number in [0, 1) or :estimate."))
             if rho_eps isa Symbol
                 rho_eps == :estimate ||
                     throw(ArgumentError("rho_eps symbol must be :estimate; got $(rho_eps)."))
-            elseif !(0.0 <= rho_eps < 1.0)
-                throw(ArgumentError("rho_eps must satisfy 0 <= rho_eps < 1; got $(rho_eps)."))
+                return new(observations, 0.5, true, target)
             end
-        elseif rho_eps !== nothing
-            throw(ArgumentError("rho_eps is only meaningful with observations=:effective."))
+            0.0 <= rho_eps < 1.0 ||
+                throw(ArgumentError("rho_eps must satisfy 0 <= rho_eps < 1; got $(rho_eps)."))
+            return new(observations, Float64(rho_eps), false, target)
         end
-        new(observations, rho_eps, target)
+        rho_eps === nothing ||
+            throw(ArgumentError("rho_eps is only meaningful with observations=:effective."))
+        return new(observations, NaN, false, target)
     end
 end
 
@@ -356,6 +381,46 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
+Precomputed design products for the observation model `y = Vθ + ε`:
+`V'V`, `V'y`, `y'y`, and their firm/worker blocks.
+"""
+struct DesignStats
+    VtV::SparseMatrixCSC{Float64,Int}
+    projected_y::Vector{Float64}     # V'y
+    ydot::Float64                    # y'y (weighted)
+    A_obs::SparseMatrixCSC{Float64,Int}
+    At_obs::SparseMatrixCSC{Float64,Int}
+    cnt_f::Vector{Float64}
+    cnt_w::Vector{Float64}
+end
+
+"""
+Parallel edge arrays: firm index, worker index, (standardized) outcome, and
+observation count per edge.
+"""
+struct EdgeData
+    f::Vector{Int}
+    w::Vector{Int}
+    y::Vector{Float64}
+    T::Vector{Int}
+end
+
+"""
+Summary statistics of the effective observation weights entering the
+likelihood. Trivial (`log_weight_sum = 0`, unit weights) except under
+`Weighting(observations=:effective)`.
+"""
+struct WeightStats
+    log_weight_sum::Float64
+    effective_weight_sum::Float64
+    effective_weight_over_T_sum::Float64
+    mean_effective_weight::Float64
+    max_effective_weight::Float64
+end
+
+trivial_weight_stats(k::Integer) = WeightStats(0.0, Float64(k), Float64(k), 1.0, 1.0)
+
+"""
     BipartiteGMRFStats <: Distributions.SufficientStats
 
 Sufficient statistics for bipartite GMRF maximum-likelihood estimation.
@@ -363,60 +428,50 @@ Sufficient statistics for bipartite GMRF maximum-likelihood estimation.
 Contains all data-derived quantities needed by the NLL objective. Computed
 once via [`suffstats`](@ref) and reused across all optimizer iterations.
 """
-struct BipartiteGMRFStats{F,W} <: SufficientStats
-    # Precomputed design products
-    VtV::SparseMatrixCSC{Float64,Int}
-    projected_y::Vector{Float64}
-    ydot::Float64
-    A_obs::SparseMatrixCSC{Float64,Int}
-    At_obs::SparseMatrixCSC{Float64,Int}
-    cnt_f::Vector{Float64}
-    cnt_w::Vector{Float64}
+struct BipartiteGMRFStats <: SufficientStats
+    design::DesignStats             # V'V, V'y, y'y at the likelihood level
+    A_prior::SparseMatrixCSC{Float64,Int}   # prior adjacency (model construction)
+    base::EdgeData                  # likelihood-level observations (rows or edges)
+    decomp::EdgeData                # edge-collapsed data for decompositions
 
-    # Prior adjacency (for model construction)
-    A_prior::SparseMatrixCSC{Float64,Int}
-
-    # Raw observation data (needed for rho_eps re-estimation)
-    base_f_rows::Vector{Int}
-    base_w_cols::Vector{Int}
-    base_y::Vector{Float64}
-    base_T::Vector{Int}
-
-    # Decomposition data (edge-collapsed)
-    decomp_f_rows::Vector{Int}
-    decomp_w_cols::Vector{Int}
-    decomp_y::Vector{Float64}
-    decomp_T::Vector{Int}
-
-    # Identity mappings
-    firm_ids::Vector{F}
-    worker_ids::Vector{W}
-    firm_to_index::Dict{F,Int}
-    worker_to_index::Dict{W,Int}
     N_firms::Int
     N_workers::Int
+    K::Int                          # likelihood observation count
+    personyear_rows::Int            # raw input rows
 
-    # Observation counts and standardization
-    K::Int
-    personyear_rows::Int
     y_mean::Float64
     y_std::Float64
     standardize::Bool
 
-    # Weighting
     weighting::Weighting
     rho_eps_likelihood::Union{Nothing,Float64}
     within_ss::Float64
     within_df::Int
     personyear_within_ss::Float64
-    log_weight_sum::Float64
-    effective_weight_sum::Float64
-    effective_weight_over_T_sum::Float64
-    mean_effective_weight::Float64
-    max_effective_weight::Float64
+    weights::WeightStats
 
-    # Metadata
     metadata::NamedTuple
+end
+
+"""
+Observation-side inputs to one NLL evaluation. Equal to the corresponding
+fields of the fitted `BipartiteGMRFStats` except when `rho_eps` is being
+re-estimated, in which case the design products are rebuilt at the current
+`rho_eps`.
+"""
+struct ObservationStats
+    design::DesignStats
+    weights::WeightStats
+    rho_eps::Union{Nothing,Float64}
+end
+
+# Copy a BipartiteGMRFStats, replacing the named fields. Not type-stable and
+# not for hot paths; called a constant number of times per fit.
+function replace_stats(ss::BipartiteGMRFStats; kwargs...)
+    vals = map(fieldnames(BipartiteGMRFStats)) do name
+        haskey(kwargs, name) ? kwargs[name] : getfield(ss, name)
+    end
+    return BipartiteGMRFStats(vals...)
 end
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -452,7 +507,6 @@ Implements the `StatsAPI.StatisticalModel` interface.
 """
 struct GMRFResult{
     M<:AbstractBipartiteModel,
-    ST<:BipartiteGMRFStats,
     S<:AbstractGMRFSolver,
 } <: StatisticalModel
     rho::Float64
@@ -465,10 +519,8 @@ struct GMRFResult{
     iterations::Int
     obj_evals::Int
     optimization_time::Float64
-    model_decomposition::Union{VarianceDecomposition,Nothing}
-    fitted_decomposition::Union{VarianceDecomposition,Nothing}
     model::M
-    stats::ST
+    stats::BipartiteGMRFStats
     solver::S
     theta_unconstrained::Vector{Float64}
     metadata::NamedTuple
@@ -479,24 +531,29 @@ end
 # ═══════════════════════════════════════════════════════════════════════════
 
 """
+Reference to one latent node in a covariance block: `(side = :firm | :worker,
+id = index)`, where `id` is the node index on its own side.
+"""
+const EntityRef = @NamedTuple{side::Symbol, id::Int}
+
+"""
 Cached covariance factorization returned by `covariance(result; kind=:model)` or
 `covariance(result; kind=:fitted)`.
 """
-struct CovarianceOperator{F}
+struct CovarianceOperator{F,R<:GMRFResult}
     kind::Symbol
     factor::F
-    result::GMRFResult
+    result::R
     units::Symbol
 end
 
 """
 Covariance block returned by `cov_block`.
 """
-struct CovarianceBlock{R,C}
+struct CovarianceBlock
     matrix::Matrix{Float64}
-    rows::Vector{R}
-    cols::Vector{C}
+    rows::Vector{EntityRef}
+    cols::Vector{EntityRef}
     kind::Symbol
     units::Symbol
 end
-

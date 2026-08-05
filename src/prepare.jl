@@ -1,3 +1,6 @@
+# Design-product construction shared by suffstats and the rho_eps
+# re-estimation path.
+
 function build_V_stats(
     f_rows::Vector{Int},
     w_cols::Vector{Int},
@@ -26,14 +29,14 @@ function build_V_stats(
 
     A_obs = sparse(f_rows, w_cols, ones(Float64, k), n_firms, n_workers)
     VtV = [spdiagm(0 => cnt_f) A_obs; copy(transpose(A_obs)) spdiagm(0 => cnt_w)]
-    return (
-        projected_y = vcat(proj_f, proj_w),
-        VtV = VtV,
-        cnt_f = cnt_f,
-        cnt_w = cnt_w,
-        A_obs = A_obs,
-        At_obs = copy(transpose(A_obs)),
-        ydot = dot(y, y),
+    return DesignStats(
+        VtV,
+        vcat(proj_f, proj_w),
+        dot(y, y),
+        A_obs,
+        copy(transpose(A_obs)),
+        cnt_f,
+        cnt_w,
     )
 end
 
@@ -70,14 +73,14 @@ function build_weighted_V_stats(
 
     A_obs = sparse(f_rows, w_cols, weights, n_firms, n_workers)
     VtV = [spdiagm(0 => cnt_f) A_obs; copy(transpose(A_obs)) spdiagm(0 => cnt_w)]
-    return (
-        projected_y = vcat(proj_f, proj_w),
-        VtV = VtV,
-        cnt_f = cnt_f,
-        cnt_w = cnt_w,
-        A_obs = A_obs,
-        At_obs = copy(transpose(A_obs)),
-        ydot = ydot,
+    return DesignStats(
+        VtV,
+        vcat(proj_f, proj_w),
+        ydot,
+        A_obs,
+        copy(transpose(A_obs)),
+        cnt_f,
+        cnt_w,
     )
 end
 
@@ -91,64 +94,48 @@ function build_match_weight_stats(
     rho_eps::Float64,
 )
     weights = effective_match_weights(T, rho_eps)
-    stats = build_weighted_V_stats(f_rows, w_cols, y, weights, n_firms, n_workers)
-    return merge(stats, (
-        log_weight_sum = sum(log, weights),
-        effective_weight_sum = sum(weights),
-        mean_effective_weight = mean(weights),
-        max_effective_weight = maximum(weights),
-        effective_weight_over_T_sum = sum(weights ./ Float64.(T)),
-    ))
-end
-
-function filter_max_degree(df::DataFrame, max_degree::Int, firm_id::Symbol, worker_id::Symbol)
-    max_degree > 0 || throw(ArgumentError("max_degree must be positive."))
-    firm_deg = combine(groupby(df, firm_id), nrow => :deg)
-    worker_deg = combine(groupby(df, worker_id), nrow => :deg)
-    keep_firms = Set(firm_deg[firm_deg.deg .<= max_degree, firm_id])
-    keep_workers = Set(worker_deg[worker_deg.deg .<= max_degree, worker_id])
-    return filter(row -> row[firm_id] in keep_firms && row[worker_id] in keep_workers, df)
-end
-
-function with_observation_stats(gmrf_stats::BipartiteGMRFStats, obs_stats, rho_eps::Union{Nothing,Float64})
-    return BipartiteGMRFStats(
-        obs_stats.VtV,
-        obs_stats.projected_y,
-        Float64(obs_stats.ydot),
-        obs_stats.A_obs,
-        obs_stats.At_obs,
-        obs_stats.cnt_f,
-        obs_stats.cnt_w,
-        gmrf_stats.A_prior,
-        gmrf_stats.base_f_rows,
-        gmrf_stats.base_w_cols,
-        gmrf_stats.base_y,
-        gmrf_stats.base_T,
-        gmrf_stats.decomp_f_rows,
-        gmrf_stats.decomp_w_cols,
-        gmrf_stats.decomp_y,
-        gmrf_stats.decomp_T,
-        gmrf_stats.firm_ids,
-        gmrf_stats.worker_ids,
-        gmrf_stats.firm_to_index,
-        gmrf_stats.worker_to_index,
-        gmrf_stats.N_firms,
-        gmrf_stats.N_workers,
-        gmrf_stats.K,
-        gmrf_stats.personyear_rows,
-        gmrf_stats.y_mean,
-        gmrf_stats.y_std,
-        gmrf_stats.standardize,
-        gmrf_stats.weighting,
-        rho_eps,
-        gmrf_stats.within_ss,
-        gmrf_stats.within_df,
-        gmrf_stats.personyear_within_ss,
-        Float64(get(obs_stats, :log_weight_sum, gmrf_stats.log_weight_sum)),
-        Float64(get(obs_stats, :effective_weight_sum, gmrf_stats.effective_weight_sum)),
-        Float64(get(obs_stats, :effective_weight_over_T_sum, gmrf_stats.effective_weight_over_T_sum)),
-        Float64(get(obs_stats, :mean_effective_weight, gmrf_stats.mean_effective_weight)),
-        Float64(get(obs_stats, :max_effective_weight, gmrf_stats.max_effective_weight)),
-        gmrf_stats.metadata,
+    design = build_weighted_V_stats(f_rows, w_cols, y, weights, n_firms, n_workers)
+    weight_stats = WeightStats(
+        sum(log, weights),
+        sum(weights),
+        sum(weights ./ Float64.(T)),
+        mean(weights),
+        maximum(weights),
     )
+    return design, weight_stats
+end
+
+"""
+Collapse repeated (firm, worker) observations to unique edges, preserving
+first-appearance order. Returns parallel vectors of firm index, worker index,
+observation count `T`, edge mean of `y`, and within-edge sum of squares.
+"""
+function collapse_edges(
+    f_rows::AbstractVector{<:Integer},
+    w_cols::AbstractVector{<:Integer},
+    y::AbstractVector{Float64},
+)
+    index = Dict{Tuple{Int,Int},Int}()
+    f = Int[]
+    w = Int[]
+    T = Int[]
+    y_sum = Float64[]
+    y_sq = Float64[]
+    for k in eachindex(f_rows)
+        key = (Int(f_rows[k]), Int(w_cols[k]))
+        j = get!(index, key) do
+            push!(f, key[1])
+            push!(w, key[2])
+            push!(T, 0)
+            push!(y_sum, 0.0)
+            push!(y_sq, 0.0)
+            length(f)
+        end
+        T[j] += 1
+        y_sum[j] += y[k]
+        y_sq[j] += y[k]^2
+    end
+    y_mean = y_sum ./ T
+    ssw = [max(y_sq[j] - y_sum[j]^2 / T[j], 0.0) for j in eachindex(T)]
+    return (f=f, w=w, T=T, y_mean=y_mean, ssw=ssw)
 end

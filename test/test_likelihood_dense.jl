@@ -1,6 +1,6 @@
 @testset "dense likelihood reference" begin
-    ss = suffstats(BipartiteNormalizedModel,
-        synthetic_df();
+    d = synthetic_data()
+    ss = suffstats(BipartiteNormalizedModel, d.f, d.w, d.y;
         weighting=Weighting(observations=:raw),
         standardize=false,
     )
@@ -23,7 +23,7 @@
     k = ss.K
     n = ss.N_firms + ss.N_workers
     obs_rows = repeat(1:k, 2)
-    entity_cols = vcat(ss.base_f_rows, ss.N_firms .+ ss.base_w_cols)
+    entity_cols = vcat(ss.base.f, ss.N_firms .+ ss.base.w)
     V = sparse(obs_rows, entity_cols, ones(Float64, 2k), k, n)
 
     Q = BipartiteGMRF.model_precision(model, rho, sigma_a, sigma_z)
@@ -31,7 +31,7 @@
     Sigma_y = Matrix(V * prior_cov * transpose(V)) + sigma_epsilon^2 * Matrix{Float64}(I, k, k)
     dense_nll = 0.5 * (
         logdet(Symmetric(Sigma_y)) +
-        dot(ss.base_y, Sigma_y \ ss.base_y)
+        dot(ss.base.y, Sigma_y \ ss.base.y)
     )
 
     @test exact_nll ≈ dense_nll atol=1e-8 rtol=1e-8
@@ -39,8 +39,8 @@ end
 
 
 @testset "variance-stable paired HutchSLQ logdet" begin
-    ss = suffstats(BipartiteVarianceStableModel,
-        synthetic_df();
+    d_vs = synthetic_data()
+    ss = suffstats(BipartiteVarianceStableModel, d_vs.f, d_vs.w, d_vs.y;
         weighting=Weighting(observations=:raw),
         standardize=false,
     )

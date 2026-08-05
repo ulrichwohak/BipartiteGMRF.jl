@@ -1,35 +1,31 @@
-entity_ref(side::Symbol, id) = (side = side, id = id)
-
-function resolve_firms(stats::BipartiteGMRFStats{F,W}, ids) where {F,W}
-    refs = NamedTuple{(:side, :id), Tuple{Symbol, F}}[]
+function resolve_firms(stats::BipartiteGMRFStats, ids)
+    refs = EntityRef[]
     idx = Int[]
     for id in ids
-        haskey(stats.firm_to_index, id) ||
-            throw(ArgumentError("Firm ID $(id) not found in the fitted problem."))
-        i = stats.firm_to_index[id]
-        push!(refs, entity_ref(:firm, id))
-        push!(idx, i)
+        1 <= id <= stats.N_firms ||
+            throw(ArgumentError("Firm index $(id) outside 1:$(stats.N_firms)."))
+        push!(refs, (side=:firm, id=Int(id)))
+        push!(idx, Int(id))
     end
     return refs, idx
 end
 
-function resolve_workers(stats::BipartiteGMRFStats{F,W}, ids) where {F,W}
-    refs = NamedTuple{(:side, :id), Tuple{Symbol, W}}[]
+function resolve_workers(stats::BipartiteGMRFStats, ids)
+    refs = EntityRef[]
     idx = Int[]
     offset = stats.N_firms
     for id in ids
-        haskey(stats.worker_to_index, id) ||
-            throw(ArgumentError("Worker ID $(id) not found in the fitted problem."))
-        i = stats.worker_to_index[id]
-        push!(refs, entity_ref(:worker, id))
-        push!(idx, offset + i)
+        1 <= id <= stats.N_workers ||
+            throw(ArgumentError("Worker index $(id) outside 1:$(stats.N_workers)."))
+        push!(refs, (side=:worker, id=Int(id)))
+        push!(idx, offset + Int(id))
     end
     return refs, idx
 end
 
 function resolve_entities(stats::BipartiteGMRFStats; firms=(), workers=())
-    f_refs, f_idx = resolve_firms(stats, collect(firms))
-    w_refs, w_idx = resolve_workers(stats, collect(workers))
+    f_refs, f_idx = resolve_firms(stats, firms)
+    w_refs, w_idx = resolve_workers(stats, workers)
     return vcat(f_refs, w_refs), vcat(f_idx, w_idx)
 end
 
@@ -66,7 +62,8 @@ end
               batch_size=16)
 
 Extract a principal or rectangular covariance block from a cached covariance
-operator.
+operator. Firms and workers are addressed by their 1-based node indices (the
+same indices passed to [`suffstats`](@ref)).
 
 Use `firms`/`workers` for a principal block, or `row_*` and `col_*` keywords
 for a rectangular block. The result is a `CovarianceBlock` with matrix values

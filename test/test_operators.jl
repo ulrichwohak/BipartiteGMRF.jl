@@ -1,6 +1,6 @@
 @testset "operators" begin
     for model_type in (BipartiteNormalizedModel, BipartiteUnnormalizedModel, BipartiteSpectralModel)
-        ss = suffstats(model_type, synthetic_df())
+        ss = suffstats_synthetic(model_type)
         model = BipartiteGMRF._build_model(model_type, ss.A_prior, 0.99)
         rho, sa, sz = 0.25, 0.7, 0.4
         qop = BipartiteGMRF.q_operator(model, rho, sa, sz)
@@ -9,14 +9,14 @@
         y = similar(x)
         qop(y, x)
         @test y ≈ Q * x atol=1e-10 rtol=1e-10
-        mop = BipartiteGMRF.MOp(qop, ss.VtV, similar(x), 1.0)
+        mop = BipartiteGMRF.MOp(qop, ss.design.VtV, similar(x), 1.0)
         @test mop isa BipartiteGMRF.MOp{typeof(qop)}
     end
-    ss_spectral = suffstats(BipartiteSpectralModel, synthetic_df())
+    ss_spectral = suffstats_synthetic(BipartiteSpectralModel)
     model_spectral = BipartiteSpectralModel(ss_spectral.A_prior; seed=7)
     @test model_spectral isa BipartiteSpectralModel
 
-    ss_vs = suffstats(BipartiteVarianceStableModel, synthetic_df())
+    ss_vs = suffstats_synthetic(BipartiteVarianceStableModel)
     model_vs = @test_warn "variance-stable model no longer guarantees" BipartiteVarianceStableModel(
         ss_vs.A_prior,
     )
@@ -33,7 +33,7 @@
     bop = BipartiteGMRF.make_qop_vs(model_vs, rho, 1.0, 1.0)
     kop = BipartiteGMRF.ScaledMOp(
         bop,
-        ss_vs.VtV,
+        ss_vs.design.VtV,
         copy(scale),
         similar(x),
         similar(x),
@@ -42,5 +42,5 @@
     kop(y, x)
     B = BipartiteGMRF.model_precision(model_vs, rho, 1.0, 1.0)
     S = Diagonal(scale)
-    @test y ≈ (B + lambda .* S * ss_vs.VtV * S) * x atol=1e-10 rtol=1e-10
+    @test y ≈ (B + lambda .* S * ss_vs.design.VtV * S) * x atol=1e-10 rtol=1e-10
 end
