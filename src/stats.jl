@@ -16,10 +16,13 @@ allowed and handled according to `weighting`.
 Returns a [`BipartiteGMRFStats`](@ref) that can be passed to [`fit_mle`](@ref).
 Extends `Distributions.suffstats`.
 
-The estimator does not manipulate data: every index must be in range, every
-node index in `1:n_firms` (resp. `1:n_workers`) must appear at least once,
-and `y` must be free of missing or non-finite values. Map entity identifiers
-to dense integer indices and drop unusable rows before calling.
+## Graph-only edges
+
+Non-finite values in `y` (NaN, ±Inf) mark *graph-only* edges: the
+corresponding `(f_idx[k], w_idx[k])` pair enters the prior adjacency
+`A_prior` (and therefore the model's precision matrix and node degrees)
+but contributes no design row, no term to `V'y`, `y'y`, or the
+observation count `K`. At least one finite outcome is required.
 """
 function suffstats(
     ::Type{M},
@@ -37,13 +40,9 @@ function suffstats(
     M <: BipartiteVarianceStableModel && weighting.observations != :raw &&
         throw(ArgumentError("BipartiteVarianceStableModel currently supports only Weighting(observations=:raw)."))
 
-    personyear_rows = length(y)
-    personyear_rows > 0 || throw(ArgumentError("Empty dataset."))
-    length(f_idx) == personyear_rows && length(w_idx) == personyear_rows ||
+    length(y) > 0 || throw(ArgumentError("Empty dataset."))
+    length(f_idx) == length(y) && length(w_idx) == length(y) ||
         throw(ArgumentError("f_idx, w_idx, and y must have the same length."))
-    all(isfinite, y) || throw(ArgumentError(
-        "y contains missing or non-finite values; filter the data before calling suffstats.",
-    ))
     n_f = Int(n_firms)
     n_w = Int(n_workers)
     for k in eachindex(f_idx)
@@ -52,31 +51,40 @@ function suffstats(
     end
 
     y_raw = Float64.(y)
-    y_mean = standardize ? mean(y_raw) : 0.0
-    y_std = standardize ? std(y_raw) : 1.0
-    isfinite(y_std) && y_std > 0 || throw(ArgumentError("Outcome has zero or invalid standard deviation."))
-
     f_rows = Int.(f_idx)
     w_cols = Int.(w_idx)
-    y_scaled = (y_raw .- y_mean) ./ y_std
 
-    edges = collapse_edges(f_rows, w_cols, y_scaled)
+    # Separate observed (finite outcome) from graph-only (NaN/Inf) edges
+    obs_mask = isfinite.(y_raw)
+    n_obs = count(obs_mask)
+    n_obs > 0 || throw(ArgumentError("No finite outcomes in y."))
+
+    y_finite = y_raw[obs_mask]
+    y_mean = standardize ? mean(y_finite) : 0.0
+    y_std = standardize ? std(y_finite) : 1.0
+    isfinite(y_std) && y_std > 0 || throw(ArgumentError("Outcome has zero or invalid standard deviation."))
+
+    f_obs = f_rows[obs_mask]
+    w_obs = w_cols[obs_mask]
+    y_obs_scaled = (y_finite .- y_mean) ./ y_std
+    personyear_rows = n_obs
+
+    edges = collapse_edges(f_obs, w_obs, y_obs_scaled)
     n_edges = length(edges.f)
     decomp = EdgeData(edges.f, edges.w, edges.y_mean, edges.T)
     personyear_within_ss = sum(edges.ssw)
 
     obs = weighting.observations
     block = if obs == :raw
-        design = build_V_stats(f_rows, w_cols, y_scaled, n_f, n_w)
+        design = build_V_stats(f_obs, w_obs, y_obs_scaled, n_f, n_w)
         (
             K = personyear_rows,
-            base = EdgeData(f_rows, w_cols, y_scaled, ones(Int, personyear_rows)),
+            base = EdgeData(f_obs, w_obs, y_obs_scaled, ones(Int, personyear_rows)),
             design = design,
             weights = trivial_weight_stats(personyear_rows),
             within_ss = 0.0,
             within_df = 0,
             rho_eps_likelihood = nothing,
-            A_prior_base = copy(design.A_obs),   # duplicate entries sum to counts
         )
     elseif obs == :edge
         design = build_weighted_V_stats(edges.f, edges.w, edges.y_mean, ones(Float64, n_edges), n_f, n_w)
@@ -88,7 +96,6 @@ function suffstats(
             within_ss = 0.0,
             within_df = 0,
             rho_eps_likelihood = nothing,
-            A_prior_base = sparse(edges.f, edges.w, Float64.(edges.T), n_f, n_w),
         )
     else  # :effective
         rho0 = weighting.rho_eps
@@ -101,13 +108,14 @@ function suffstats(
             within_ss = personyear_within_ss,
             within_df = personyear_rows - n_edges,
             rho_eps_likelihood = rho0,
-            A_prior_base = sparse(edges.f, edges.w, Float64.(edges.T), n_f, n_w),
         )
     end
 
-    A_prior = copy(block.A_prior_base)
+    # A_prior from ALL edges (including graph-only); design uses observed only
+    A_prior = sparse(f_rows, w_cols, ones(Float64, length(f_rows)), n_f, n_w)
     model_adjacency == :binary && (A_prior.nzval .= 1.0)
 
+    n_graph_only = length(f_rows) - n_obs
     duplicate_rows = personyear_rows - n_edges
     metadata = (
         model_adjacency = model_adjacency,
@@ -118,6 +126,8 @@ function suffstats(
         total_prior_weight = sum(A_prior.nzval),
         max_prior_degree_f = maximum(vec(sum(A_prior; dims=2))),
         max_prior_degree_w = maximum(vec(sum(A_prior; dims=1))),
+        graph_only_rows = n_graph_only,
+        graph_only_edges = nnz(A_prior) - nnz(block.design.A_obs),
     )
 
     return BipartiteGMRFStats(

@@ -13,12 +13,13 @@
 
     # The estimator does not manipulate data: bad input is rejected, not fixed.
     d = synthetic_data()
-    @test_throws ArgumentError suffstats(BipartiteNormalizedModel, d.f, d.w,
-        [1.0, NaN, d.y[3:end]...])
     @test_throws ArgumentError suffstats(BipartiteNormalizedModel, d.f, d.w, d.y[1:4])
     @test_throws ArgumentError suffstats(BipartiteNormalizedModel, d.f, d.w, d.y; n_firms=2)
     @test_throws ArgumentError suffstats(BipartiteNormalizedModel, Int[], Int[], Float64[])
-    # A node index with no observations produces a zero-degree node.
+    # All-NaN is rejected (no finite outcomes).
+    @test_throws ArgumentError suffstats(BipartiteNormalizedModel, d.f, d.w, fill(NaN, 8))
+    # A node index with no observations AND no graph-only edge produces a
+    # zero-degree node at model construction time.
     @test_throws ArgumentError fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y; n_firms=4)
 
     edge_ss = suffstats_repeated(; weighting=Weighting(observations=:edge))
@@ -56,5 +57,74 @@
         @test ss2.K == 99
         @test ss2.N_firms == ss.N_firms
         @test ss2.design === ss.design
+    end
+
+    @testset "graph-only edges" begin
+        d = synthetic_data()
+        ss_ref = suffstats(BipartiteNormalizedModel, d.f, d.w, d.y)
+
+        # ── regression: all-finite y reproduces existing stats ──
+        @test ss_ref.K == 8
+        @test ss_ref.metadata.graph_only_rows == 0
+        @test ss_ref.metadata.graph_only_edges == 0
+
+        # ── NaN outcome → graph-only edge ──
+        # Add a graph-only edge (firm 3, worker 1) — not in original observations.
+        f_ext = [d.f; 3]
+        w_ext = [d.w; 1]
+        y_ext = [d.y; NaN]
+        ss_ext = suffstats(BipartiteNormalizedModel, f_ext, w_ext, y_ext)
+
+        # A_prior gains the extra edge
+        @test nnz(ss_ext.A_prior) == nnz(ss_ref.A_prior) + 1
+        @test ss_ext.A_prior[3, 1] == 1.0  # new edge present
+
+        # Likelihood inputs are identical (graph-only edge excluded)
+        @test ss_ext.design.VtV == ss_ref.design.VtV
+        @test ss_ext.design.projected_y == ss_ref.design.projected_y
+        @test ss_ext.design.ydot ≈ ss_ref.design.ydot
+        @test ss_ext.K == ss_ref.K
+
+        # Metadata tracks graph-only
+        @test ss_ext.metadata.graph_only_rows == 1
+        @test ss_ext.metadata.graph_only_edges == 1
+
+        # ── NaN on an existing edge: graph stays the same ──
+        f_dup = [d.f; 1]
+        w_dup = [d.w; 1]
+        y_dup = [d.y; NaN]
+        ss_dup = suffstats(BipartiteNormalizedModel, f_dup, w_dup, y_dup)
+        @test nnz(ss_dup.A_prior) == nnz(ss_ref.A_prior)  # no new edge
+        @test ss_dup.design.VtV == ss_ref.design.VtV        # likelihood unchanged
+        @test ss_dup.metadata.graph_only_rows == 1
+        @test ss_dup.metadata.graph_only_edges == 0          # edge already existed
+
+        # ── Node only reachable through graph-only edges ──
+        f_new = [d.f; 4]
+        w_new = [d.w; 1]
+        y_new = [d.y; NaN]
+        ss_new = suffstats(BipartiteNormalizedModel, f_new, w_new, y_new;
+            n_firms=4)
+        @test ss_new.N_firms == 4
+        @test ss_new.A_prior[4, 1] == 1.0
+        # Node 4 has zero observation count but nonzero prior degree
+        @test ss_new.design.cnt_f[4] == 0.0
+        @test sum(ss_new.A_prior[4, :]) == 1.0
+
+        # ── Fitting succeeds with graph-only edges ──
+        result = fit_mle(BipartiteNormalizedModel, f_ext, w_ext, y_ext;
+            solver=ExactCholesky(optim_iters=5, polish=false), seed=1)
+        @test isfinite(result.nll)
+        @test isfinite(result.rho)
+        @test result.sigma_a > 0
+        @test nnz(result.model.graph.A) == nnz(ss_ref.A_prior) + 1
+
+        # ── Decomposition and covariance work ──
+        vd = decompose(result; kind=:model, probes=20, seed=1)
+        @test isfinite(vd.V_firm)
+        @test isfinite(vd.V_worker)
+        op = covariance(result; kind=:model)
+        blk = cov_block(op; firms=[1, 3], workers=[1])
+        @test size(blk.matrix) == (3, 3)
     end
 end
