@@ -199,6 +199,32 @@
             [1, 2], [1, 2], [1.0, 1.0];
             match_id=[1, 1], weighting=Weighting(observations=:edge))
 
+        # ── standardize=true: match-weighted centering ──
+        # Multi-edge match must not bias the mean toward its outcome.
+        f_std = [1, 1, 2, 2]
+        w_std = [1, 2, 1, 2]
+        y_std_val = [3.0, 3.0, 1.0, 2.0]
+        mid_std = [1, 1, 2, 3]
+        ss_std = suffstats(BipartiteNormalizedModel, f_std, w_std, y_std_val;
+            match_id=mid_std, standardize=true)
+        # y_mean must be match-weighted (3+1+2)/3 = 2.0, not edge-weighted (3+3+1+2)/4 = 2.25
+        @test ss_std.y_mean ≈ 2.0
+        @test ss_std.y_std ≈ 1.0
+        # Centered match outcomes [1, -1, 0] sum to zero through projections
+        @test sum(ss_std.design.projected_y) ≈ 0.0 atol=1e-14
+
+        # ── graph_only_edges under match grouping ──
+        # Match 1 has 2 firms × 2 workers: A_obs gets 4 nonzeros from 2 edges.
+        # graph_only_edges must count from the edge set, not nnz(A_obs).
+        f_go = [1, 2, 3, 3]
+        w_go = [1, 2, 1, 2]
+        y_go = [1.0, 1.0, NaN, 2.0]
+        mid_go = [1, 1, 2, 3]  # match 2 is graph-only
+        ss_go = suffstats(BipartiteNormalizedModel, f_go, w_go, y_go;
+            match_id=mid_go)
+        @test ss_go.metadata.graph_only_edges == 1
+        @test ss_go.metadata.graph_only_rows == 1
+
         # ── end-to-end fit + decompose ──
         f5 = [1, 2, 1, 2, 3]
         w5 = [1, 1, 2, 2, 2]

@@ -73,17 +73,10 @@ function suffstats(
     n_obs > 0 || throw(ArgumentError("No finite outcomes in y."))
 
     y_finite = y_raw[obs_mask]
-    y_mean = standardize ? mean(y_finite) : 0.0
-    y_std = standardize ? std(y_finite) : 1.0
-    isfinite(y_std) && y_std > 0 || throw(ArgumentError("Outcome has zero or invalid standard deviation."))
 
-    f_obs = f_rows[obs_mask]
-    w_obs = w_cols[obs_mask]
-    y_obs_scaled = (y_finite .- y_mean) ./ y_std
-    personyear_rows = n_obs
-
-    # ── match_id validation ──
+    # ── match_id validation (before standardization) ──
     match_id_obs = nothing
+    match_outcomes = nothing
     if match_id !== nothing
         mid_all = Int.(match_id)
         # No match may mix finite and NaN outcomes
@@ -99,7 +92,7 @@ function suffstats(
                 ))
             end
         end
-        # Outcomes within a match must be constant
+        # Outcomes within a match must be constant (checked on raw values)
         match_id_obs = mid_all[obs_mask]
         match_outcome = Dict{Int,Float64}()
         tol = sqrt(eps(Float64))
@@ -107,14 +100,35 @@ function suffstats(
             mid = match_id_obs[k]
             prev = get(match_outcome, mid, nothing)
             if prev === nothing
-                match_outcome[mid] = y_obs_scaled[k]
-            elseif abs(prev - y_obs_scaled[k]) > tol
+                match_outcome[mid] = y_finite[k]
+            elseif abs(prev - y_finite[k]) > tol * (1.0 + abs(prev))
                 throw(ArgumentError(
                     "Match $(mid) has inconsistent outcomes.",
                 ))
             end
         end
+        match_outcomes = collect(values(match_outcome))
     end
+
+    # Standardize: match-weighted when match_id is provided
+    if standardize
+        if match_outcomes !== nothing
+            y_mean = mean(match_outcomes)
+            y_std = std(match_outcomes)
+        else
+            y_mean = mean(y_finite)
+            y_std = std(y_finite)
+        end
+    else
+        y_mean = 0.0
+        y_std = 1.0
+    end
+    isfinite(y_std) && y_std > 0 || throw(ArgumentError("Outcome has zero or invalid standard deviation."))
+
+    f_obs = f_rows[obs_mask]
+    w_obs = w_cols[obs_mask]
+    y_obs_scaled = (y_finite .- y_mean) ./ y_std
+    personyear_rows = n_obs
 
     edges = collapse_edges(f_obs, w_obs, y_obs_scaled)
     n_edges = length(edges.f)
@@ -179,7 +193,7 @@ function suffstats(
         max_prior_degree_f = maximum(vec(sum(A_prior; dims=2))),
         max_prior_degree_w = maximum(vec(sum(A_prior; dims=1))),
         graph_only_rows = n_graph_only,
-        graph_only_edges = nnz(A_prior) - nnz(block.design.A_obs),
+        graph_only_edges = nnz(A_prior) - n_edges,
     )
 
     return BipartiteGMRFStats(
