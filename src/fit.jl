@@ -40,7 +40,8 @@ end
 One-step convenience: compute sufficient statistics from parallel observation
 vectors (firm index, worker index, outcome) and fit. Accepts the keyword
 arguments of both [`suffstats`](@ref) (`n_firms`, `n_workers`, `weighting`,
-`model_adjacency`, `standardize`) and the suffstats-based `fit_mle` method.
+`model_adjacency`, `match_id`, `standardize`) and the suffstats-based
+`fit_mle` method.
 """
 function fit_mle(
     ::Type{M},
@@ -51,6 +52,7 @@ function fit_mle(
     n_workers::Integer=isempty(w_idx) ? 0 : maximum(w_idx),
     weighting::Weighting=Weighting(),
     model_adjacency::Symbol=:binary,
+    match_id::Union{Nothing,AbstractVector{<:Integer}}=nothing,
     standardize::Bool=true,
     solver::AbstractGMRFSolver=ExactCholesky(),
     rho_limit::Union{Real,Symbol}=0.99,
@@ -64,6 +66,7 @@ function fit_mle(
         n_workers=n_workers,
         weighting=weighting,
         model_adjacency=model_adjacency,
+        match_id=match_id,
         standardize=standardize,
     )
     return fit_mle(M, ss;

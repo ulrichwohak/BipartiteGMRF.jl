@@ -6,7 +6,7 @@
     suffstats(::Type{<:AbstractBipartiteModel}, f_idx, w_idx, y;
               n_firms=maximum(f_idx), n_workers=maximum(w_idx),
               weighting=Weighting(), model_adjacency=:binary,
-              standardize=true)
+              match_id=nothing, standardize=true)
 
 Compute sufficient statistics for bipartite GMRF MLE from parallel observation
 vectors: `f_idx[k]` and `w_idx[k]` are the 1-based firm and worker indices of
@@ -23,6 +23,14 @@ corresponding `(f_idx[k], w_idx[k])` pair enters the prior adjacency
 `A_prior` (and therefore the model's precision matrix and node degrees)
 but contributes no design row, no term to `V'y`, `y'y`, or the
 observation count `K`. At least one finite outcome is required.
+
+## Match-grouped observations
+
+When `match_id` is provided, edges sharing a match id form **one**
+observation whose design row averages `1/F_s` over each distinct firm
+and `1/M_s` over each distinct worker in the match. Outcomes within a
+match must agree (up to machine precision). `K` counts matches, not
+edges. Currently requires `Weighting(observations=:raw)`.
 """
 function suffstats(
     ::Type{M},
@@ -33,16 +41,21 @@ function suffstats(
     n_workers::Integer=isempty(w_idx) ? 0 : maximum(w_idx),
     weighting::Weighting=Weighting(),
     model_adjacency::Symbol=:binary,
+    match_id::Union{Nothing,AbstractVector{<:Integer}}=nothing,
     standardize::Bool=true,
 ) where {M<:AbstractBipartiteModel}
     model_adjacency in (:binary, :counts) ||
         throw(ArgumentError("model_adjacency must be :binary or :counts; got $(model_adjacency)."))
     M <: BipartiteVarianceStableModel && weighting.observations != :raw &&
         throw(ArgumentError("BipartiteVarianceStableModel currently supports only Weighting(observations=:raw)."))
+    match_id !== nothing && weighting.observations != :raw &&
+        throw(ArgumentError("match_id grouping currently supports only Weighting(observations=:raw)."))
 
     length(y) > 0 || throw(ArgumentError("Empty dataset."))
     length(f_idx) == length(y) && length(w_idx) == length(y) ||
         throw(ArgumentError("f_idx, w_idx, and y must have the same length."))
+    match_id !== nothing && length(match_id) != length(y) &&
+        throw(ArgumentError("match_id must have the same length as y."))
     n_f = Int(n_firms)
     n_w = Int(n_workers)
     for k in eachindex(f_idx)
@@ -69,6 +82,40 @@ function suffstats(
     y_obs_scaled = (y_finite .- y_mean) ./ y_std
     personyear_rows = n_obs
 
+    # ── match_id validation ──
+    match_id_obs = nothing
+    if match_id !== nothing
+        mid_all = Int.(match_id)
+        # No match may mix finite and NaN outcomes
+        seen_finite = Dict{Int,Bool}()
+        for k in eachindex(mid_all)
+            is_fin = obs_mask[k]
+            prev = get(seen_finite, mid_all[k], nothing)
+            if prev === nothing
+                seen_finite[mid_all[k]] = is_fin
+            elseif prev != is_fin
+                throw(ArgumentError(
+                    "Match $(mid_all[k]) mixes finite and non-finite outcomes.",
+                ))
+            end
+        end
+        # Outcomes within a match must be constant
+        match_id_obs = mid_all[obs_mask]
+        match_outcome = Dict{Int,Float64}()
+        tol = sqrt(eps(Float64))
+        for k in eachindex(match_id_obs)
+            mid = match_id_obs[k]
+            prev = get(match_outcome, mid, nothing)
+            if prev === nothing
+                match_outcome[mid] = y_obs_scaled[k]
+            elseif abs(prev - y_obs_scaled[k]) > tol
+                throw(ArgumentError(
+                    "Match $(mid) has inconsistent outcomes.",
+                ))
+            end
+        end
+    end
+
     edges = collapse_edges(f_obs, w_obs, y_obs_scaled)
     n_edges = length(edges.f)
     decomp = EdgeData(edges.f, edges.w, edges.y_mean, edges.T)
@@ -76,12 +123,17 @@ function suffstats(
 
     obs = weighting.observations
     block = if obs == :raw
-        design = build_V_stats(f_obs, w_obs, y_obs_scaled, n_f, n_w)
+        design = if match_id_obs !== nothing
+            build_match_V_stats(f_obs, w_obs, y_obs_scaled, match_id_obs, n_f, n_w)
+        else
+            build_V_stats(f_obs, w_obs, y_obs_scaled, n_f, n_w)
+        end
+        n_matches = match_id_obs !== nothing ? length(unique(match_id_obs)) : personyear_rows
         (
-            K = personyear_rows,
+            K = n_matches,
             base = EdgeData(f_obs, w_obs, y_obs_scaled, ones(Int, personyear_rows)),
             design = design,
-            weights = trivial_weight_stats(personyear_rows),
+            weights = trivial_weight_stats(n_matches),
             within_ss = 0.0,
             within_df = 0,
             rho_eps_likelihood = nothing,

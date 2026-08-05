@@ -121,8 +121,9 @@ The package extends the [Distributions.jl](https://juliastats.org/Distributions.
 `suffstats` / `fit_mle` generic functions (so `using Distributions,
 BipartiteGMRF` involves no name clashes). Data enters as three parallel
 vectors: 1-based firm index, 1-based worker index, and outcome, one entry per
-observed spell. Mapping entity identifiers to dense indices is the caller's
-job:
+observed spell. Non-finite values in `y` (NaN) mark *graph-only* edges that
+enter the prior graph but not the likelihood. Mapping entity identifiers to
+dense indices is the caller's job:
 
 ```julia
 using BipartiteGMRF
@@ -262,6 +263,42 @@ with a within-match residual correlation `rho_eps` (either fixed or
 estimated jointly).
 
 Decomposition targets are `:estimation`, `:personyear`, and `:edge`.
+
+## Graph-Only Edges and Match Grouping
+
+### Graph-only edges
+
+An edge whose outcome is unknown can stay in the graph (affecting the
+precision matrix `Q` and node degrees) without contributing to the
+likelihood. Pass `NaN` as the outcome:
+
+```julia
+f = [1, 1, 2, 2, 3]
+w = [1, 2, 2, 3, 1]
+y = [1.2, 0.7, 0.9, 1.5, NaN]   # edge (3,1) is graph-only
+
+result = fit_mle(BipartiteNormalizedModel, f, w, y; solver = ExactCholesky())
+```
+
+### Match-grouped observations
+
+When multiple edges share a single outcome (e.g. a firm managed by two
+CEOs simultaneously), pass a `match_id` vector. Edges with the same
+match id form one observation whose design row averages `1/F_s` over
+firms and `1/M_s` over workers:
+
+```julia
+f   = [1, 2, 1]        # match 1 has firms {1,2}; match 2 has firm {1}
+w   = [1, 1, 2]        # match 1 has worker {1};  match 2 has worker {2}
+y   = [1.0, 1.0, 0.5]  # same outcome within a match (enforced)
+mid = [1, 1, 2]
+
+result = fit_mle(BipartiteNormalizedModel, f, w, y;
+    match_id = mid, solver = ExactCholesky())
+```
+
+Outcomes must be identical within a match; disagreement raises
+`ArgumentError`. Currently requires `Weighting(observations = :raw)`.
 
 ## Repository Layout
 

@@ -32,13 +32,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `:edge`, `:effective`) with optional joint `rho_eps` estimation.
 - **`rho_limit = :auto`** for `BipartiteVarianceStableModel`, resolved
   from the non-backtracking spectrum at model construction time.
+- **Graph-only edges** (issue #106, capability 1). Non-finite values in
+  `y` (NaN) mark edges that enter the prior adjacency `A_prior` and the
+  model's precision matrix but contribute nothing to the likelihood
+  (`V'V`, `V'y`, `y'y`, `K`).
+- **Match-grouped observations** (issue #106, capability 2). New
+  `match_id` kwarg on `suffstats` and `fit_mle`: edges sharing a match
+  id form one observation whose design row averages `1/F_s` over firms
+  and `1/M_s` over workers. V'V acquires off-diagonal firm-firm and
+  worker-worker blocks. Outcomes within a match must agree; mixing
+  finite and NaN outcomes in a match is rejected.
 
 ### Changed
 
 - **Data-agnostic API.** `suffstats` and `fit_mle` accept integer index
   vectors instead of DataFrames. Mapping entity identifiers to dense
   1-based indices and filtering unusable rows are the caller's
-  responsibility. Non-finite outcomes are rejected, not silently dropped.
+  responsibility.
 - **DataFrames dependency removed** entirely. Edge collapse is now a
   small dict-based routine in `prepare.jl`.
 - **`cov_block` addresses nodes by index**, not by entity-ID
@@ -61,9 +71,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   type; duplicated NLL code removed.
 - **`Weighting` stores `estimate_rho_eps::Bool`** instead of a Symbol
   sentinel.
-- **Shared Hutchinson probe loop** for model/fitted decompositions.
+- **Shared Hutchinson probe loop** for model/fitted decompositions;
+  decomposition now uses sparse `FF`/`WW` block multiplies instead of
+  scalar `cnt_f`/`cnt_w` loops, supporting off-diagonal blocks from
+  match-grouped observations.
 - **`CovarianceOperator` fully parametrized** &mdash; no abstractly-typed
   fields.
+- **`DesignStats` stores `FF` and `WW`** (firm-firm and worker-worker
+  blocks of V'V) as sparse matrices instead of `cnt_f`/`cnt_w` vectors.
 
 ### Removed
 
