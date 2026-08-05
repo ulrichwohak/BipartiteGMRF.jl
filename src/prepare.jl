@@ -28,15 +28,17 @@ function build_V_stats(
     end
 
     A_obs = sparse(f_rows, w_cols, ones(Float64, k), n_firms, n_workers)
-    VtV = [spdiagm(0 => cnt_f) A_obs; copy(transpose(A_obs)) spdiagm(0 => cnt_w)]
+    FF = spdiagm(0 => cnt_f)
+    WW = spdiagm(0 => cnt_w)
+    VtV = [FF A_obs; copy(transpose(A_obs)) WW]
     return DesignStats(
         VtV,
         vcat(proj_f, proj_w),
         dot(y, y),
         A_obs,
         copy(transpose(A_obs)),
-        cnt_f,
-        cnt_w,
+        FF,
+        WW,
     )
 end
 
@@ -72,15 +74,17 @@ function build_weighted_V_stats(
     end
 
     A_obs = sparse(f_rows, w_cols, weights, n_firms, n_workers)
-    VtV = [spdiagm(0 => cnt_f) A_obs; copy(transpose(A_obs)) spdiagm(0 => cnt_w)]
+    FF = spdiagm(0 => cnt_f)
+    WW = spdiagm(0 => cnt_w)
+    VtV = [FF A_obs; copy(transpose(A_obs)) WW]
     return DesignStats(
         VtV,
         vcat(proj_f, proj_w),
         ydot,
         A_obs,
         copy(transpose(A_obs)),
-        cnt_f,
-        cnt_w,
+        FF,
+        WW,
     )
 end
 
@@ -103,6 +107,102 @@ function build_match_weight_stats(
         maximum(weights),
     )
     return design, weight_stats
+end
+
+"""
+Build design products for match-grouped observations. Each match `s`
+has a design row that averages `1/F_s` over its firms and `1/M_s` over
+its workers. Returns a `DesignStats` with (potentially) off-diagonal
+`FF` and `WW` blocks.
+"""
+function build_match_V_stats(
+    f_rows::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    match_ids::Vector{Int},
+    n_firms::Int,
+    n_workers::Int,
+)
+    k = length(y)
+
+    # Group edges by match id → per-match firm set, worker set, outcome
+    match_map = Dict{Int,Int}()        # match_id → position
+    match_firms = Vector{Vector{Int}}()
+    match_workers = Vector{Vector{Int}}()
+    match_y = Float64[]
+
+    for i in 1:k
+        mid = match_ids[i]
+        pos = get!(match_map, mid) do
+            push!(match_firms, Int[])
+            push!(match_workers, Int[])
+            push!(match_y, y[i])
+            length(match_y)
+        end
+        push!(match_firms[pos], f_rows[i])
+        push!(match_workers[pos], w_cols[i])
+    end
+    n_matches = length(match_y)
+
+    # COO accumulators for sparse blocks
+    ff_i = Int[]; ff_j = Int[]; ff_v = Float64[]
+    ww_i = Int[]; ww_j = Int[]; ww_v = Float64[]
+    a_i  = Int[]; a_j  = Int[]; a_v  = Float64[]
+    proj_f = zeros(Float64, n_firms)
+    proj_w = zeros(Float64, n_workers)
+    ydot = 0.0
+
+    for s in 1:n_matches
+        firms_s = unique(match_firms[s])
+        workers_s = unique(match_workers[s])
+        F_s = length(firms_s)
+        M_s = length(workers_s)
+        ys = match_y[s]
+
+        # FF block: 1/F_s^2 for all (i, i') in firms_s × firms_s
+        ff_val = 1.0 / F_s^2
+        for fi in firms_s, fj in firms_s
+            push!(ff_i, fi); push!(ff_j, fj); push!(ff_v, ff_val)
+        end
+
+        # WW block: 1/M_s^2 for all (m, m') in workers_s × workers_s
+        ww_val = 1.0 / M_s^2
+        for wi in workers_s, wj in workers_s
+            push!(ww_i, wi); push!(ww_j, wj); push!(ww_v, ww_val)
+        end
+
+        # Cross block: 1/(F_s * M_s) for all (i, m)
+        a_val = 1.0 / (F_s * M_s)
+        for fi in firms_s, wj in workers_s
+            push!(a_i, fi); push!(a_j, wj); push!(a_v, a_val)
+        end
+
+        # V'y
+        for fi in firms_s
+            proj_f[fi] += ys / F_s
+        end
+        for wj in workers_s
+            proj_w[wj] += ys / M_s
+        end
+
+        # y'y
+        ydot += ys^2
+    end
+
+    FF = sparse(ff_i, ff_j, ff_v, n_firms, n_firms)
+    WW = sparse(ww_i, ww_j, ww_v, n_workers, n_workers)
+    A_obs = sparse(a_i, a_j, a_v, n_firms, n_workers)
+    VtV = [FF A_obs; copy(transpose(A_obs)) WW]
+
+    return DesignStats(
+        VtV,
+        vcat(proj_f, proj_w),
+        ydot,
+        A_obs,
+        copy(transpose(A_obs)),
+        FF,
+        WW,
+    )
 end
 
 """

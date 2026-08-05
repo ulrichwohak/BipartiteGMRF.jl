@@ -41,11 +41,14 @@ function _decompose_fitted(
     design = dstats.design
     th_f = view(theta_hat, 1:stats.N_firms)
     th_w = view(theta_hat, stats.N_firms + 1:n)
-    tmp = Vector{Float64}(undef, stats.N_firms)
-    mul!(tmp, design.A_obs, th_w)
-    qa = dot(design.cnt_f, th_f .^ 2)
-    qz = dot(design.cnt_w, th_w .^ 2)
-    qaz = dot(th_f, tmp)
+    tmp_f = Vector{Float64}(undef, stats.N_firms)
+    mul!(tmp_f, design.FF, th_f)
+    qa = dot(th_f, tmp_f)
+    mul!(tmp_f, design.A_obs, th_w)
+    qaz = dot(th_f, tmp_f)
+    tmp_w = Vector{Float64}(undef, n - stats.N_firms)
+    mul!(tmp_w, design.WW, th_w)
+    qz = dot(th_w, tmp_w)
 
     acc = hutchinson_trace_blocks(
         solve_probe, design, stats.N_firms, n, probes, seed + 88_888, verbose,

@@ -108,7 +108,7 @@
         @test ss_new.N_firms == 4
         @test ss_new.A_prior[4, 1] == 1.0
         # Node 4 has zero observation count but nonzero prior degree
-        @test ss_new.design.cnt_f[4] == 0.0
+        @test ss_new.design.FF[4, 4] == 0.0
         @test sum(ss_new.A_prior[4, :]) == 1.0
 
         # ── Fitting succeeds with graph-only edges ──

@@ -383,6 +383,10 @@ end
 """
 Precomputed design products for the observation model `y = Vθ + ε`:
 `V'V`, `V'y`, `y'y`, and their firm/worker blocks.
+
+`FF` and `WW` are the firm-firm and worker-worker blocks of `V'V`.
+When every match is a single (firm, worker) edge these are diagonal;
+with match-grouped observations they acquire off-diagonal entries.
 """
 struct DesignStats
     VtV::SparseMatrixCSC{Float64,Int}
@@ -390,8 +394,8 @@ struct DesignStats
     ydot::Float64                    # y'y (weighted)
     A_obs::SparseMatrixCSC{Float64,Int}
     At_obs::SparseMatrixCSC{Float64,Int}
-    cnt_f::Vector{Float64}
-    cnt_w::Vector{Float64}
+    FF::SparseMatrixCSC{Float64,Int}  # firm-firm block of V'V
+    WW::SparseMatrixCSC{Float64,Int}  # worker-worker block of V'V
 end
 
 """

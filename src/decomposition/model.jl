@@ -121,12 +121,10 @@ function hutchinson_trace_blocks(
         vw = view(v, N_firms + 1:n)
         uf = view(u, 1:N_firms)
         uw = view(u, N_firms + 1:n)
-        @inbounds for i in 1:N_firms
-            acc_f += design.cnt_f[i] * vf[i] * uf[i]
-        end
-        @inbounds for j in 1:(n - N_firms)
-            acc_w += design.cnt_w[j] * vw[j] * uw[j]
-        end
+        mul!(wv_f, design.FF, uf)
+        acc_f += dot(vf, wv_f)
+        mul!(wv_w, design.WW, uw)
+        acc_w += dot(vw, wv_w)
         mul!(wv_f, design.A_obs, uw)
         mul!(wv_w, design.At_obs, uf)
         acc_cross += dot(vf, wv_f) + dot(vw, wv_w)
