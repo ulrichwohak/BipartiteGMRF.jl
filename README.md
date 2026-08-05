@@ -188,17 +188,20 @@ block = cov_block(op; firms = [1, 2], workers = [1, 2])  # node indices
 ### Simulation
 
 ```julia
-using SparseArrays, Random
+using Random
 
-A = sparse([1,1,2,2,3], [1,2,2,3,3], ones(5), 3, 3)
-model = BipartiteNormalizedModel(A)
+# Simulate from index vectors (same format as estimation input)
+model = BipartiteNormalizedModel(sparse([1,1,2,2,3], [1,2,2,3,3],
+                                       ones(5), 3, 3))
 
-sim = simulate(model, A; ρ = 0.5, σ_a = 1.0, σ_z = 0.8, σ_ε = 0.3,
-               rng = MersenneTwister(42))
+sim = simulate(model, f, w; ρ = 0.5, σ_a = 1.0, σ_z = 0.8, σ_ε = 0.3,
+               rng = Xoshiro(42))
 sim.y               # outcome vector
 sim.firm_effects    # sampled α
 sim.worker_effects  # sampled z
 ```
+
+An adjacency-matrix overload `simulate(model, A; ...)` is also available.
 
 ### Direct GMRF Access
 
@@ -265,10 +268,11 @@ Decomposition targets are `:estimation`, `:personyear`, and `:edge`.
 ```
 src/
 ├── BipartiteGMRF.jl       # module entry point
-├── types.jl               # LatentModel subtypes, BipartiteGraph, BipartiteGMRFStats, GMRFResult
-├── stats.jl               # suffstats() implementation
-├── fit.jl                 # fit_mle() implementation
-├── prepare.jl, util.jl   # V'V construction, edge collapse, weighting helpers
+├── types.jl               # LatentModel subtypes, BipartiteGraph, stats structs, GMRFResult
+├── stats.jl               # suffstats(): arrays → BipartiteGMRFStats
+├── fit.jl                 # fit_mle(): type-based and model-based entry points
+├── prepare.jl             # edge collapse, V'V construction, weighting helpers
+├── util.jl                # replace_stats, scaled_params, shared helpers
 ├── operators/             # QOp/QOpVS per model type
 ├── linalg/                # PCG, SLQ
 ├── solvers/               # shared optimize loop + ExactCholesky / HutchSLQ methods
