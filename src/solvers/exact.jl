@@ -15,6 +15,11 @@ function make_exact_workspace(model::AbstractBipartiteModel, stats::BipartiteGMR
     # Build Q and M at reference parameters for symbolic factorization.
     # Use a safe rho within the model's limit.
     rho_ref = min(0.1, 0.5 * rho_limit(model))
+    # Perturb off exact reciprocals of integers: when a match has
+    # F_s·M_s = 1/rho_ref, the Q and VtV off-diagonal entries cancel
+    # exactly, Julia's sparse + drops the zero, and update_precision!
+    # fails at other rho values due to sparsity pattern mismatch (#107).
+    rho_ref += eps(rho_ref)
     Q0 = model_precision(model, rho_ref, 1.0, 1.0)
     M0 = Q0 + stats.design.VtV  # λ=1 at reference
     return ExactWorkspace(
