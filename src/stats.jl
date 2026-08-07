@@ -43,6 +43,7 @@ function suffstats(
     model_adjacency::Symbol=:binary,
     match_id::Union{Nothing,AbstractVector{<:Integer}}=nothing,
     standardize::Bool=true,
+    X::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
 ) where {M<:AbstractBipartiteModel}
     model_adjacency in (:binary, :counts) ||
         throw(ArgumentError("model_adjacency must be :binary or :counts; got $(model_adjacency)."))
@@ -61,6 +62,13 @@ function suffstats(
     for k in eachindex(f_idx)
         1 <= f_idx[k] <= n_f || throw(ArgumentError("firm index $(f_idx[k]) outside 1:$(n_f)."))
         1 <= w_idx[k] <= n_w || throw(ArgumentError("worker index $(w_idx[k]) outside 1:$(n_w)."))
+    end
+
+    if X !== nothing
+        size(X, 1) == length(y) ||
+            throw(ArgumentError("X must have $(length(y)) rows; got $(size(X, 1))."))
+        size(X, 2) > 0 ||
+            throw(ArgumentError("X must have at least one column."))
     end
 
     y_raw = Float64.(y)
@@ -177,6 +185,26 @@ function suffstats(
         )
     end
 
+    # ── Mean-structure statistics ──
+    mean_stats = if X !== nothing
+        X_obs = Matrix{Float64}(X[obs_mask, :])
+        if obs == :raw
+            if match_id_obs !== nothing
+                build_match_mean_stats(f_obs, w_obs, y_obs_scaled, X_obs, match_id_obs, n_f, n_w)
+            else
+                build_mean_stats(f_obs, w_obs, y_obs_scaled, X_obs, n_f, n_w)
+            end
+        elseif obs == :edge
+            build_weighted_mean_stats(edges.f, edges.w, edges.y_mean, X_obs[1:n_edges, :],
+                ones(Float64, n_edges), n_f, n_w)
+        else  # :effective
+            build_match_weight_mean_stats(edges.f, edges.w, edges.y_mean, X_obs[1:n_edges, :],
+                edges.T, n_f, n_w, weighting.rho_eps)
+        end
+    else
+        nothing
+    end
+
     # A_prior from ALL edges (including graph-only); design uses observed only
     A_prior = sparse(f_rows, w_cols, ones(Float64, length(f_rows)), n_f, n_w)
     model_adjacency == :binary && (A_prior.nzval .= 1.0)
@@ -214,6 +242,7 @@ function suffstats(
         block.within_df,
         personyear_within_ss,
         block.weights,
+        mean_stats,
         metadata,
     )
 end

@@ -43,6 +43,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   worker-worker blocks. Outcomes within a match must agree; mixing
   finite and NaN outcomes in a match is rejected.
 
+- **Profiled-out mean structure** (issue #109). New `X` kwarg on
+  `suffstats` and `fit_mle` accepts a $K \times p$ design matrix. The
+  coefficients $\hat\beta(\theta)$ are computed in closed form at each
+  likelihood evaluation via $p$ extra solves against the same
+  factorization. `result.beta` reports the profiled coefficients in
+  original outcome units; `coef`, `coefnames`, `params`, and `dof`
+  include them automatically. `simulate` accepts optional `X` and `β`
+  kwargs. Works with all model types, both solvers, and all weighting
+  and match-grouping modes.
+
 ### Changed
 
 - **`BipartiteVarianceStableModel` marginal-SD parametrization** (issue

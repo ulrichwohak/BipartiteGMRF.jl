@@ -63,11 +63,23 @@ function nll_exact_value(
     quad = dot(obs.design.projected_y, x)
     isfinite(quad) || return BIG_NLL
 
+    mean_corr = 0.0
+    if obs.mean_stats !== nothing
+        try
+            solve_M = v -> GaussianMarkovRandomFields.workspace_solve(ew.ws_M, v)
+            mean_corr, _ = mean_profile_correction(obs.mean_stats, lambda,
+                obs.design.projected_y, solve_M)
+        catch e
+            e isa InterruptException && rethrow()
+            return BIG_NLL
+        end
+    end
+
     rcorr = residual_corr_term(stats, p.sigma_epsilon, obs.rho_eps)
     rcorr == BIG_NLL && return BIG_NLL
     val = 0.5 * (
         stats.K * 2.0 * log(p.sigma_epsilon) - obs.weights.log_weight_sum +
-        (ldM - ldQ) + lambda * obs.design.ydot - lambda^2 * quad + rcorr
+        (ldM - ldQ) + lambda * obs.design.ydot - lambda^2 * quad - mean_corr + rcorr
     )
     return finite_or_big(val)
 end

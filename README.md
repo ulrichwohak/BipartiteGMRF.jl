@@ -44,10 +44,12 @@ a bipartite pairing). For each observed spell $k$, the outcome $y_{im}$ is
 modeled as
 
 $$
-y_{im} = a_i + z_m + \varepsilon_{im},
+y_{im} = \mathbf{x}_{im}'\boldsymbol{\beta} + a_i + z_m + \varepsilon_{im},
 $$
 
-with $a_i$ and $z_m$ jointly Gaussian on the bipartite graph and
+where $\mathbf{x}_{im}$ are observation-level covariates whose coefficients
+$\boldsymbol{\beta}$ are profiled out of the likelihood in closed form,
+$a_i$ and $z_m$ are jointly Gaussian on the bipartite graph and
 parametrized by $(\rho, \sigma_a, \sigma_z, \sigma_\varepsilon)$. Stacking
 the latent effects as
 
@@ -144,6 +146,25 @@ result.sigma_z       # worker effect SD
 result.sigma_epsilon # residual SD
 ```
 
+#### Mean structure
+
+Pass a design matrix `X` (one row per observation) to profile out a
+linear mean $\mathbf{X}\boldsymbol{\beta}$. At each optimizer iteration
+$\hat{\boldsymbol{\beta}}(\theta)$ is computed in closed form from $p$
+extra solves against the same factorization &mdash; negligible cost:
+
+```julia
+# Degree-dependent mean: y = β₀ + β_f·d_f + β_m·d_m + a + z + ε
+X = hcat(ones(length(f)), Float64.(f), Float64.(w))  # K × 3
+
+result = fit_mle(BipartiteNormalizedModel, f, w, y;
+    X      = X,
+    solver = ExactCholesky(),
+)
+
+result.beta          # profiled-out [β₀, β_f, β_m]
+```
+
 Or separate sufficient-statistics computation from estimation:
 
 ```julia
@@ -159,9 +180,9 @@ result = fit_mle(BipartiteNormalizedModel, ss; solver = ExactCholesky())
 ```julia
 using StatsAPI
 
-coef(result)          # [rho, sigma_a, sigma_z, sigma_epsilon]  (+ rho_eps if used)
-coefnames(result)     # ["rho", "sigma_a", "sigma_z", "sigma_epsilon"]
-params(result)        # (rho=..., sigma_a=..., sigma_z=..., sigma_epsilon=..., rho_eps=...)
+coef(result)          # [rho, sigma_a, sigma_z, sigma_epsilon]  (+ rho_eps, beta... if used)
+coefnames(result)     # ["rho", "sigma_a", "sigma_z", "sigma_epsilon", ...]
+params(result)        # (rho=..., sigma_a=..., sigma_z=..., sigma_epsilon=..., rho_eps=..., beta=...)
 loglikelihood(result) # original-units log-likelihood (constants included)
 nobs(result)
 dof(result)           # number of *estimated* parameters
@@ -200,6 +221,11 @@ sim = simulate(model, f, w; ρ = 0.5, σ_a = 1.0, σ_z = 0.8, σ_ε = 0.3,
 sim.y               # outcome vector
 sim.firm_effects    # sampled α
 sim.worker_effects  # sampled z
+
+# With a mean structure: y = Xβ + a + z + ε
+X = hcat(ones(length(f)), Float64.(f))
+sim = simulate(model, f, w; ρ = 0.5, σ_a = 1.0, σ_z = 0.8, σ_ε = 0.3,
+               X = X, β = [1.0, 0.5], rng = Xoshiro(42))
 ```
 
 An adjacency-matrix overload `simulate(model, A; ...)` is also available.

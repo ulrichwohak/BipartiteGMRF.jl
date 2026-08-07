@@ -76,9 +76,9 @@ function objective_stats(model::AbstractBipartiteModel, stats::BipartiteGMRFStat
             model.graph.n_workers,
             rho_eps,
         )
-        return ObservationStats(design, weight_stats, rho_eps)
+        return ObservationStats(design, weight_stats, rho_eps, stats.mean_stats)
     end
-    return ObservationStats(stats.design, stats.weights, stats.rho_eps_likelihood)
+    return ObservationStats(stats.design, stats.weights, stats.rho_eps_likelihood, stats.mean_stats)
 end
 
 function residual_corr_term(stats::BipartiteGMRFStats, sigma_epsilon::Float64, rho_eps::Union{Nothing,Float64})
@@ -102,6 +102,35 @@ end
 #   nelder_g_abstol(solver, g_rel)                   -> Float64
 #   polish(solver, obj, res, verbose)                -> (res, elapsed_seconds)
 
+"""
+Compute the profiled β correction term and β̂ from mean-structure statistics.
+Returns `(correction, beta)` where `correction` is the scalar to subtract
+from the NLL and `beta` is the profiled-out coefficient vector.
+Returns `(0.0, nothing)` when there is no mean structure.
+"""
+function mean_profile_correction(
+    ms::MeanStats,
+    lambda::Float64,
+    projected_y::Vector{Float64},
+    solve_M::Function,   # v -> M^{-1}v
+)
+    # M^{-1} V'y (reuse if already computed, but solve_M is cheap here)
+    Minv_Vy = solve_M(projected_y)
+    # M^{-1} V'X
+    Minv_VtX = similar(ms.VtX)
+    for j in 1:ms.p
+        Minv_VtX[:, j] = solve_M(ms.VtX[:, j])
+    end
+    # c = X'Ω^{-1}y = λX'y - λ²(V'X)'M^{-1}V'y
+    c = lambda .* ms.Xty .- lambda^2 .* (ms.VtX' * Minv_Vy)
+    # G = X'Ω^{-1}X = λX'X - λ²(V'X)'M^{-1}V'X
+    G = Symmetric(lambda .* ms.XtX .- lambda^2 .* (ms.VtX' * Minv_VtX))
+    G_chol = cholesky(G)
+    beta = G_chol \ c
+    correction = dot(c, beta)
+    return correction, beta
+end
+
 function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothing,Float64})
     return GMRFResult(
         fit.rho,
@@ -109,6 +138,7 @@ function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothi
         fit.sigma_z,
         fit.sigma_epsilon,
         fit.rho_eps,
+        fit.beta,
         fit.nll,
         fit.converged,
         fit.iterations,
@@ -167,12 +197,29 @@ function optimize_problem(
     val = obj(pfree)
     decoded = unpack_params(pfull; rho_limit=limit)
     rho_eps = estimate_rho_eps ? obs.rho_eps : stats.rho_eps_likelihood
+
+    # Compute profiled beta at final parameters
+    beta_original = if final_stats.mean_stats !== nothing
+        lambda_final = 1.0 / decoded.sigma_epsilon^2
+        Q_final = model_precision(model, decoded.rho, decoded.sigma_a, decoded.sigma_z)
+        M_final = Q_final + lambda_final .* obs.design.VtV
+        ws_M = GaussianMarkovRandomFields.GMRFWorkspace(M_final)
+        GaussianMarkovRandomFields.ensure_numeric!(ws_M)
+        solve_M = v -> GaussianMarkovRandomFields.workspace_solve(ws_M, v)
+        _, beta_std = mean_profile_correction(final_stats.mean_stats, lambda_final,
+            obs.design.projected_y, solve_M)
+        beta_std .* final_stats.y_std
+    else
+        nothing
+    end
+
     return (
         rho = decoded.rho,
         sigma_a = decoded.sigma_a * final_stats.y_std,
         sigma_z = decoded.sigma_z * final_stats.y_std,
         sigma_epsilon = decoded.sigma_epsilon * final_stats.y_std,
         rho_eps = rho_eps,
+        beta = beta_original,
         nll = val,
         converged = converged(res),
         iterations = optim_iterations(res),

@@ -400,6 +400,18 @@ struct DesignStats
 end
 
 """
+Sufficient statistics for a profiled-out mean structure `y = Xβ + Vθ + ε`.
+Contains the cross-products V'X, X'X, X'y needed to compute β̂(θ) in closed
+form at each NLL evaluation.
+"""
+struct MeanStats
+    VtX::Matrix{Float64}       # V'X  (n × p)
+    XtX::Matrix{Float64}       # X'X  (p × p)
+    Xty::Vector{Float64}       # X'y  (p × 1)
+    p::Int                     # number of regressors
+end
+
+"""
 Parallel edge arrays: firm index, worker index, (standardized) outcome, and
 observation count per edge.
 """
@@ -455,6 +467,7 @@ struct BipartiteGMRFStats <: SufficientStats
     personyear_within_ss::Float64
     weights::WeightStats
 
+    mean_stats::Union{Nothing,MeanStats}
     metadata::NamedTuple
 end
 
@@ -468,6 +481,7 @@ struct ObservationStats
     design::DesignStats
     weights::WeightStats
     rho_eps::Union{Nothing,Float64}
+    mean_stats::Union{Nothing,MeanStats}
 end
 
 # Copy a BipartiteGMRFStats, replacing the named fields. Not type-stable and
@@ -519,6 +533,7 @@ struct GMRFResult{
     sigma_z::Float64
     sigma_epsilon::Float64
     rho_eps::Union{Nothing,Float64}
+    beta::Union{Nothing,Vector{Float64}}
     nll::Float64
     converged::Bool
     iterations::Int

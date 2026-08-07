@@ -146,6 +146,23 @@ function nll_hutch_value(
     quad = dot(obs.design.projected_y, x)
     isfinite(quad) || return BIG_NLL
 
+    mean_corr = 0.0
+    if obs.mean_stats !== nothing
+        ms = obs.mean_stats
+        function pcg_solve_M(v)
+            sol, ok_s, _, _ = pcg_solve!(cache.pcg, cache.mop, v;
+                tol=solver.cg_tol, maxiter=solver.cg_maxiter, Mdiag=cache.Mdiag)
+            ok_s || error("PCG failed for mean-structure solve")
+            return sol
+        end
+        try
+            mean_corr, _ = mean_profile_correction(ms, lambda,
+                obs.design.projected_y, pcg_solve_M)
+        catch
+            return BIG_NLL
+        end
+    end
+
     n = length(obs.design.projected_y)
     ld_difference = hutch_logdet_difference!(cache, solver, n, seed, p, lambda)
     isfinite(ld_difference) || return BIG_NLL
@@ -153,7 +170,7 @@ function nll_hutch_value(
     rcorr == BIG_NLL && return BIG_NLL
     val = 0.5 * (
         stats.K * 2.0 * log(p.sigma_epsilon) - obs.weights.log_weight_sum +
-        ld_difference + lambda * obs.design.ydot - lambda^2 * quad + rcorr
+        ld_difference + lambda * obs.design.ydot - lambda^2 * quad - mean_corr + rcorr
     )
     return finite_or_big(val)
 end

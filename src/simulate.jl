@@ -28,6 +28,8 @@ function simulate(
     σ_a::Real,
     σ_z::Real,
     σ_ε::Real,
+    X::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
+    β::Union{Nothing,AbstractVector{<:Real}}=nothing,
     rng::AbstractRNG=Random.default_rng(),
 )
     length(firm_ids) == length(worker_ids) ||
@@ -46,11 +48,14 @@ function simulate(
     α = θ[1:g.n_firms]
     z = θ[g.n_firms+1:end]
 
-    # Generate observations: y_k = α[f_k] + z[w_k] + ε_k
+    # Generate observations: y_k = α[f_k] + z[w_k] + X[k,:]'β + ε_k
     K = length(firm_ids)
     y = Vector{Float64}(undef, K)
     @inbounds for k in 1:K
         y[k] = α[firm_ids[k]] + z[worker_ids[k]] + σ_ε * randn(rng)
+    end
+    if X !== nothing && β !== nothing
+        y .+= X * β
     end
 
     return (

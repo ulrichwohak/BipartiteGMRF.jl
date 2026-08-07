@@ -205,6 +205,150 @@ function build_match_V_stats(
     )
 end
 
+# ─── Mean-structure statistics ────────────────────────────────────────────
+
+function build_mean_stats(
+    f_rows::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    X::Matrix{Float64},
+    n_firms::Int,
+    n_workers::Int,
+)
+    k = length(y)
+    p = size(X, 2)
+    n = n_firms + n_workers
+    VtX = zeros(Float64, n, p)
+    Xty = zeros(Float64, p)
+
+    @inbounds for i in 1:k
+        f = f_rows[i]
+        w = w_cols[i]
+        for j in 1:p
+            xij = X[i, j]
+            VtX[f, j] += xij
+            VtX[n_firms + w, j] += xij
+            Xty[j] += xij * y[i]
+        end
+    end
+
+    XtX = X' * X
+    return MeanStats(VtX, XtX, Xty, p)
+end
+
+function build_weighted_mean_stats(
+    f_rows::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    X::Matrix{Float64},
+    weights::Vector{Float64},
+    n_firms::Int,
+    n_workers::Int,
+)
+    k = length(y)
+    p = size(X, 2)
+    n = n_firms + n_workers
+    VtX = zeros(Float64, n, p)
+    Xty = zeros(Float64, p)
+    XtX = zeros(Float64, p, p)
+
+    @inbounds for i in 1:k
+        f = f_rows[i]
+        w = w_cols[i]
+        wi = weights[i]
+        for j in 1:p
+            wxij = wi * X[i, j]
+            VtX[f, j] += wxij
+            VtX[n_firms + w, j] += wxij
+            Xty[j] += wxij * y[i]
+            for j2 in 1:p
+                XtX[j, j2] += wxij * X[i, j2]
+            end
+        end
+    end
+
+    return MeanStats(VtX, XtX, Xty, p)
+end
+
+function build_match_mean_stats(
+    f_rows::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    X::Matrix{Float64},
+    match_ids::Vector{Int},
+    n_firms::Int,
+    n_workers::Int,
+)
+    k = length(y)
+    p = size(X, 2)
+    n = n_firms + n_workers
+    VtX = zeros(Float64, n, p)
+    Xty = zeros(Float64, p)
+
+    # Group by match
+    match_map = Dict{Int,Int}()
+    match_firms = Vector{Vector{Int}}()
+    match_workers = Vector{Vector{Int}}()
+    match_y = Float64[]
+    match_x = Vector{Vector{Float64}}()
+
+    for i in 1:k
+        mid = match_ids[i]
+        pos = get!(match_map, mid) do
+            push!(match_firms, Int[])
+            push!(match_workers, Int[])
+            push!(match_y, y[i])
+            push!(match_x, X[i, :])
+            length(match_y)
+        end
+        push!(match_firms[pos], f_rows[i])
+        push!(match_workers[pos], w_cols[i])
+    end
+
+    XtX = zeros(Float64, p, p)
+    for s in eachindex(match_y)
+        firms_s = unique(match_firms[s])
+        workers_s = unique(match_workers[s])
+        F_s = length(firms_s)
+        M_s = length(workers_s)
+        xs = match_x[s]
+
+        for fi in firms_s
+            for j in 1:p
+                VtX[fi, j] += xs[j] / F_s
+            end
+        end
+        for wj in workers_s
+            for j in 1:p
+                VtX[n_firms + wj, j] += xs[j] / M_s
+            end
+        end
+
+        for j in 1:p
+            Xty[j] += xs[j] * match_y[s]
+            for j2 in 1:p
+                XtX[j, j2] += xs[j] * xs[j2]
+            end
+        end
+    end
+
+    return MeanStats(VtX, XtX, Xty, p)
+end
+
+function build_match_weight_mean_stats(
+    f_rows::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    X::Matrix{Float64},
+    T::Vector{Int},
+    n_firms::Int,
+    n_workers::Int,
+    rho_eps::Float64,
+)
+    weights = effective_match_weights(T, rho_eps)
+    return build_weighted_mean_stats(f_rows, w_cols, y, X, weights, n_firms, n_workers)
+end
+
 """
 Collapse repeated (firm, worker) observations to unique edges, preserving
 first-appearance order. Returns parallel vectors of firm index, worker index,

@@ -28,4 +28,5 @@ include("test_statsapi.jl")
 # compile times) out of the test dependencies. Run it manually with:
 #   julia --project -e 'using Pkg; Pkg.add("JET")' then include the file
 # after fixtures/synthetic.jl.
+include("test_mean_structure.jl")
 include("test_aqua.jl")

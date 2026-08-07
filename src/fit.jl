@@ -54,6 +54,7 @@ function fit_mle(
     model_adjacency::Symbol=:binary,
     match_id::Union{Nothing,AbstractVector{<:Integer}}=nothing,
     standardize::Bool=true,
+    X::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
     solver::AbstractGMRFSolver=ExactCholesky(),
     rho_limit::Union{Real,Symbol}=0.99,
     fix_rho::Union{Nothing,Float64}=nothing,
@@ -68,6 +69,7 @@ function fit_mle(
         model_adjacency=model_adjacency,
         match_id=match_id,
         standardize=standardize,
+        X=X,
     )
     return fit_mle(M, ss;
         solver=solver,
