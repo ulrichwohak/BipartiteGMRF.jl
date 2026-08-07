@@ -242,10 +242,11 @@ function GaussianMarkovRandomFields.precision_matrix(
     ρ::Real, σ_a::Real, σ_z::Real, kwargs...,
 )
     _validate_bipartite_params(ρ, σ_a, σ_z, m.rho_limit)
-    inv_sa2 = 1.0 / σ_a^2
-    inv_sz2 = 1.0 / σ_z^2
-    cross = ρ / (σ_a * σ_z)
     rho_sq = ρ^2
+    inv_one_minus_rho_sq = 1.0 / (1.0 - rho_sq)
+    inv_sa2 = inv_one_minus_rho_sq / σ_a^2
+    inv_sz2 = inv_one_minus_rho_sq / σ_z^2
+    cross = ρ * inv_one_minus_rho_sq / (σ_a * σ_z)
     g = m.graph
     diag_f = (1.0 .+ rho_sq .* (g.d_f .- 1.0)) .* inv_sa2
     diag_w = (1.0 .+ rho_sq .* (g.d_w .- 1.0)) .* inv_sz2

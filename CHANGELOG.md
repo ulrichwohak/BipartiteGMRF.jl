@@ -45,6 +45,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`BipartiteVarianceStableModel` marginal-SD parametrization** (issue
+  #108, **breaking**). The precision matrix is now multiplied by
+  $1/(1-\rho^2)$, so $\sigma_a$ and $\sigma_z$ are marginal standard
+  deviations on a forest: $\text{Cov}(a_i, a_j) = \sigma_a^2\,\rho^{d(i,j)}$
+  with no correction factor. Previously, the marginal variance on a forest
+  was $\sigma_a^2/(1-\rho^2)$. To convert old parameters to the new
+  convention: $\sigma_a^{\text{new}} = \sigma_a^{\text{old}} / \sqrt{1-\rho^2}$.
+  The change touches `precision_matrix`, `QOpVS`, `set_q_params!`, and
+  `q_diag`; all downstream code (decomposition, covariance, simulation) is
+  unaffected because it reads from $\mathbf{Q}^{-1}$.
+
 - **Data-agnostic API.** `suffstats` and `fit_mle` accept integer index
   vectors instead of DataFrames. Mapping entity identifiers to dense
   1-based indices and filtering unusable rows are the caller's

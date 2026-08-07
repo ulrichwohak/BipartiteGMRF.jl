@@ -231,9 +231,11 @@ Model types (`AbstractBipartiteModel <: LatentModel` subtypes):
 - `BipartiteSpectralModel` &mdash; spectral normalization by
   $\sigma_1(\mathbf{A})$.
 - `BipartiteVarianceStableModel` &mdash; variance-stable $\mathbf{Q}$ with
-  diagonal $[1 + \rho^2 (d_i - 1)] / \sigma_i^2$, intended for
-  spanning-tree subgraphs where it gives degree-independent marginal
-  variances.
+  marginal-SD parametrization: $\sigma_a$ and $\sigma_z$ are the marginal
+  standard deviations on a forest, so $\text{Cov}(a_i, a_j) = \sigma_a^2
+  \rho^{d(i,j)}$ without a $1/(1-\rho^2)$ correction factor. The precision
+  is $\mathbf{Q} = \frac{1}{1-\rho^2}\,\mathbf{S}^{-1}[(1-\rho^2)\mathbf{I}
+  + \rho^2\mathbf{D} - \rho\mathbf{A}]\,\mathbf{S}^{-1}$.
 
 Solvers (`AbstractGMRFSolver` subtypes):
 

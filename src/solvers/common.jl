@@ -54,9 +54,10 @@ end
 function q_diag(model::BipartiteVarianceStableModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
     g = model.graph
     rho_sq = rho^2
+    inv_one_minus_rho_sq = 1.0 / (1.0 - rho_sq)
     return vcat(
-        (1.0 .+ rho_sq .* (g.d_f .- 1.0)) ./ sigma_a^2,
-        (1.0 .+ rho_sq .* (g.d_w .- 1.0)) ./ sigma_z^2,
+        (1.0 .+ rho_sq .* (g.d_f .- 1.0)) .* (inv_one_minus_rho_sq / sigma_a^2),
+        (1.0 .+ rho_sq .* (g.d_w .- 1.0)) .* (inv_one_minus_rho_sq / sigma_z^2),
     )
 end
 

@@ -106,10 +106,12 @@ function set_q_params!(qop::QOp, rho::Float64, sigma_a::Float64, sigma_z::Float6
 end
 
 function set_q_params!(qop::QOpVS, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    qop.inv_sa2 = 1.0 / sigma_a^2
-    qop.inv_sz2 = 1.0 / sigma_z^2
-    qop.cross = rho / (sigma_a * sigma_z)
-    qop.rho_sq = rho^2
+    rho_sq = rho^2
+    inv_one_minus_rho_sq = 1.0 / (1.0 - rho_sq)
+    qop.inv_sa2 = inv_one_minus_rho_sq / sigma_a^2
+    qop.inv_sz2 = inv_one_minus_rho_sq / sigma_z^2
+    qop.cross = rho * inv_one_minus_rho_sq / (sigma_a * sigma_z)
+    qop.rho_sq = rho_sq
     return qop
 end
 

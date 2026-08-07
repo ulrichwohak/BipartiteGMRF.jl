@@ -36,8 +36,10 @@ end
 
 function make_qop_vs(model::BipartiteVarianceStableModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
     g = model.graph
-    inv_sa2 = 1.0 / sigma_a^2
-    inv_sz2 = 1.0 / sigma_z^2
+    rho_sq = rho^2
+    inv_one_minus_rho_sq = 1.0 / (1.0 - rho_sq)
+    inv_sa2 = inv_one_minus_rho_sq / sigma_a^2
+    inv_sz2 = inv_one_minus_rho_sq / sigma_z^2
     return QOpVS(
         g.A,
         g.At,
@@ -46,8 +48,8 @@ function make_qop_vs(model::BipartiteVarianceStableModel, rho::Float64, sigma_a:
         g.n_firms,
         inv_sa2,
         inv_sz2,
-        rho / (sigma_a * sigma_z),
-        rho^2,
+        rho * inv_one_minus_rho_sq / (sigma_a * sigma_z),
+        rho_sq,
         zeros(g.n_firms),
         zeros(g.n_workers),
     )
