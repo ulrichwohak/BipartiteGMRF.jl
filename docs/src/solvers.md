@@ -5,15 +5,16 @@
   cg_maxiter=700, optim_iters=1000, g_reltol=1e-7)`
 
 `ExactCholesky()` uses sparse Cholesky factorizations for deterministic
-likelihood evaluation and finite-difference polishing. `HutchSLQ()` uses PCG
+likelihood evaluation: a gradient-free Nelder-Mead search, followed (with
+`polish=true`) by a finite-difference L-BFGS polish. `HutchSLQ()` uses PCG
 and stochastic Lanczos quadrature for larger graphs.
 
-For `VarianceStablePrior`, `HutchSLQ()` evaluates the log-determinant ratio as
-`logdet(B + lambda*S*VtV*S) - logdet(B)`, using identical random probes for both
-terms. This avoids cancellation between sigma-dependent log determinants when
-one latent standard deviation is small.
+For `BipartiteVarianceStableModel`, `HutchSLQ()` evaluates the log-determinant
+ratio as `logdet(B + lambda*S*VtV*S) - logdet(B)`, using identical random
+probes for both terms. This avoids cancellation between sigma-dependent log
+determinants when one latent standard deviation is small.
 
-Both solvers accept `seed` through `gmrf_mle` or `solve` to make stochastic
+Both solvers accept `seed` through `fit_mle` or `solve` to make stochastic
 paths reproducible.
 
 `HutchSLQ`'s `g_reltol` sets the Nelder-Mead convergence tolerance *relative* to
