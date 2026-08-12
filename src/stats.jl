@@ -32,22 +32,23 @@ and `1/M_s` over each distinct worker in the match. Outcomes within a
 match must agree (up to machine precision). `K` counts matches, not
 edges. Currently requires `Weighting(observations=:raw)`.
 
-## Banded error correlation
+## Correlated errors
 
-`error_bands = (rank = r, band = b)` replaces the i.i.d. error
-covariance `σ_ε² I` with `σ_ε² R`, where `R` is block-diagonal by firm
-and banded within each firm: two observations of the same firm at spell
-ranks `r_k`, `r_l` have error correlation `b[|r_k - r_l|]` (and zero
-beyond `length(b)`). `rank` gives one integer spell rank per input row;
-`band` is the vector of correlations at rank distance 1, 2, ….
-Observations at different firms remain independent. All sufficient
-statistics become `R`-weighted (`V'R⁻¹V`, `V'R⁻¹y`, `y'R⁻¹y`) and the
-constant `log det R` is carried in the weight statistics, so every
-downstream solver and the profiled mean structure work unchanged. Each
-firm's correlation block must be positive definite (checked; shrink the
-band if it throws). Requires `Weighting(observations=:raw)`; composes
-with `match_id` (ranks must then be constant within a match, and a
-match must not span multiple firms).
+`error_cov = R` replaces the i.i.d. error covariance `σ_ε² I` with
+`σ_ε² R`: a sparse symmetric matrix over input rows whose connected
+blocks (read off the sparsity pattern) must each be positive definite —
+beyond that the blocks are arbitrary, any correlation pattern and any
+within-block heteroskedasticity. The overall scale of `R` is not a free
+parameter: it is rescaled internally to `tr(R) = K`, so `σ_ε²` keeps a
+fixed meaning as the mean error variance regardless of the scale passed
+in. The typical use is block-diagonal by firm (nonzero entries only
+between same-firm observations), but the structure is up to the caller.
+All sufficient statistics become `R`-weighted (`V'R⁻¹V`, `V'R⁻¹y`,
+`y'R⁻¹y`) and the constant `log det R` is carried in the weight
+statistics, so every downstream solver and the profiled mean structure
+work unchanged. Requires `Weighting(observations=:raw)`; composes with
+`match_id` (`R` is read at each match's first row, and entries between
+rows of one match are dropped with the duplicate rows).
 """
 function suffstats(
     ::Type{M},
@@ -61,7 +62,7 @@ function suffstats(
     match_id::Union{Nothing,AbstractVector{<:Integer}}=nothing,
     standardize::Bool=true,
     X::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
-    error_bands::Union{Nothing,NamedTuple}=nothing,
+    error_cov::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
 ) where {M<:AbstractBipartiteModel}
     model_adjacency in (:binary, :counts) ||
         throw(ArgumentError("model_adjacency must be :binary or :counts; got $(model_adjacency)."))
@@ -69,17 +70,15 @@ function suffstats(
         throw(ArgumentError("BipartiteVarianceStableModel currently supports only Weighting(observations=:raw)."))
     match_id !== nothing && weighting.observations != :raw &&
         throw(ArgumentError("match_id grouping currently supports only Weighting(observations=:raw)."))
-    if error_bands !== nothing
+    if error_cov !== nothing
         weighting.observations == :raw ||
-            throw(ArgumentError("error_bands currently supports only Weighting(observations=:raw)."))
-        (haskey(error_bands, :rank) && haskey(error_bands, :band)) ||
-            throw(ArgumentError("error_bands must be (rank = <per-row spell ranks>, band = <correlations>)."))
-        length(error_bands.rank) == length(y) ||
-            throw(ArgumentError("error_bands.rank must have the same length as y."))
-        isempty(error_bands.band) &&
-            throw(ArgumentError("error_bands.band must contain at least one correlation."))
-        all(b -> isfinite(b) && abs(b) < 1, error_bands.band) ||
-            throw(ArgumentError("error_bands.band entries must be finite correlations in (-1, 1)."))
+            throw(ArgumentError("error_cov currently supports only Weighting(observations=:raw)."))
+        size(error_cov) == (length(y), length(y)) ||
+            throw(ArgumentError("error_cov must be $(length(y))×$(length(y)) (one row per observation)."))
+        issymmetric(error_cov) ||
+            throw(ArgumentError("error_cov must be symmetric."))
+        all(isfinite, nonzeros(sparse(error_cov))) ||
+            throw(ArgumentError("error_cov entries must be finite."))
     end
 
     length(y) > 0 || throw(ArgumentError("Empty dataset."))
@@ -176,12 +175,11 @@ function suffstats(
     obs = weighting.observations
     banded_aux = nothing
     block = if obs == :raw
-        if error_bands !== nothing
-            rank_obs = Int.(collect(error_bands.rank))[obs_mask]
-            band_vec = Float64.(collect(error_bands.band))
+        if error_cov !== nothing
+            R_obs = SparseMatrixCSC{Float64,Int}(sparse(error_cov)[obs_mask, obs_mask])
             design, logdet_R, n_banded, banded_aux =
-                build_banded_V_stats(f_obs, w_obs, y_obs_scaled, match_id_obs,
-                                     rank_obs, band_vec, n_f, n_w)
+                build_correlated_V_stats(f_obs, w_obs, y_obs_scaled, match_id_obs,
+                                         R_obs, n_f, n_w)
             (
                 K = n_banded,
                 base = EdgeData(f_obs, w_obs, y_obs_scaled, ones(Int, personyear_rows)),
@@ -240,7 +238,7 @@ function suffstats(
     mean_stats = if X !== nothing
         X_obs = Matrix{Float64}(X[obs_mask, :])
         if banded_aux !== nothing
-            build_banded_mean_stats(banded_aux, X_obs[banded_aux.src, :])
+            build_correlated_mean_stats(banded_aux, X_obs[banded_aux.src, :])
         elseif obs == :raw
             if match_id_obs !== nothing
                 build_match_mean_stats(f_obs, w_obs, y_obs_scaled, X_obs, match_id_obs, n_f, n_w)
@@ -275,7 +273,7 @@ function suffstats(
         max_prior_degree_w = maximum(vec(sum(A_prior; dims=1))),
         graph_only_rows = n_graph_only,
         graph_only_edges = nnz(A_prior) - n_edges,
-        error_band = error_bands === nothing ? Float64[] : Float64.(collect(error_bands.band)),
+        correlated_errors = error_cov !== nothing,
     )
 
     return BipartiteGMRFStats(
