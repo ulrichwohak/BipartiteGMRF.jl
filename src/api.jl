@@ -151,6 +151,8 @@ function dof(result::GMRFResult)
     get(result.metadata, :fix_rho, nothing) === nothing || (k -= 1)
     w = result.stats.weighting
     w.observations == :effective && w.estimate_rho_eps && (k += 1)
+    ec = result.stats.error_classes
+    ec !== nothing && (k += length(ec.counts) - 1)
     result.beta !== nothing && (k += length(result.beta))
     return k
 end

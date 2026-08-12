@@ -6,6 +6,10 @@ function validate_capability(model::AbstractBipartiteModel, stats::BipartiteGMRF
     if model isa BipartiteSpectralModel && solver isa ExactCholesky
         throw(ArgumentError("ExactCholesky for BipartiteSpectralModel is not implemented; use HutchSLQ."))
     end
+    if stats.error_classes !== nothing && length(stats.error_classes.counts) > 1 &&
+       !(solver isa ExactCholesky)
+        throw(ArgumentError("error_groups currently supports only the ExactCholesky solver."))
+    end
     return nothing
 end
 
@@ -78,6 +82,38 @@ function objective_stats(model::AbstractBipartiteModel, stats::BipartiteGMRFStat
         )
         return ObservationStats(design, weight_stats, rho_eps, stats.mean_stats)
     end
+    ec = stats.error_classes
+    if ec !== nothing && length(ec.counts) > 1
+        # Group-robust errors: params 5.. are log omega for classes 2..C
+        # (class 1, the smallest group size, is pinned at omega = 1). The
+        # class blocks are combined with weights 1/omega_c into V'ΛV, V'Λy,
+        # y'Λy on the pooled sparsity pattern; the likelihood constant
+        # Σ_c K_c log omega_c rides in -log_weight_sum.
+        C = length(ec.counts)
+        winv = ones(Float64, C)
+        lws = 0.0
+        for c in 2:C
+            lw = params_full[3 + c]
+            winv[c] = exp(-lw)
+            lws -= ec.counts[c] * lw
+        end
+        P = stats.design.VtV
+        n = size(P, 1)
+        nf = model.graph.n_firms
+        VtV = SparseMatrixCSC(n, n, P.colptr, P.rowval, ec.vtv_nzvals * winv)
+        FF = SparseMatrixCSC{Float64,Int}(VtV[1:nf, 1:nf])
+        WW = SparseMatrixCSC{Float64,Int}(VtV[(nf+1):n, (nf+1):n])
+        A_obs = SparseMatrixCSC{Float64,Int}(VtV[1:nf, (nf+1):n])
+        design = DesignStats(VtV, ec.projected * winv, dot(ec.ydot, winv), A_obs,
+                             SparseMatrixCSC{Float64,Int}(copy(transpose(A_obs))), FF, WW)
+        ms = ec.mean_stats === nothing ? nothing :
+            MeanStats(sum(winv[c] .* ec.mean_stats[c].VtX for c in 1:C),
+                      sum(winv[c] .* ec.mean_stats[c].XtX for c in 1:C),
+                      sum(winv[c] .* ec.mean_stats[c].Xty for c in 1:C),
+                      ec.mean_stats[1].p)
+        weights = WeightStats(lws, Float64(stats.K), Float64(stats.K), 1.0, 1.0)
+        return ObservationStats(design, weights, stats.rho_eps_likelihood, ms)
+    end
     return ObservationStats(stats.design, stats.weights, stats.rho_eps_likelihood, stats.mean_stats)
 end
 
@@ -148,7 +184,11 @@ function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothi
         fit.stats,
         solver,
         fit.theta_unconstrained,
-        fit_result_metadata(fit.model, fit.rho, fix_rho),
+        fit.omega === nothing ?
+            fit_result_metadata(fit.model, fit.rho, fix_rho) :
+            merge(fit_result_metadata(fit.model, fit.rho, fix_rho),
+                  (error_class_sizes = vcat(fit.omega_sizes),
+                   error_class_variances = vcat(1.0, fit.omega))),
     )
 end
 
@@ -169,6 +209,8 @@ function optimize_problem(
     estimate_rho_eps = stats.weighting.observations == :effective &&
         stats.weighting.estimate_rho_eps
     p0 = initial_params(fix_rho, estimate_rho_eps; rho_limit=limit)
+    n_omega = stats.error_classes === nothing ? 0 : length(stats.error_classes.counts) - 1
+    n_omega > 0 && append!(p0, zeros(n_omega))
     evals = Ref(0)
     cache = make_nll_cache(solver, model, stats)
 
@@ -190,10 +232,17 @@ function optimize_problem(
     pfree = Vector{Float64}(minimizer(res))
     pfull = full_params(pfree, fix_rho, estimate_rho_eps; rho_limit=limit)
     obs = objective_stats(model, stats, pfull)
-    final_stats = estimate_rho_eps ?
+    final_stats = if estimate_rho_eps
         replace_stats(stats;
-            design=obs.design, weights=obs.weights, rho_eps_likelihood=obs.rho_eps) :
+            design=obs.design, weights=obs.weights, rho_eps_likelihood=obs.rho_eps)
+    elseif n_omega > 0
+        # Store the omega-weighted design so decompositions and posterior
+        # objects built from the result use the fitted error weighting.
+        replace_stats(stats; design=obs.design, weights=obs.weights,
+            mean_stats=obs.mean_stats)
+    else
         stats
+    end
     val = obj(pfree)
     decoded = unpack_params(pfull; rho_limit=limit)
     rho_eps = estimate_rho_eps ? obs.rho_eps : stats.rho_eps_likelihood
@@ -228,6 +277,8 @@ function optimize_problem(
         theta_unconstrained = pfull,
         model = model,
         stats = final_stats,
+        omega = n_omega > 0 ? exp.(pfull[5:4+n_omega]) : nothing,
+        omega_sizes = n_omega > 0 ? stats.error_classes.sizes : nothing,
     )
 end
 
