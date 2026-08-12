@@ -49,6 +49,26 @@ statistics, so every downstream solver and the profiled mean structure
 work unchanged. Requires `Weighting(observations=:raw)`; composes with
 `match_id` (`R` is read at each match's first row, and entries between
 rows of one match are dropped with the duplicate rows).
+
+## Group-robust errors
+
+`error_groups = g` (one group id per input row, typically the firm) makes
+the fit robust to an **arbitrary unknown** PD error covariance within each
+group, in the spirit of clustered standard errors. Observations sharing a
+group id are collapsed to their group mean (design rows averaged, outcomes
+averaged), so the unknown within-group error covariance enters the
+likelihood only through the scalar variance of the group mean. That scalar
+is `σ_ε² ω_c`, one free `ω` per group-size class, estimated jointly with
+the structural parameters; groups of size `error_group_cap` (default 8) or
+larger share the top class. The smallest class present is pinned at
+`ω = 1`, which sets the scale of `σ_ε` (with singleton groups present,
+`σ_ε` keeps its usual meaning exactly). Within-group contrasts carry no
+information under this model — by design: their error covariance is
+unknown. Fitted `ω` are reported in the result metadata
+(`error_class_variances`, `error_class_sizes`). Requires
+`Weighting(observations=:raw)` and the `ExactCholesky` solver; composes
+with `match_id` (rows of one match must share a group id) and `X`;
+mutually exclusive with `error_cov`.
 """
 function suffstats(
     ::Type{M},
@@ -63,6 +83,8 @@ function suffstats(
     standardize::Bool=true,
     X::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
     error_cov::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
+    error_groups::Union{Nothing,AbstractVector{<:Integer}}=nothing,
+    error_group_cap::Integer=8,
 ) where {M<:AbstractBipartiteModel}
     model_adjacency in (:binary, :counts) ||
         throw(ArgumentError("model_adjacency must be :binary or :counts; got $(model_adjacency)."))
@@ -79,6 +101,16 @@ function suffstats(
             throw(ArgumentError("error_cov must be symmetric."))
         all(isfinite, nonzeros(sparse(error_cov))) ||
             throw(ArgumentError("error_cov entries must be finite."))
+    end
+    if error_groups !== nothing
+        error_cov === nothing ||
+            throw(ArgumentError("error_groups and error_cov are mutually exclusive."))
+        weighting.observations == :raw ||
+            throw(ArgumentError("error_groups currently supports only Weighting(observations=:raw)."))
+        length(error_groups) == length(y) ||
+            throw(ArgumentError("error_groups must have the same length as y."))
+        error_group_cap >= 2 ||
+            throw(ArgumentError("error_group_cap must be at least 2."))
     end
 
     length(y) > 0 || throw(ArgumentError("Empty dataset."))
@@ -174,6 +206,7 @@ function suffstats(
 
     obs = weighting.observations
     banded_aux = nothing
+    grouped_aux = nothing
     block = if obs == :raw
         if error_cov !== nothing
             R_obs = SparseMatrixCSC{Float64,Int}(sparse(error_cov)[obs_mask, obs_mask])
@@ -188,6 +221,24 @@ function suffstats(
                 # -log_weight_sum, and the correlated-error constant is
                 # +logdet R, so store the negative. Weights are unit.
                 weights = WeightStats(-logdet_R, Float64(n_banded), Float64(n_banded), 1.0, 1.0),
+                within_ss = 0.0,
+                within_df = 0,
+                rho_eps_likelihood = nothing,
+            )
+        elseif error_groups !== nothing
+            groups_obs = Int.(collect(error_groups))[obs_mask]
+            design, n_groups, ec_core, aux =
+                build_grouped_V_stats(f_obs, w_obs, y_obs_scaled, match_id_obs,
+                                      groups_obs, Int(error_group_cap), n_f, n_w)
+            grouped_aux = merge(ec_core, aux)
+            (
+                K = n_groups,
+                base = EdgeData(f_obs, w_obs, y_obs_scaled, ones(Int, personyear_rows)),
+                design = design,
+                # The omega part of the likelihood constant is
+                # parameter-dependent and assembled per evaluation in
+                # objective_stats; the stored weights are the omega = 1 point.
+                weights = trivial_weight_stats(n_groups),
                 within_ss = 0.0,
                 within_df = 0,
                 rho_eps_likelihood = nothing,
@@ -235,10 +286,24 @@ function suffstats(
     end
 
     # ── Mean-structure statistics ──
+    grouped_mean = nothing
     mean_stats = if X !== nothing
         X_obs = Matrix{Float64}(X[obs_mask, :])
         if banded_aux !== nothing
             build_correlated_mean_stats(banded_aux, X_obs[banded_aux.src, :])
+        elseif grouped_aux !== nothing
+            Xg = Matrix{Float64}(grouped_aux.G * X_obs[grouped_aux.src, :])
+            p_cols = size(Xg, 2)
+            grouped_mean = map(grouped_aux.class_idx) do idx
+                Vc = grouped_aux.Vg[idx, :]
+                Xc = Xg[idx, :]
+                yc = grouped_aux.yg[idx]
+                MeanStats(Matrix{Float64}(transpose(Vc) * Xc),
+                          transpose(Xc) * Xc, vec(transpose(Xc) * yc), p_cols)
+            end
+            MeanStats(sum(ms.VtX for ms in grouped_mean),
+                      sum(ms.XtX for ms in grouped_mean),
+                      sum(ms.Xty for ms in grouped_mean), p_cols)
         elseif obs == :raw
             if match_id_obs !== nothing
                 build_match_mean_stats(f_obs, w_obs, y_obs_scaled, X_obs, match_id_obs, n_f, n_w)
@@ -274,7 +339,12 @@ function suffstats(
         graph_only_rows = n_graph_only,
         graph_only_edges = nnz(A_prior) - n_edges,
         correlated_errors = error_cov !== nothing,
+        error_groups = error_groups !== nothing,
     )
+
+    error_classes = grouped_aux === nothing ? nothing :
+        ErrorClassStats(grouped_aux.sizes, grouped_aux.counts, grouped_aux.vtv_nzvals,
+                        grouped_aux.projected, grouped_aux.ydot, grouped_mean)
 
     return BipartiteGMRFStats(
         block.design,
@@ -295,6 +365,7 @@ function suffstats(
         personyear_within_ss,
         block.weights,
         mean_stats,
+        error_classes,
         metadata,
     )
 end

@@ -122,9 +122,7 @@ function full_params(
     abs(rho_fixed) < limit ||
         throw(ArgumentError("rho_fixed must lie in (-$(limit), $(limit)); got $(rho_fixed)."))
     rho_code = atanh(rho_fixed / limit)
-    return estimate_rho_eps ?
-        [rho_code, params[1], params[2], params[3], params[4]] :
-        [rho_code, params[1], params[2], params[3]]
+    return vcat(rho_code, params)
 end
 
 function finite_or_big(x::Real)
