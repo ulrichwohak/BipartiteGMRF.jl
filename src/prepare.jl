@@ -383,3 +383,292 @@ function collapse_edges(
     ssw = [max(y_sq[j] - y_sum[j]^2 / T[j], 0.0) for j in eachindex(T)]
     return (f=f, w=w, T=T, y_mean=y_mean, ssw=ssw)
 end
+
+# ─── General correlated errors: sigma_eps^2 R, block-sparse PD R ─────────────
+
+"""
+Observation-level design rows: one row per input row, or one row per match
+when `match_ids` is given (each distinct firm weighted `1/F`, each distinct
+worker `1/M`, as in `build_match_V_stats`). Returns the sparse `V` (K × n),
+the outcome vector, and `src`, mapping each observation to its first input
+row.
+"""
+function observation_rows(
+    f_obs::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    match_ids::Union{Nothing,Vector{Int}},
+    n_firms::Int,
+    n_workers::Int,
+)
+    n = n_firms + n_workers
+    Vi = Int[]; Vj = Int[]; Vv = Float64[]
+    yv = Float64[]; src = Int[]
+    if match_ids === nothing
+        for i in eachindex(y)
+            push!(yv, y[i]); push!(src, i)
+            k = length(yv)
+            push!(Vi, k); push!(Vj, f_obs[i]); push!(Vv, 1.0)
+            push!(Vi, k); push!(Vj, n_firms + w_cols[i]); push!(Vv, 1.0)
+        end
+    else
+        pos = Dict{Int,Int}()
+        firms_of = Vector{Vector{Int}}()
+        workers_of = Vector{Vector{Int}}()
+        for i in eachindex(y)
+            s = get!(pos, match_ids[i]) do
+                push!(firms_of, Int[]); push!(workers_of, Int[])
+                push!(yv, y[i]); push!(src, i)
+                length(yv)
+            end
+            push!(firms_of[s], f_obs[i])
+            push!(workers_of[s], w_cols[i])
+        end
+        for s in eachindex(yv)
+            fs = unique(firms_of[s]); ws = unique(workers_of[s])
+            for f in fs
+                push!(Vi, s); push!(Vj, f); push!(Vv, 1.0 / length(fs))
+            end
+            for w in ws
+                push!(Vi, s); push!(Vj, n_firms + w); push!(Vv, 1.0 / length(ws))
+            end
+        end
+    end
+    return sparse(Vi, Vj, Vv, length(yv), n), yv, src
+end
+
+"""
+    build_correlated_V_stats(f_obs, w_obs, y, match_ids, R, n_firms, n_workers)
+
+Design products under a general error covariance `sigma_eps^2 R`, where `R` is
+a sparse symmetric matrix over observations whose connected blocks (read off
+the sparsity pattern) are each positive definite. The blocks are otherwise
+arbitrary — any correlation pattern, any within-block heteroskedasticity. `R`'s
+overall scale is pinned here by rescaling to `tr(R) = K`, so `sigma_eps^2`
+keeps a fixed meaning as the mean error variance; the caller's scale is
+irrelevant.
+
+Returns `(design, logdet_R, K, aux)`. `design` carries `V'R⁻¹V`, `V'R⁻¹y` and
+`y'R⁻¹y` in the usual `DesignStats` fields, so every downstream consumer —
+`M = Q + λV'V`, the quadratic form, the Hutchinson blocks — works unchanged;
+`logdet_R` enters the likelihood through `WeightStats.log_weight_sum` (as
+`-logdet_R`, matching the sign convention `2·NLL ⊃ -log_weight_sum`). `aux`
+holds `(V, Rinv, y, src)` so mean-structure products can be R-weighted without
+rebuilding; `src` maps each observation to its first input row.
+
+With `match_ids`, edges sharing an id form one observation exactly as in
+`build_match_V_stats` (each distinct firm weighted `1/F`, each distinct worker
+`1/M`); `R` is then read at each match's first row, and entries between rows
+of one match are dropped with the duplicate rows.
+"""
+function build_correlated_V_stats(
+    f_obs::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    match_ids::Union{Nothing,Vector{Int}},
+    R_rows::SparseMatrixCSC{Float64,Int},
+    n_firms::Int,
+    n_workers::Int,
+)
+    n = n_firms + n_workers
+    V, yv, src = observation_rows(f_obs, w_cols, y, match_ids, n_firms, n_workers)
+    K = length(yv)
+
+    # Observation-space R: representative rows under grouping, then the scale
+    # normalization that keeps sigma_eps^2 interpretable.
+    R = match_ids === nothing ? R_rows : SparseMatrixCSC{Float64,Int}(R_rows[src, src])
+    trR = sum(R[i, i] for i in 1:K)
+    trR > 0 || throw(ArgumentError("error_cov must have positive diagonal entries."))
+    R = R .* (K / trR)
+
+    # Blocks = connected components of the sparsity pattern (union-find).
+    parent = collect(1:K)
+    function findroot(x::Int)
+        while parent[x] != x
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        end
+        return x
+    end
+    rows = rowvals(R)
+    for j in 1:K
+        for ptr in nzrange(R, j)
+            i = rows[ptr]
+            i == j && continue
+            ri, rj = findroot(i), findroot(j)
+            ri != rj && (parent[ri] = rj)
+        end
+    end
+    blocks = Dict{Int,Vector{Int}}()
+    for i in 1:K
+        push!(get!(blocks, findroot(i), Int[]), i)
+    end
+
+    Ri = Int[]; Rj = Int[]; Rv = Float64[]
+    logdet_R = 0.0
+    for (_, idx) in blocks
+        if length(idx) == 1
+            r = R[idx[1], idx[1]]
+            r > 0 || throw(ArgumentError("error_cov has a non-positive diagonal entry."))
+            logdet_R += log(r)
+            push!(Ri, idx[1]); push!(Rj, idx[1]); push!(Rv, 1.0 / r)
+            continue
+        end
+        B = Matrix(R[idx, idx])
+        C = cholesky(Symmetric(B); check=false)
+        issuccess(C) || throw(ArgumentError(
+            "error_cov has a block of $(length(idx)) observations that is not positive definite."))
+        logdet_R += logdet(C)
+        Binv = inv(C)
+        for a in eachindex(idx), b in eachindex(idx)
+            push!(Ri, idx[a]); push!(Rj, idx[b]); push!(Rv, Binv[a, b])
+        end
+    end
+    Rinv = sparse(Ri, Rj, Rv, K, K)
+
+    VtRV = SparseMatrixCSC{Float64,Int}(transpose(V) * Rinv * V)
+    Ry = Rinv * yv
+    projected = Vector{Float64}(transpose(V) * Ry)
+    ydot = dot(yv, Ry)
+    FF = SparseMatrixCSC{Float64,Int}(VtRV[1:n_firms, 1:n_firms])
+    WW = SparseMatrixCSC{Float64,Int}(VtRV[(n_firms+1):n, (n_firms+1):n])
+    A_obs = SparseMatrixCSC{Float64,Int}(VtRV[1:n_firms, (n_firms+1):n])
+    design = DesignStats(VtRV, projected, ydot, A_obs,
+                         SparseMatrixCSC{Float64,Int}(copy(transpose(A_obs))), FF, WW)
+    return design, logdet_R, K, (V = V, Rinv = Rinv, y = yv, src = src)
+end
+
+"""
+R-weighted mean-structure products for the correlated error model. Storing
+`V'R⁻¹X`, `X'R⁻¹X` and `X'R⁻¹y` makes `mean_profile_correction` correct
+without modification: its `c` and `G` become the GLS versions automatically.
+"""
+function build_correlated_mean_stats(aux, X_rows::Matrix{Float64})
+    RX = aux.Rinv * X_rows
+    return MeanStats(
+        Matrix{Float64}(transpose(aux.V) * RX),
+        Matrix{Float64}(transpose(X_rows) * RX),
+        Vector{Float64}(transpose(X_rows) * (aux.Rinv * aux.y)),
+        size(X_rows, 2),
+    )
+end
+
+# ─── Group-robust errors: free per-size-class variance of group means ────────
+
+"""
+`A`'s nonzero values scattered onto `P`'s sparsity pattern (which must contain
+`A`'s). Returns a vector aligned with `nonzeros(P)`.
+"""
+function align_nzvals(P::SparseMatrixCSC{Float64,Int}, A::SparseMatrixCSC{Float64,Int})
+    out = zeros(Float64, nnz(P))
+    Prv = rowvals(P); Arv = rowvals(A); Anz = nonzeros(A)
+    for j in 1:size(A, 2)
+        lo = P.colptr[j]; hi = P.colptr[j + 1] - 1
+        for ptr in nzrange(A, j)
+            i = Arv[ptr]
+            pos = searchsortedfirst(view(Prv, lo:hi), i) + lo - 1
+            (pos <= hi && Prv[pos] == i) ||
+                throw(ArgumentError("internal: class pattern not contained in the pooled pattern."))
+            out[pos] += Anz[ptr]
+        end
+    end
+    return out
+end
+
+"""
+    build_grouped_V_stats(f_obs, w_obs, y, match_ids, group_obs, cap, n_firms, n_workers)
+
+Design products for group-robust errors: observations sharing a group id
+(typically the firm) are collapsed to their mean — design rows averaged,
+outcomes averaged — so that an arbitrary unknown PD error covariance within
+the group enters the likelihood only through the scalar variance of the group
+mean. That scalar is absorbed by one free parameter per group-size class,
+estimated inside the MLE; groups of size `cap` or larger share the top class.
+
+Returns `(design, K, ec, aux)`: the pooled `DesignStats` over collapsed
+observations, the group count, the per-class blocks for [`ErrorClassStats`](@ref)
+(sans mean stats), and `(G, Vg, yg, class_idx, src)` for building R-weighted
+mean-structure products. Classes are ordered by ascending size; the smallest
+class present is the one pinned at `omega = 1`.
+
+Composes with `match_ids` (rows of one match must share a group id).
+"""
+function build_grouped_V_stats(
+    f_obs::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    match_ids::Union{Nothing,Vector{Int}},
+    group_obs::Vector{Int},
+    cap::Int,
+    n_firms::Int,
+    n_workers::Int,
+)
+    if match_ids !== nothing
+        match_group = Dict{Int,Int}()
+        for i in eachindex(match_ids)
+            prev = get!(match_group, match_ids[i], group_obs[i])
+            prev == group_obs[i] || throw(ArgumentError(
+                "match $(match_ids[i]) spans more than one error group."))
+        end
+    end
+    V, yv, src = observation_rows(f_obs, w_cols, y, match_ids, n_firms, n_workers)
+    n_units = length(yv)
+    n = n_firms + n_workers
+
+    gid = group_obs[src]
+    gpos = Dict{Int,Int}()
+    members = Vector{Vector{Int}}()
+    for s in 1:n_units
+        g = get!(gpos, gid[s]) do
+            push!(members, Int[])
+            length(members)
+        end
+        push!(members[g], s)
+    end
+    K = length(members)
+    ksz = length.(members)
+
+    Gi = Int[]; Gj = Int[]; Gv = Float64[]
+    for g in 1:K, s in members[g]
+        push!(Gi, g); push!(Gj, s); push!(Gv, 1.0 / ksz[g])
+    end
+    G = sparse(Gi, Gj, Gv, K, n_units)
+    Vg = SparseMatrixCSC{Float64,Int}(G * V)
+    yg = Vector{Float64}(G * yv)
+
+    labels = min.(ksz, cap)
+    sizes = sort(unique(labels))
+    C = length(sizes)
+    class_of = Dict(sz => c for (c, sz) in enumerate(sizes))
+    class_idx = [Int[] for _ in 1:C]
+    for g in 1:K
+        push!(class_idx[class_of[labels[g]]], g)
+    end
+
+    class_vtv = Vector{SparseMatrixCSC{Float64,Int}}(undef, C)
+    projected = zeros(Float64, n, C)
+    ydot = zeros(Float64, C)
+    for c in 1:C
+        Vc = Vg[class_idx[c], :]
+        yc = yg[class_idx[c]]
+        class_vtv[c] = SparseMatrixCSC{Float64,Int}(transpose(Vc) * Vc)
+        projected[:, c] = transpose(Vc) * yc
+        ydot[c] = sum(abs2, yc)
+    end
+    # Pooled pattern as the SUM of the class matrices: entries of V are
+    # nonnegative, so nothing cancels and every class pattern is contained.
+    VtV = reduce(+, class_vtv)
+    vtv_nzvals = zeros(Float64, nnz(VtV), C)
+    for c in 1:C
+        vtv_nzvals[:, c] = align_nzvals(VtV, class_vtv[c])
+    end
+
+    FF = SparseMatrixCSC{Float64,Int}(VtV[1:n_firms, 1:n_firms])
+    WW = SparseMatrixCSC{Float64,Int}(VtV[(n_firms+1):n, (n_firms+1):n])
+    A_obs = SparseMatrixCSC{Float64,Int}(VtV[1:n_firms, (n_firms+1):n])
+    design = DesignStats(VtV, vec(sum(projected; dims=2)), sum(ydot), A_obs,
+                         SparseMatrixCSC{Float64,Int}(copy(transpose(A_obs))), FF, WW)
+    ec = (sizes = sizes, counts = length.(class_idx),
+          vtv_nzvals = vtv_nzvals, projected = projected, ydot = ydot)
+    return design, K, ec, (G = G, Vg = Vg, yg = yg, class_idx = class_idx, src = src)
+end

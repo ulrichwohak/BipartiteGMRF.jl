@@ -438,6 +438,25 @@ end
 trivial_weight_stats(k::Integer) = WeightStats(0.0, Float64(k), Float64(k), 1.0, 1.0)
 
 """
+Per-size-class sufficient statistics for group-robust errors
+(`suffstats(...; error_groups=...)`). Observations are collapsed to group
+means; the error variance of a class-`c` group mean is `sigma_eps^2 * omega_c`
+with the `omega_c` estimated inside the MLE (the smallest class is pinned at
+`omega = 1`, which sets the scale of `sigma_eps`). Each class stores its own
+design products so the objective can reassemble the omega-weighted
+`V'Λ V`, `V'Λ y`, `y'Λ y` per evaluation: `vtv_nzvals` holds each class's
+`V_c'V_c` aligned to the pooled `design.VtV` sparsity pattern (nnz × C).
+"""
+struct ErrorClassStats
+    sizes::Vector{Int}                  # class label: group size (last may be a "cap+" bin)
+    counts::Vector{Int}                 # number of groups per class
+    vtv_nzvals::Matrix{Float64}         # per-class V'V on the pooled pattern (nnz × C)
+    projected::Matrix{Float64}          # per-class V'y (n × C)
+    ydot::Vector{Float64}               # per-class y'y (C)
+    mean_stats::Union{Nothing,Vector{MeanStats}}
+end
+
+"""
     BipartiteGMRFStats <: Distributions.SufficientStats
 
 Sufficient statistics for bipartite GMRF maximum-likelihood estimation.
@@ -468,6 +487,7 @@ struct BipartiteGMRFStats <: SufficientStats
     weights::WeightStats
 
     mean_stats::Union{Nothing,MeanStats}
+    error_classes::Union{Nothing,ErrorClassStats}
     metadata::NamedTuple
 end
 

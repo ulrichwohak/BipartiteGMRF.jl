@@ -6,7 +6,7 @@ import Distributions: SufficientStats, fit_mle, params, suffstats
 using FiniteDiff: finite_difference_gradient!
 import GaussianMarkovRandomFields
 import GaussianMarkovRandomFields: LatentModel, precision_matrix, model_name, hyperparameters, constraints
-using LinearAlgebra: Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, logdet, mul!, norm
+using LinearAlgebra: Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, issuccess, issymmetric, logdet, mul!, norm
 using LinearSolve: CHOLMODFactorization
 import Optim:
     LBFGS,
@@ -21,7 +21,7 @@ import Optim:
 using Printf: @sprintf
 import Random
 using Random: AbstractRNG, MersenneTwister, rand, randn
-using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
+using SparseArrays: SparseMatrixCSC, findnz, nnz, nonzeros, nzrange, rowvals, sparse, spdiagm, spzeros
 import StatsAPI: StatisticalModel, aic, bic, coef, coefnames, dof, isfitted, islinear, loglikelihood, nobs
 using Statistics: mean, std
 
