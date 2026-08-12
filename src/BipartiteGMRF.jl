@@ -6,7 +6,7 @@ import Distributions: SufficientStats, fit_mle, params, suffstats
 using FiniteDiff: finite_difference_gradient!
 import GaussianMarkovRandomFields
 import GaussianMarkovRandomFields: LatentModel, precision_matrix, model_name, hyperparameters, constraints
-using LinearAlgebra: Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, logdet, mul!, norm
+using LinearAlgebra: I, Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, issuccess, logdet, mul!, norm
 using LinearSolve: CHOLMODFactorization
 import Optim:
     LBFGS,

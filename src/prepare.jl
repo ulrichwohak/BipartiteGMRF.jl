@@ -383,3 +383,132 @@ function collapse_edges(
     ssw = [max(y_sq[j] - y_sum[j]^2 / T[j], 0.0) for j in eachindex(T)]
     return (f=f, w=w, T=T, y_mean=y_mean, ssw=ssw)
 end
+
+# ─── Banded within-firm error correlation (issue: eta) ───────────────────────
+
+"""
+    build_banded_V_stats(f_obs, w_obs, y, match_ids, rank_obs, band, n_firms, n_workers)
+
+Design products under a banded within-firm error correlation: for two
+observations of the SAME firm at spell ranks `r` and `r'`,
+`Corr(eps, eps') = band[|r - r'|]` (1 on the diagonal, 0 beyond the band), and
+zero across firms. `R` is block-diagonal by firm, so its inverse is a set of
+small dense blocks; each block must be PD, and the error names the block size
+that fails.
+
+Returns `(design, logdet_R, K, aux)`. `design` carries `V'R⁻¹V`, `V'R⁻¹y` and
+`y'R⁻¹y` in the usual `DesignStats` fields, so every downstream consumer —
+`M = Q + λV'V`, the quadratic form, the Hutchinson blocks — works unchanged;
+`logdet_R` enters the likelihood through `WeightStats.log_weight_sum` (as
+`-logdet_R`, matching the sign convention `2·NLL ⊃ -log_weight_sum`). `aux`
+holds `(V, Rinv, y, src)` so mean-structure products can be R-weighted without
+rebuilding; `src` maps each observation to its first input row.
+
+With `match_ids`, edges sharing an id form one observation exactly as in
+`build_match_V_stats`, except that a banded match must sit at a SINGLE firm
+(the band is a within-firm object) and its rank must be constant within the
+match.
+"""
+function build_banded_V_stats(
+    f_obs::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    match_ids::Union{Nothing,Vector{Int}},
+    rank_obs::Vector{Int},
+    band::Vector{Float64},
+    n_firms::Int,
+    n_workers::Int,
+)
+    n = n_firms + n_workers
+    Vi = Int[]; Vj = Int[]; Vv = Float64[]
+    yv = Float64[]; firm_of = Int[]; rank_of = Int[]; src = Int[]
+    if match_ids === nothing
+        for i in eachindex(y)
+            push!(yv, y[i]); push!(firm_of, f_obs[i]); push!(rank_of, rank_obs[i]); push!(src, i)
+            k = length(yv)
+            push!(Vi, k); push!(Vj, f_obs[i]); push!(Vv, 1.0)
+            push!(Vi, k); push!(Vj, n_firms + w_cols[i]); push!(Vv, 1.0)
+        end
+    else
+        pos = Dict{Int,Int}()
+        firms_of = Vector{Vector{Int}}()
+        workers_of = Vector{Vector{Int}}()
+        for i in eachindex(y)
+            s = get!(pos, match_ids[i]) do
+                push!(firms_of, Int[]); push!(workers_of, Int[])
+                push!(yv, y[i]); push!(rank_of, rank_obs[i])
+                push!(firm_of, f_obs[i]); push!(src, i)
+                length(yv)
+            end
+            rank_obs[i] == rank_of[s] || throw(ArgumentError(
+                "match $(match_ids[i]) has an inconsistent spell rank."))
+            push!(firms_of[s], f_obs[i])
+            push!(workers_of[s], w_cols[i])
+        end
+        for s in eachindex(yv)
+            fs = unique(firms_of[s]); ws = unique(workers_of[s])
+            length(fs) == 1 || throw(ArgumentError(
+                "error bands require single-firm matches; a match spans $(length(fs)) firms."))
+            push!(Vi, s); push!(Vj, fs[1]); push!(Vv, 1.0)
+            for w in ws
+                push!(Vi, s); push!(Vj, n_firms + w); push!(Vv, 1.0 / length(ws))
+            end
+        end
+    end
+    K = length(yv)
+    V = sparse(Vi, Vj, Vv, K, n)
+
+    byfirm = Dict{Int,Vector{Int}}()
+    for i in 1:K
+        push!(get!(byfirm, firm_of[i], Int[]), i)
+    end
+    Ri = Int[]; Rj = Int[]; Rv = Float64[]
+    logdet_R = 0.0
+    for (_, idx) in byfirm
+        kf = length(idx)
+        if kf == 1
+            push!(Ri, idx[1]); push!(Rj, idx[1]); push!(Rv, 1.0)
+            continue
+        end
+        Rf = Matrix{Float64}(I, kf, kf)
+        for a in 1:kf, b in (a+1):kf
+            d = abs(rank_of[idx[a]] - rank_of[idx[b]])
+            1 <= d <= length(band) && (Rf[a, b] = Rf[b, a] = band[d])
+        end
+        C = cholesky(Symmetric(Rf); check=false)
+        issuccess(C) || throw(ArgumentError(
+            "banded error correlation is not positive definite for a firm with $(kf) observations; shrink the band."))
+        logdet_R += logdet(C)
+        Rinv_f = inv(C)
+        for a in 1:kf, b in 1:kf
+            push!(Ri, idx[a]); push!(Rj, idx[b]); push!(Rv, Rinv_f[a, b])
+        end
+    end
+    Rinv = sparse(Ri, Rj, Rv, K, K)
+
+    VtRV = SparseMatrixCSC{Float64,Int}(transpose(V) * Rinv * V)
+    Ry = Rinv * yv
+    projected = Vector{Float64}(transpose(V) * Ry)
+    ydot = dot(yv, Ry)
+    FF = SparseMatrixCSC{Float64,Int}(VtRV[1:n_firms, 1:n_firms])
+    WW = SparseMatrixCSC{Float64,Int}(VtRV[(n_firms+1):n, (n_firms+1):n])
+    A_obs = SparseMatrixCSC{Float64,Int}(VtRV[1:n_firms, (n_firms+1):n])
+    design = DesignStats(VtRV, projected, ydot, A_obs,
+                         SparseMatrixCSC{Float64,Int}(copy(transpose(A_obs))), FF, WW)
+    return design, logdet_R, K, (V = V, Rinv = Rinv, y = yv, src = src)
+end
+
+"""
+R-weighted mean-structure products for the banded error model. Storing
+`V'R⁻¹X`, `X'R⁻¹X` and `X'R⁻¹y` makes `mean_profile_correction` correct
+without modification: its `c` and `G` become the GLS versions automatically.
+"""
+function build_banded_mean_stats(aux, X_rows::Matrix{Float64})
+    RX = aux.Rinv * X_rows
+    return MeanStats(
+        Matrix{Float64}(transpose(aux.V) * RX),
+        Matrix{Float64}(transpose(X_rows) * RX),
+        Vector{Float64}(transpose(X_rows) * (aux.Rinv * aux.y)),
+        size(X_rows, 2),
+    )
+end
