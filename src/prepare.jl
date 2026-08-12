@@ -384,17 +384,18 @@ function collapse_edges(
     return (f=f, w=w, T=T, y_mean=y_mean, ssw=ssw)
 end
 
-# ─── Banded within-firm error correlation (issue: eta) ───────────────────────
+# ─── General correlated errors: sigma_eps^2 R, block-sparse PD R ─────────────
 
 """
-    build_banded_V_stats(f_obs, w_obs, y, match_ids, rank_obs, band, n_firms, n_workers)
+    build_correlated_V_stats(f_obs, w_obs, y, match_ids, R, n_firms, n_workers)
 
-Design products under a banded within-firm error correlation: for two
-observations of the SAME firm at spell ranks `r` and `r'`,
-`Corr(eps, eps') = band[|r - r'|]` (1 on the diagonal, 0 beyond the band), and
-zero across firms. `R` is block-diagonal by firm, so its inverse is a set of
-small dense blocks; each block must be PD, and the error names the block size
-that fails.
+Design products under a general error covariance `sigma_eps^2 R`, where `R` is
+a sparse symmetric matrix over observations whose connected blocks (read off
+the sparsity pattern) are each positive definite. The blocks are otherwise
+arbitrary — any correlation pattern, any within-block heteroskedasticity. `R`'s
+overall scale is pinned here by rescaling to `tr(R) = K`, so `sigma_eps^2`
+keeps a fixed meaning as the mean error variance; the caller's scale is
+irrelevant.
 
 Returns `(design, logdet_R, K, aux)`. `design` carries `V'R⁻¹V`, `V'R⁻¹y` and
 `y'R⁻¹y` in the usual `DesignStats` fields, so every downstream consumer —
@@ -405,26 +406,25 @@ holds `(V, Rinv, y, src)` so mean-structure products can be R-weighted without
 rebuilding; `src` maps each observation to its first input row.
 
 With `match_ids`, edges sharing an id form one observation exactly as in
-`build_match_V_stats`, except that a banded match must sit at a SINGLE firm
-(the band is a within-firm object) and its rank must be constant within the
-match.
+`build_match_V_stats` (each distinct firm weighted `1/F`, each distinct worker
+`1/M`); `R` is then read at each match's first row, and entries between rows
+of one match are dropped with the duplicate rows.
 """
-function build_banded_V_stats(
+function build_correlated_V_stats(
     f_obs::Vector{Int},
     w_cols::Vector{Int},
     y::Vector{Float64},
     match_ids::Union{Nothing,Vector{Int}},
-    rank_obs::Vector{Int},
-    band::Vector{Float64},
+    R_rows::SparseMatrixCSC{Float64,Int},
     n_firms::Int,
     n_workers::Int,
 )
     n = n_firms + n_workers
     Vi = Int[]; Vj = Int[]; Vv = Float64[]
-    yv = Float64[]; firm_of = Int[]; rank_of = Int[]; src = Int[]
+    yv = Float64[]; src = Int[]
     if match_ids === nothing
         for i in eachindex(y)
-            push!(yv, y[i]); push!(firm_of, f_obs[i]); push!(rank_of, rank_obs[i]); push!(src, i)
+            push!(yv, y[i]); push!(src, i)
             k = length(yv)
             push!(Vi, k); push!(Vj, f_obs[i]); push!(Vv, 1.0)
             push!(Vi, k); push!(Vj, n_firms + w_cols[i]); push!(Vv, 1.0)
@@ -436,20 +436,17 @@ function build_banded_V_stats(
         for i in eachindex(y)
             s = get!(pos, match_ids[i]) do
                 push!(firms_of, Int[]); push!(workers_of, Int[])
-                push!(yv, y[i]); push!(rank_of, rank_obs[i])
-                push!(firm_of, f_obs[i]); push!(src, i)
+                push!(yv, y[i]); push!(src, i)
                 length(yv)
             end
-            rank_obs[i] == rank_of[s] || throw(ArgumentError(
-                "match $(match_ids[i]) has an inconsistent spell rank."))
             push!(firms_of[s], f_obs[i])
             push!(workers_of[s], w_cols[i])
         end
         for s in eachindex(yv)
             fs = unique(firms_of[s]); ws = unique(workers_of[s])
-            length(fs) == 1 || throw(ArgumentError(
-                "error bands require single-firm matches; a match spans $(length(fs)) firms."))
-            push!(Vi, s); push!(Vj, fs[1]); push!(Vv, 1.0)
+            for f in fs
+                push!(Vi, s); push!(Vj, f); push!(Vv, 1.0 / length(fs))
+            end
             for w in ws
                 push!(Vi, s); push!(Vj, n_firms + w); push!(Vv, 1.0 / length(ws))
             end
@@ -458,30 +455,54 @@ function build_banded_V_stats(
     K = length(yv)
     V = sparse(Vi, Vj, Vv, K, n)
 
-    byfirm = Dict{Int,Vector{Int}}()
-    for i in 1:K
-        push!(get!(byfirm, firm_of[i], Int[]), i)
+    # Observation-space R: representative rows under grouping, then the scale
+    # normalization that keeps sigma_eps^2 interpretable.
+    R = match_ids === nothing ? R_rows : SparseMatrixCSC{Float64,Int}(R_rows[src, src])
+    trR = sum(R[i, i] for i in 1:K)
+    trR > 0 || throw(ArgumentError("error_cov must have positive diagonal entries."))
+    R = R .* (K / trR)
+
+    # Blocks = connected components of the sparsity pattern (union-find).
+    parent = collect(1:K)
+    function findroot(x::Int)
+        while parent[x] != x
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        end
+        return x
     end
+    rows = rowvals(R)
+    for j in 1:K
+        for ptr in nzrange(R, j)
+            i = rows[ptr]
+            i == j && continue
+            ri, rj = findroot(i), findroot(j)
+            ri != rj && (parent[ri] = rj)
+        end
+    end
+    blocks = Dict{Int,Vector{Int}}()
+    for i in 1:K
+        push!(get!(blocks, findroot(i), Int[]), i)
+    end
+
     Ri = Int[]; Rj = Int[]; Rv = Float64[]
     logdet_R = 0.0
-    for (_, idx) in byfirm
-        kf = length(idx)
-        if kf == 1
-            push!(Ri, idx[1]); push!(Rj, idx[1]); push!(Rv, 1.0)
+    for (_, idx) in blocks
+        if length(idx) == 1
+            r = R[idx[1], idx[1]]
+            r > 0 || throw(ArgumentError("error_cov has a non-positive diagonal entry."))
+            logdet_R += log(r)
+            push!(Ri, idx[1]); push!(Rj, idx[1]); push!(Rv, 1.0 / r)
             continue
         end
-        Rf = Matrix{Float64}(I, kf, kf)
-        for a in 1:kf, b in (a+1):kf
-            d = abs(rank_of[idx[a]] - rank_of[idx[b]])
-            1 <= d <= length(band) && (Rf[a, b] = Rf[b, a] = band[d])
-        end
-        C = cholesky(Symmetric(Rf); check=false)
+        B = Matrix(R[idx, idx])
+        C = cholesky(Symmetric(B); check=false)
         issuccess(C) || throw(ArgumentError(
-            "banded error correlation is not positive definite for a firm with $(kf) observations; shrink the band."))
+            "error_cov has a block of $(length(idx)) observations that is not positive definite."))
         logdet_R += logdet(C)
-        Rinv_f = inv(C)
-        for a in 1:kf, b in 1:kf
-            push!(Ri, idx[a]); push!(Rj, idx[b]); push!(Rv, Rinv_f[a, b])
+        Binv = inv(C)
+        for a in eachindex(idx), b in eachindex(idx)
+            push!(Ri, idx[a]); push!(Rj, idx[b]); push!(Rv, Binv[a, b])
         end
     end
     Rinv = sparse(Ri, Rj, Rv, K, K)
@@ -499,11 +520,11 @@ function build_banded_V_stats(
 end
 
 """
-R-weighted mean-structure products for the banded error model. Storing
+R-weighted mean-structure products for the correlated error model. Storing
 `V'R⁻¹X`, `X'R⁻¹X` and `X'R⁻¹y` makes `mean_profile_correction` correct
 without modification: its `c` and `G` become the GLS versions automatically.
 """
-function build_banded_mean_stats(aux, X_rows::Matrix{Float64})
+function build_correlated_mean_stats(aux, X_rows::Matrix{Float64})
     RX = aux.Rinv * X_rows
     return MeanStats(
         Matrix{Float64}(transpose(aux.V) * RX),
