@@ -3,7 +3,7 @@ uuid = "7206b2fc-0d28-4a9b-bd42-94918d5f8f40"
 authors = ["Ulrich Wohak <ulrich@wohak.eu>", "Miklós Koren"]
 description = "Bipartite-graph Gaussian Markov random-field random-effects estimation"
 keywords = ["bipartite graphs", "Gaussian Markov random fields", "random effects", "variance components"]
-version = "0.1.0"
+version = "0.2.1"
 
 [deps]
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
