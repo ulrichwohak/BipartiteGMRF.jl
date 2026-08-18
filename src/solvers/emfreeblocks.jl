@@ -111,6 +111,18 @@ function _init_blocks(fb::FreeBlockStats)
             for m in fb.sizes]
 end
 
+# Project a symmetric block onto {λ_min ≥ λ_lo} by clamping its eigenvalues up
+# to the fixed floor λ_lo (eigenvectors preserved). λ_lo is a GLOBAL,
+# iteration-fixed scale — not the block's own trace — so a single pass is exact
+# and the post-clamp bound holds. `eig_floor` encodes the "well-conditioned Ωᵢ"
+# assumption (issue #112 §5.4): pattern-free, forbids only near-singularity.
+function _floor_spectrum(S::Matrix{Float64}, λ_lo::Float64)
+    F = eigen(Symmetric(S))
+    F.values[1] >= λ_lo && return S
+    λc = max.(F.values, λ_lo)
+    return Matrix(Symmetric((F.vectors .* transpose(λc)) * F.vectors'))
+end
+
 function make_emfree_workspace(model::AbstractBipartiteModel, fb::FreeBlockStats, nf::Int, nw::Int)
     # Seed ω_M with the FULL free-Ω pattern (reference blocks carry full
     # within-firm off-diagonal support), so the symbolic factorization covers
@@ -327,6 +339,9 @@ function optimize_emfree(
     ew = make_emfree_workspace(model, fb, nf, nw)
     Ωs = _init_blocks(fb)
     ψ = _emfree_ψ_from_θ(default_rho_start(limit), 0.7, 0.04, limit)
+    # Fixed spectral-floor scale: the initial global mean trace (the model's
+    # pinned barσ² reference), frozen for the whole EM — not a per-block trace.
+    λ_lo = solver.eig_floor * (sum(tr(Ωi) for Ωi in Ωs) / stats.K)
     # Giant-firm guardrail (§5.2): the per-block m_i³ Cholesky and the dense
     # manager clique of S_z scale cubically; warn when a block is pathologically
     # large instead of silently paying it.
@@ -337,41 +352,58 @@ function optimize_emfree(
     )
 
     rows = _block_rows(fb)
+    nll_trace = Float64[]
     nll_curr = emfree_nll(model, fb, ew, Ωs, _emfree_θ_from_ψ(ψ, limit)..., nf, nw)
+    push!(nll_trace, nll_curr)
     converged = false
-
     iterations = 0
     while iterations < solver.max_iter
         rho, sa, sz = _emfree_θ_from_ψ(ψ, limit)
-        # E-step: factor M, solve the penalized-GLS mode, form block S_ε.
-        alpha, Seps, _ = emfree_e_step(model, fb, ew, Ωs, rho, sa, sz, nf, nw)
-        # Exact marginal score at the current (θ, Ω); then one safeguarded score
-        # step on θ with Ω held fixed, then the closed-form M-step Ω ← S_ε.
+        # E-step at (θ, Ω): posterior mode α̂ (the exact score needs it).
+        alpha, _, _ = emfree_e_step(model, fb, ew, Ωs, rho, sa, sz, nf, nw)
+        # One safeguarded score step on θ with Ω held fixed.
         gψ = _emfree_score(model, ew, alpha, ψ, limit)
         ψ = _emfree_theta_step(model, fb, ew, Ωs, ψ, gψ, limit, nf, nw)
+        # M-step at the NEW θ: recompute S_ε(θ_new, Ω) so the block update is
+        # consistent with the θ it accompanies (never the stale pre-step θ).
+        rho2, sa2, sz2 = _emfree_θ_from_ψ(ψ, limit)
+        _, Seps, _ = emfree_e_step(model, fb, ew, Ωs, rho2, sa2, sz2, nf, nw)
         for i in eachindex(Ωs)
-            C = cholesky(Symmetric(Seps[i]); check = false)
+            Ωs[i] = _floor_spectrum(Seps[i], λ_lo)
+            C = cholesky(Symmetric(Ωs[i]); check = false)
             issuccess(C) || throw(ArgumentError(
                 "error block $i (firm $(ew.f[first(rows[i])])) is not positive definite " *
-                "(m_i = $(fb.sizes[i]), d_i = $(fb.distinct[i]))."
+                "after flooring (m_i = $(fb.sizes[i]), d_i = $(fb.distinct[i]))."
             ))
-            Ωs[i] = Seps[i]
         end
-        nll_new = emfree_nll(model, fb, ew, Ωs, _emfree_θ_from_ψ(ψ, limit)..., nf, nw)
+        nll_new = emfree_nll(model, fb, ew, Ωs, rho2, sa2, sz2, nf, nw)
+        push!(nll_trace, nll_new)
         iterations += 1
-        if abs(nll_new - nll_curr) <= solver.ftol * max(1.0, abs(nll_curr))
+        Δ = nll_curr - nll_new
+        scale = max(1.0, abs(nll_curr))
+        if Δ >= solver.ftol * scale
+            nll_curr = nll_new                        # meaningful improvement
+        elseif Δ >= -solver.ftol * scale
             nll_curr = nll_new
-            converged = true
+            converged = true                           # flat within ftol → settled
             break
+        else
+            @warn "non-monotone EM step (nll increased by $(nll_new - nll_curr))."
+            nll_curr = nll_new
         end
-        nll_curr = nll_new
         verbose && @info "EMFreeBlocks iter $iterations: nll=$(nll_curr)"
     end
 
     rho, sa, sz = _emfree_θ_from_ψ(ψ, limit)
-    abs(rho) < 1e-8 && @warn(
-        "Free-block model is locally unidentified at ρ ≈ 0 (§4): σ_a is identified " *
-        "only off the network, so treat the estimate as a warning rather than a point estimate."
+    converged || @warn(
+        "EMFreeBlocks did not converge in $(solver.max_iter) iterations (nll change still above " *
+        "ftol = $(solver.ftol)); the estimate may not be at a stationary point of the " *
+        "marginal likelihood — treat it as non-settled regardless of the ρ value."
+    )
+    abs(rho) < 1e-2 && @warn(
+        "Free-block fit landed at small |ρ| = $(abs(rho)) (flat likelihood region): " *
+        "σ_a is identified only off the cross-firm network, so treat σ_a (and ρ) as " *
+        "weakly identified rather than a precise point estimate (issue #112 §4, §7.7)."
     )
     bar_sigma2 = 0.0
     for (i, Ωi) in enumerate(Ωs)
@@ -396,5 +428,6 @@ function optimize_emfree(
         omega = nothing,
         omega_sizes = nothing,
         bar_sigma2 = bar_sigma2,
+        nll_trace = nll_trace,
     )
 end

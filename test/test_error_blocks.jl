@@ -109,4 +109,34 @@
         @test Matrix(P) ≈ (1 / σ²) .* Matrix(iid) atol = 1e-12
         @test b ≈ (1 / σ²) .* ss.design.projected_y atol = 1e-12
     end
+    @testset "spectral floor clamps a near-singular block" begin
+        # one slightly-negative eigenvalue → must be floored up to λ_lo
+        S = [-0.01 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 2.0]
+        Fb = BipartiteGMRF._floor_spectrum(S, 0.1)
+        @test issymmetric(Fb)
+        @test eigen(Symmetric(Fb)).values[1] ≈ 0.1 atol = 1e-12
+        # a block already above the floor is returned untouched
+        S2 = [1.0 0.2 0.0; 0.2 1.0 0.2; 0.0 0.2 1.0]
+        @test BipartiteGMRF._floor_spectrum(S2, 0.1) == S2
+    end
+
+    @testset "non-convergence is warned and surfaced" begin
+        res = @test_logs (:warn, r"did not converge") match_mode=:any fit_mle(
+            BipartiteVarianceStableModel, f, w, y;
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_blocks = :free, firm_group = f,
+            solver = EMFreeBlocks(max_iter = 2, ftol = 1e-12))
+        @test res.converged == false
+    end
+
+    @testset "EM NLL is monotone non-increasing" begin
+        ss = suffstats(BipartiteVarianceStableModel, f, w, y;
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_blocks = :free, firm_group = f)
+        model = BipartiteVarianceStableModel(ss.A_prior; rho_limit = 0.99)
+        fit = BipartiteGMRF.optimize_emfree(model, ss,
+            EMFreeBlocks(max_iter = 30, ftol = 1e-10, eig_floor = 1e-3); verbose = false)
+        @test length(fit.nll_trace) == 31
+        @test all(diff(fit.nll_trace) .<= 1e-9)
+    end
 end

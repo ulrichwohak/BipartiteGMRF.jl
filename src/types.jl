@@ -378,26 +378,32 @@ struct ExactCholesky <: AbstractGMRFSolver
 end
 
 """
-    EMFreeBlocks(; max_iter=200, ftol=1e-8, newton_damp=0.9, abstol=1e-4)
+    EMFreeBlocks(; max_iter=200, ftol=1e-8, eig_floor=1e-3)
 
 EM solver for the free per-firm error-covariance model (`error_blocks=:free`).
-Alternates a closed-form M-step on the per-firm blocks `Ω_i` with a damped
-Newton step on the GMRF hyperparameters `(ρ, σ_a, σ_z)`. Requires the
+Alternates a closed-form M-step on the per-firm blocks `Ω_i` with one safeguarded
+score step on the GMRF hyperparameters `(ρ, σ_a, σ_z)`. Requires the
 `BipartiteVarianceStableModel` (the only model whose precision `K` carries the
 cross-firm structure that identifies `σ_a` under free `Ω_i`).
+
+`eig_floor` is the **assumption that each `Ω_i` is not near-singular**, stated as
+a lower bound on the smallest eigenvalue: `λ_min(Ωᵢ) ≥ eig_floor ⋅ barσ²₀`, where
+`barσ²₀` is the model's pinned scale frozen at initialization. After every M-step,
+eigenvalues below that floor are clamped up to it (pattern-free — no AR/equi-
+correlation structure). This bounds `λ_min` only (it does **not** bound the full
+condition number), which is exactly what prevents the EM's near-singular
+trajectory from ill-conditioning `M`; it is an explicit prior, not fitted from data.
 """
 struct EMFreeBlocks <: AbstractGMRFSolver
     max_iter::Int
     ftol::Float64
-    newton_damp::Float64
-    abstol::Float64
+    eig_floor::Float64
     function EMFreeBlocks(; max_iter::Int=200, ftol::Float64=1e-8,
-                          newton_damp::Float64=0.9, abstol::Float64=1e-4)
+                          eig_floor::Float64=1e-3)
         max_iter > 0 || throw(ArgumentError("max_iter must be positive."))
         ftol > 0 || throw(ArgumentError("ftol must be positive."))
-        0.0 < newton_damp <= 1.0 || throw(ArgumentError("newton_damp must be in (0, 1]."))
-        abstol > 0 || throw(ArgumentError("abstol must be positive."))
-        new(max_iter, ftol, newton_damp, abstol)
+        eig_floor > 0 || throw(ArgumentError("eig_floor must be positive."))
+        new(max_iter, ftol, eig_floor)
     end
 end
 
