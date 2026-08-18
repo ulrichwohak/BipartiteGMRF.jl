@@ -341,12 +341,20 @@ Run the [`EMFreeBlocks`](@ref) loop to convergence: alternate a closed-form
 M-step on the per-firm blocks `Ω_i` with one safeguarded score step on the GMRF
 hyperparameters (η pulled from the Fisher-identity score, monotone line search).
 Returns the same fields `optimize_problem` reports, plus `bar_sigma2`.
+
+`init_theta` (a `(rho, sigma_a, sigma_z)` tuple, **standardized units**) and
+`init_blocks` (one PD matrix per firm block, standardized units) override the
+default start. The likelihood is unbounded at the degenerate corner (plan §0),
+so which stationary point EM settles in is init-dependent; multi-start probes
+go through these.
 """
 function optimize_emfree(
     model::BipartiteVarianceStableModel,
     stats::BipartiteGMRFStats,
     solver::EMFreeBlocks;
     verbose::Bool=false,
+    init_theta::Union{Nothing,NTuple{3,Float64}}=nothing,
+    init_blocks::Union{Nothing,Vector{Matrix{Float64}}}=nothing,
 )
     fb = stats.free_blocks
     fb !== nothing || throw(ArgumentError("optimize_emfree requires error_blocks=:free statistics."))
@@ -354,8 +362,12 @@ function optimize_emfree(
     nw = stats.N_workers
     limit = rho_limit(model)
     ew = make_emfree_workspace(model, fb, nf, nw)
-    Ωs = _init_blocks(fb)
-    ψ = _emfree_ψ_from_θ(default_rho_start(limit), 0.7, 0.04, limit)
+    Ωs = init_blocks === nothing ? _init_blocks(fb) : [copy(Ωi) for Ωi in init_blocks]
+    length(Ωs) == length(fb.sizes) && all(size(Ωs[i], 1) == fb.sizes[i] for i in eachindex(Ωs)) ||
+        throw(ArgumentError("init_blocks must supply one m_i × m_i matrix per firm block."))
+    ψ = init_theta === nothing ?
+        _emfree_ψ_from_θ(default_rho_start(limit), 0.7, 0.04, limit) :
+        _emfree_ψ_from_θ(init_theta..., limit)
     # Fixed spectral-floor scale: the initial global mean trace (the model's
     # pinned barσ² reference), frozen for the whole EM — not a per-block trace.
     λ_lo = solver.eig_floor * (sum(tr(Ωi) for Ωi in Ωs) / stats.K)

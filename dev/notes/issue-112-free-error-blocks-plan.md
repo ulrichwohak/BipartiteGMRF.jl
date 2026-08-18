@@ -69,16 +69,53 @@ has ≥ 2 observations. This is the classic Kiefer–Wolfowitz-type degeneracy
 intuition ("each Ω̂ᵢ terrible, pooled traces fine") understated it: the joint
 MLE **does not exist**, so there is nothing to pool.
 
-**Consequences:**
+### 0.1 Identification vs. unboundedness (maintainer discussion, 2026-08-18)
+
+These are different failures, and the first draft of this section conflated
+them. **Identification holds in population when `ρ ≠ 0`:** Ω is block-diagonal
+by firm, so every cross-firm covariance of `Σ = AK⁻¹A' + Ω` comes from the
+latent term alone — free Ωᵢ cannot mimic them — and (correct specification +
+KL) the truth uniquely maximizes the *expected* log-likelihood. What fails is
+the finite-sample ML problem: the sample likelihood is unbounded, and matching
+cross-firm sample covariances is worth only a bounded amount against the
+unbounded `logdet Ωᵢ` reward. This is the Gaussian-mixture (Kiefer–Wolfowitz)
+shape: identified model, no global MLE — which raises the mixture-style hope
+that a **consistent interior local root** exists and EM from a good start
+finds it.
+
+### 0.2 The local-root hope tested — and refuted on both graph types
+
+- **Truth-init EM, caterpillar** (`dev/mc_truth_init.jl`, same DGP/draws as the
+  criterion-4 MC, init = exact truth `(θ⁰, Ω⁰ᵢ)`): 0/25 converged in 200
+  iters; `σ̂_a` drifts to 0.016 mean (still falling), `σ̂_eps` absorbs to 0.78.
+- **Truth-init EM, dense graph** (`dev/mc_dense_graph.jl`, 40 firms × 83
+  workers, 200 edges, `mᵢ = 5`, most workers shared by 2 firms, `rho_limit =
+  :auto` → 0.355, `ρ⁰ = 0.266`): `σ̂_a` = floor on **25/25 draws from truth
+  init**; default init collapses fully (`σ̂_a = σ̂_z = 0` exactly, 25/25).
+
+Since every EM step is verified monotone in the NLL, the truth-init runs prove
+there is a **monotone downhill path from the truth to the collapse region** on
+these samples — the truth is not inside any interior basin. The local-root
+strategy fails, not just the global MLE.
+
+**Why the (correct) covariance intuition doesn't save ML:** parameter counting.
+Each firm contributes `mᵢ` observations but `mᵢ(mᵢ+1)/2 > mᵢ` free Ωᵢ entries —
+the per-sample model is over-parametrized (incidental parameters, risk R2, now
+confirmed fatal rather than "gated by MC"). A firm effect `aᵢ` adds an
+equicorrelated component `σ_a²11'` to the *within*-firm covariance, which free
+Ωᵢ absorbs exactly; the cross-firm moments that identify `σ_a` are few and
+enter the likelihood with bounded weight. A method-of-moments estimator built
+on cross-firm covariances alone *would* be consistent — ML on the unconstrained
+model is simply the wrong vehicle for that information.
+
+**Other consequences:**
 - The `eig_floor` is not a numerical guardrail; it is the only thing making the
   optimum finite. With floor `λ_lo`, the maximum sits at the degenerate corner
-  `σ_a = σ_z = 0`, `Ωᵢ ≈ yᵢyᵢ' + λ_lo I` (probe: NLL ≈ −9.9 at `δ = 10⁻³` vs
-  1.7 at an interior reference). The EM found the true optimum; the score, the
-  E-step, and the convergence logic are all working as designed.
-- `ρ ≠ 0` does **not** rescue identification: the divergence is along Ω, and no
-  finite `ρ` term can offset a −∞ logdet.
+  (probe: NLL ≈ −9.9 at `δ = 10⁻³` vs 1.7 at an interior reference). The EM,
+  score, E-step, and convergence logic are all working as designed.
 - Criterion 4 as originally stated (centering at truth) **cannot pass** for the
-  unconstrained model on any graph where firms have ≥ 2 edges.
+  unconstrained model on any graph where firms have ≥ 2 edges — regardless of
+  graph density or init.
 
 ### 0.3 Remedies (decision for maintainer; recommend A)
 
@@ -95,6 +132,11 @@ MLE **does not exist**, so there is nothing to pool.
   subsumed by `error_groups`, and abandons "arbitrary Ωᵢ".
 - **C. Keep unconstrained + floor and document the collapse:** the estimator is
   then useless for variance decomposition (σ̂'s are 0 by construction). Reject.
+- **D. Cross-firm method-of-moments** for `(ρ, σ_a, σ_z)` (use only the moments
+  Ω cannot touch), with Ωᵢ read off residual within-firm moments afterwards.
+  Consistent by §0.2's argument, but a different estimator entirely — outside
+  the EM design of this issue; note it to the maintainer as the non-penalized
+  alternative.
 
 The scaffold, dense-verified E-step/NLL/score, pattern-fixed workspaces, and the
 suffstats/API surface are all remedy-agnostic and carry over unchanged.
