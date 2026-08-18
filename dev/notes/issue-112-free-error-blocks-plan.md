@@ -1,33 +1,49 @@
 # Issue #112 — Free per-firm error covariance (arbitrary Ωᵢ): implementation plan
 
-- **Status:** incomplete scaffold — core dense-verified, EM convergence **not** established (see "Status" note below)
+- **Status:** incomplete — core dense-verified + score verified, but criterion-4 MC shows `σ_a` collapses on a tree (open investigation, see Status)
 - **Issue:** `ulrichwohak/BipartiteGMRF.jl#112`
 - **Baseline:** PR #111 (`error_cov = R`, `error_groups`) on `origin/feat/eta-error-bands` (`ec85427`)
 - **Branch:** `feat/free-error-blocks` (off `ec85427`)
 - **Audience:** implementing agent
 
-## Status (implementation, 2026-08-18, uncommitted on `feat/free-error-blocks`)
+## Status (implementation, 2026-08-18, `feat/free-error-blocks`)
 
-**Done + dense-verified (machine precision):** `FreeBlockStats`, `EMFreeBlocks`;
-`suffstats(…; error_blocks=:free, firm_group=…)` with all rejections (mutex,
-`:raw`, length, unknown mode, `match_id`, duplicate-manager, and multi-firm
-`firm_group`); `assemble_freeblock_precision` (`A'Ω⁻¹A` + `A'Ω⁻¹y`);
-`make_emfree_workspace` (R1 full-pattern seeding); `emfree_e_step`;
-`emfree_nll` (Woodbury form); `solve`/`validate_capability`/`build_emfree_result`;
-`dof()`; ρ≈0 warning + metadata caveats. 24 tests green.
+**Commits:** `65b02c9` scaffold → `64f971f` spectral floor + EM robustness →
+`dd085bf` pattern-alignment fix + MC script.
 
-**Blocked (the issue's real gate):** the EM loop (E-step → Fisher-identity score
-→ safeguarded score step → closed-form M-step) drives to the boundary or crashes
-on small/weakly-identified graphs. The closed-form M-step `Ωᵢ ← S_{ε,i}` yields
-**near-singular blocks** on bridge-heavy/cyclic test graphs, so the next
-`M = K + A'Ω⁻¹A` is ill-conditioned and the 4-term `AᵢM⁻¹Aᵢ'` Gram loses
-positive-definiteness to roundoff. This is the incidental-parameters/weak-
-identification difficulty of §4 manifesting as numerical breakdown — the issue's
-§5.1 claim "free blocks stay interior automatically" does **not** hold empirically.
-Criterion 1 (EM fixed point ↔ dense joint MLE) and criterion 4 (MC centering) are
-therefore not established. Next step requires a decision: constrained/regularized
-fallback (§5.4), a solve-based (not 4-term) `AᵢM⁻¹Aᵢ'`, and/or MC verification
-on a graph shown to identify `σ_a`.
+**Done, dense/score-verified (machine precision):**
+- Data pipeline: `FreeBlockStats`, `suffstats(…; error_blocks=:free, firm_group=…)`
+  with all rejections (mutex, `:raw`, length, unknown mode, `match_id`,
+  duplicate-manager, multi-firm `firm_group`).
+- `assemble_freeblock_precision`, `make_emfree_workspace` (R1 full-pattern seed),
+  `emfree_e_step` (solve-based `AᵢM⁻¹Aᵢ'`), `emfree_nll` (Woodbury) — all match a
+  dense Gaussian reference to ~1e-16.
+- `_emfree_score` (Fisher-identity θ-gradient + ψ chain rule) — **finite-diff
+  verified** against `emfree_nll` to machine precision, so the θ update is not the bug.
+- Workspace pattern-alignment (`_align_to_ws` + `update_precision_values!`) — diagonal
+  `Ω = σ²I` is now evaluable (previously `BIG_NLL`); regression test added.
+- `eig_floor` spectral floor (the well-conditioned-Ω prior, fixed scale, applied
+  before the PD guardrail); monotone-aware convergence; non-convergence + small-|ρ|
+  warnings.
+- `solve`/`validate_capability`/`build_emfree_result`/`dof`; **33 tests green**.
+
+**Open — the blocking finding.** Criterion-4 MC (`dev/mc_identification.jl`,
+caterpillar tree N=60, 25 draws, AR(1)-equicorrelated errors, 25/25 converged) is
+**negative**: `σ̂a`, `σ̂z` collapse to **exactly 0** (`sd = 0`), `σ̂_eps` over-absorbs
+(bias +0.83), `ρ̂` biased to 0.83. This is a *hard* collapse (not the large dispersion
+§4.4 predicts), and it survives a correct score — so it is either (a) a genuine
+property of the free-Ω model on trees (free blocks absorb the latent variance;
+`ρ ≠ 0` alone does **not** suffice empirically), or (b) the EM stuck in the `σa = 0`
+boundary basin from the default init. **Discriminator = criterion 1 (dense joint /
+multi-start optimization), not yet done.**
+
+**Remaining todos:**
+1. **Criterion 1** — dense joint-MLE (or multi-start EM from truth) to decide (a) vs (b).
+2. **Criterion 4** — resolve the collapse; add the bridge-heavy-vs-less graph
+   comparison the criterion requires (currently one tree only).
+3. **Criterion 3** — reduction to `error_groups` (algebraic constrained-mode + MC).
+4. **M-E** — API/docs/README/CHANGELOG, Aqua/JET, `dof` convention reconcile with
+   maintainer.
 ---
 
 ## 1. Scope
