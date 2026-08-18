@@ -274,13 +274,18 @@ function _emiw_theta_step(
     limit::Float64,
 )
     negF = ψ -> begin
-        rho, sa, sz = _emfree_θ_from_ψ(ψ, limit)
-        Q = model_precision(model, rho, sa, sz)
-        GaussianMarkovRandomFields.update_precision_values!(ew.ws_Q, _align_to_ws(Q, nothing, ew.ws_Q))
-        GaussianMarkovRandomFields.ensure_numeric!(ew.ws_Q)
-        ldK = -GaussianMarkovRandomFields.logdet_cov(ew.ws_Q)
-        return -0.5 * ldK + 0.5 * (dot(μ, Q * μ) +
-                                   GaussianMarkovRandomFields.selinv_dot(ew.ws_M, Q))
+        try
+            rho, sa, sz = _emfree_θ_from_ψ(ψ, limit)
+            Q = model_precision(model, rho, sa, sz)
+            GaussianMarkovRandomFields.update_precision_values!(ew.ws_Q, _align_to_ws(Q, nothing, ew.ws_Q))
+            GaussianMarkovRandomFields.ensure_numeric!(ew.ws_Q)
+            ldK = -GaussianMarkovRandomFields.logdet_cov(ew.ws_Q)
+            return -0.5 * ldK + 0.5 * (dot(μ, Q * μ) +
+                                       GaussianMarkovRandomFields.selinv_dot(ew.ws_M, Q))
+        catch e
+            e isa InterruptException && rethrow()
+            return Inf
+        end
     end
     g2 = dot(gψ, gψ)
     g2 > 0 || return ψ0

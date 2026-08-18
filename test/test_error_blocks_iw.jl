@@ -37,6 +37,15 @@ end
         end
     end
 
+    @testset "ψ→θ codec stays strictly inside the ρ domain at saturation" begin
+        # tanh saturates to 1.0 in Float64; ρ must never map to exactly ±limit
+        # (real-data fits hug the NB ceiling and previously threw).
+        for lim in (0.99, 0.26887747717394245), s in (-30.0, 30.0)
+            ρ, _, _ = BipartiteGMRF._emfree_θ_from_ψ([s, 0.0, 0.0], lim)
+            @test abs(ρ) < lim
+        end
+    end
+
     @testset "equicorrelation closed forms match dense" begin
         for (m, r) in ((1, 0.0), (3, 0.4), (4, -0.2), (5, 0.9))
             R = BipartiteGMRF._equicorr(m, r)

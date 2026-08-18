@@ -256,7 +256,12 @@ end
 
 function _emfree_θ_from_ψ(ψ::Vector{Float64}, limit::Float64)
     ρ = limit * tanh(clamp(ψ[1], -25.0, 25.0))
-    return ρ, exp(ψ[2]), exp(ψ[3])
+    # tanh saturates to 1.0 in Float64 well before the ±25 clamp, which would
+    # map ρ to exactly ±limit and trip the strict |ρ| < limit domain check
+    # (observed on real data where the MLE hugs the NB ceiling). Stay strictly
+    # interior.
+    ρmax = limit * (1 - 1e-10)
+    return clamp(ρ, -ρmax, ρmax), exp(ψ[2]), exp(ψ[3])
 end
 
 function _emfree_ψ_from_θ(rho::Float64, sa::Float64, sz::Float64, limit::Float64)
