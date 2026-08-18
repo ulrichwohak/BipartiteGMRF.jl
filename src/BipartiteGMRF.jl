@@ -6,7 +6,7 @@ import Distributions: SufficientStats, fit_mle, params, suffstats
 using FiniteDiff: finite_difference_gradient!
 import GaussianMarkovRandomFields
 import GaussianMarkovRandomFields: LatentModel, precision_matrix, model_name, hyperparameters, constraints
-using LinearAlgebra: Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, issuccess, issymmetric, logdet, mul!, norm
+using LinearAlgebra: Symmetric, SymTridiagonal, I, cholesky, diag, dot, eigen, issuccess, issymmetric, logdet, mul!, norm, tr
 using LinearSolve: CHOLMODFactorization
 import Optim:
     LBFGS,
@@ -37,7 +37,8 @@ export AbstractBipartiteModel,
 # Solver types
 export AbstractGMRFSolver,
     HutchSLQ,
-    ExactCholesky
+    ExactCholesky,
+    EMFreeBlocks
 
 # Sufficient statistics (extends the Distributions.jl fit_mle/suffstats API)
 export SufficientStats,
@@ -92,6 +93,7 @@ include("linalg/slq.jl")
 include("solvers/common.jl")
 include("solvers/exact.jl")
 include("solvers/hutch.jl")
+include("solvers/emfreeblocks.jl")
 include("decomposition/model.jl")
 include("decomposition/fitted.jl")
 include("covariance/operator.jl")

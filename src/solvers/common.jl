@@ -10,6 +10,12 @@ function validate_capability(model::AbstractBipartiteModel, stats::BipartiteGMRF
        !(solver isa ExactCholesky)
         throw(ArgumentError("error_groups currently supports only the ExactCholesky solver."))
     end
+    if stats.free_blocks !== nothing
+        solver isa EMFreeBlocks ||
+            throw(ArgumentError("error_blocks=:free requires the EMFreeBlocks solver."))
+        model isa BipartiteVarianceStableModel ||
+            throw(ArgumentError("error_blocks=:free requires the BipartiteVarianceStableModel."))
+    end
     return nothing
 end
 
@@ -192,6 +198,35 @@ function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothi
     )
 end
 
+function build_emfree_result(fit, solver::EMFreeBlocks, fix_rho::Union{Nothing,Float64})
+    base = fit_result_metadata(fit.model, fit.rho, fix_rho)
+    return GMRFResult(
+        fit.rho,
+        fit.sigma_a,
+        fit.sigma_z,
+        fit.sigma_epsilon,
+        fit.rho_eps,
+        fit.beta,
+        fit.nll,
+        fit.converged,
+        fit.iterations,
+        fit.obj_evals,
+        fit.optimization_time,
+        fit.model,
+        fit.stats,
+        solver,
+        fit.theta_unconstrained,
+        merge(base, (
+            sigma_epsilon_mean = fit.sigma_epsilon,
+            bar_sigma2 = fit.bar_sigma2,
+            free_block_sizes = fit.stats.free_blocks.sizes,
+            free_block_dof = fit.stats.free_blocks.dof_blocks,
+            sigma_a_network_identified = true,
+            unidentified_at_rho_zero = abs(fit.rho) < 1e-8,
+        )),
+    )
+end
+
 function optimize_problem(
     model::AbstractBipartiteModel,
     stats::BipartiteGMRFStats,
@@ -276,6 +311,7 @@ function optimize_problem(
         optimization_time = elapsed,
         theta_unconstrained = pfull,
         model = model,
+
         stats = final_stats,
         omega = n_omega > 0 ? exp.(pfull[5:4+n_omega]) : nothing,
         omega_sizes = n_omega > 0 ? stats.error_classes.sizes : nothing,
@@ -304,4 +340,18 @@ function solve(
 )
     fit = optimize_problem(model, stats, solver; fix_rho=fix_rho, seed=seed, verbose=verbose)
     return build_gmrf_result(fit, solver, fix_rho)
+end
+function solve(
+    model::BipartiteVarianceStableModel,
+    stats::BipartiteGMRFStats,
+    solver::EMFreeBlocks;
+    fix_rho::Union{Nothing,Float64}=nothing,
+    seed::Int=42,
+    verbose::Bool=false,
+)
+    fix_rho === nothing ||
+        throw(ArgumentError("fix_rho is not yet supported for EMFreeBlocks."))
+    validate_capability(model, stats, solver)
+    fit = optimize_emfree(model, stats, solver; verbose=verbose)
+    return build_emfree_result(fit, solver, fix_rho)
 end

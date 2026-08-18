@@ -672,3 +672,68 @@ function build_grouped_V_stats(
           vtv_nzvals = vtv_nzvals, projected = projected, ydot = ydot)
     return design, K, ec, (G = G, Vg = Vg, yg = yg, class_idx = class_idx, src = src)
 end
+
+# ─── Free per-firm error blocks: edge-level, never collapsed ─────────────────
+
+"""
+    build_freeblock_V_stats(f_obs, w_obs, y_obs, firm_group, n_firms, n_workers)
+
+Design products for `error_blocks=:free`: observations stay at edge level (the
+returns of [`observation_rows`](@ref) with no `match_ids`), and each firm's
+rows form one free PD error block `Ω_i` estimated by EM. Blocks are discovered
+from `firm_group` (first-appearance order), never parametrized.
+
+Returns `(V, yv, block_of, sizes, distinct, dof_blocks)`. Rejects a block whose
+row count exceeds its number of distinct managers (`m_i > d_i`): a repeated
+firm–manager pair makes `A_i` rank-deficient and the unconstrained free-block
+M-step undefined (issue #112 §5.4).
+"""
+function build_freeblock_V_stats(
+    f_obs::Vector{Int},
+    w_obs::Vector{Int},
+    y_obs::Vector{Float64},
+    firm_group::Vector{Int},
+    n_firms::Int,
+    n_workers::Int,
+)
+    V, yv, _ = observation_rows(f_obs, w_obs, y_obs, nothing, n_firms, n_workers)
+    K = length(yv)
+
+    gpos = Dict{Int,Int}()
+    members = Vector{Vector{Int}}()
+    for s in 1:K
+        g = get!(gpos, firm_group[s]) do
+            push!(members, Int[])
+            length(members)
+        end
+        push!(members[g], s)
+    end
+    B = length(members)
+    block_of = zeros(Int, K)
+    sizes = Vector{Int}(undef, B)
+    distinct = Vector{Int}(undef, B)
+    dof_blocks = 0
+    for i in 1:B
+        rows = members[i]
+        m_i = length(rows)
+        d_i = length(unique(w_obs[rows]))
+        f_i = unique(f_obs[rows])
+        length(f_i) == 1 || throw(ArgumentError(
+            "error_blocks=:free requires each firm_group value to span a single firm; " *
+            "firm_group value $(firm_group[first(rows)]) covers firms $(f_i) " *
+            "(firm_group must be the firm id per row)."
+        ))
+        sizes[i] = m_i
+        distinct[i] = d_i
+        dof_blocks += m_i * (m_i + 1) ÷ 2
+        for s in rows
+            block_of[s] = i
+        end
+        m_i == d_i || throw(ArgumentError(
+            "error_blocks=:free requires distinct managers within each firm block; " *
+            "firm_group value $(firm_group[first(rows)]) has $(m_i) rows but only " *
+            "$(d_i) distinct managers (repeated firm–manager pair)."
+        ))
+    end
+    return V, yv, block_of, sizes, distinct, dof_blocks
+end

@@ -377,6 +377,30 @@ struct ExactCholesky <: AbstractGMRFSolver
     end
 end
 
+"""
+    EMFreeBlocks(; max_iter=200, ftol=1e-8, newton_damp=0.9, abstol=1e-4)
+
+EM solver for the free per-firm error-covariance model (`error_blocks=:free`).
+Alternates a closed-form M-step on the per-firm blocks `Ω_i` with a damped
+Newton step on the GMRF hyperparameters `(ρ, σ_a, σ_z)`. Requires the
+`BipartiteVarianceStableModel` (the only model whose precision `K` carries the
+cross-firm structure that identifies `σ_a` under free `Ω_i`).
+"""
+struct EMFreeBlocks <: AbstractGMRFSolver
+    max_iter::Int
+    ftol::Float64
+    newton_damp::Float64
+    abstol::Float64
+    function EMFreeBlocks(; max_iter::Int=200, ftol::Float64=1e-8,
+                          newton_damp::Float64=0.9, abstol::Float64=1e-4)
+        max_iter > 0 || throw(ArgumentError("max_iter must be positive."))
+        ftol > 0 || throw(ArgumentError("ftol must be positive."))
+        0.0 < newton_damp <= 1.0 || throw(ArgumentError("newton_damp must be in (0, 1]."))
+        abstol > 0 || throw(ArgumentError("abstol must be positive."))
+        new(max_iter, ftol, newton_damp, abstol)
+    end
+end
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Sufficient statistics
 # ═══════════════════════════════════════════════════════════════════════════
@@ -457,6 +481,24 @@ struct ErrorClassStats
 end
 
 """
+Per-firm free error-covariance blocks for `suffstats(...; error_blocks=:free,
+firm_group=...)`. Observations stay at edge level; each firm's rows form one
+block whose PD error covariance `Ω_i` is estimated by EM (never collapsed,
+never read from a matrix). `block_of[s]` maps observation row `s` to its block;
+`distinct[i]` is the number of distinct managers in block `i`, which drives the
+duplicate-row (rank-deficiency) rejection: the free-`Ω_i` M-step exists only
+when `m_i == d_i`.
+"""
+struct FreeBlockStats
+    V::SparseMatrixCSC{Float64,Int}   # edge-level design rows (K × n), NOT collapsed
+    y::Vector{Float64}                # edge-level standardized outcomes (K)
+    block_of::Vector{Int}             # observation row s → block index (1..B)
+    sizes::Vector{Int}                # m_i per block
+    distinct::Vector{Int}             # d_i (distinct managers) per block
+    dof_blocks::Int                   # Σ_i m_i(m_i+1)/2
+end
+
+"""
     BipartiteGMRFStats <: Distributions.SufficientStats
 
 Sufficient statistics for bipartite GMRF maximum-likelihood estimation.
@@ -488,6 +530,7 @@ struct BipartiteGMRFStats <: SufficientStats
 
     mean_stats::Union{Nothing,MeanStats}
     error_classes::Union{Nothing,ErrorClassStats}
+    free_blocks::Union{Nothing,FreeBlockStats}
     metadata::NamedTuple
 end
 

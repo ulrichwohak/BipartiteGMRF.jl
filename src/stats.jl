@@ -85,6 +85,8 @@ function suffstats(
     error_cov::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
     error_groups::Union{Nothing,AbstractVector{<:Integer}}=nothing,
     error_group_cap::Integer=8,
+    error_blocks::Union{Nothing,Symbol}=nothing,
+    firm_group::Union{Nothing,AbstractVector{<:Integer}}=nothing,
 ) where {M<:AbstractBipartiteModel}
     model_adjacency in (:binary, :counts) ||
         throw(ArgumentError("model_adjacency must be :binary or :counts; got $(model_adjacency)."))
@@ -111,6 +113,22 @@ function suffstats(
             throw(ArgumentError("error_groups must have the same length as y."))
         error_group_cap >= 2 ||
             throw(ArgumentError("error_group_cap must be at least 2."))
+    end
+    if error_blocks !== nothing
+        error_blocks == :free ||
+            throw(ArgumentError("error_blocks must be :free; got $(error_blocks)."))
+        error_cov === nothing ||
+            throw(ArgumentError("error_blocks and error_cov are mutually exclusive."))
+        error_groups === nothing ||
+            throw(ArgumentError("error_blocks and error_groups are mutually exclusive."))
+        weighting.observations == :raw ||
+            throw(ArgumentError("error_blocks=:free currently supports only Weighting(observations=:raw)."))
+        firm_group !== nothing ||
+            throw(ArgumentError("error_blocks=:free requires firm_group (firm id per row)."))
+        length(firm_group) == length(y) ||
+            throw(ArgumentError("firm_group must have the same length as y."))
+        match_id === nothing ||
+            throw(ArgumentError("error_blocks=:free does not yet support match_id."))
     end
 
     length(y) > 0 || throw(ArgumentError("Empty dataset."))
@@ -207,6 +225,7 @@ function suffstats(
     obs = weighting.observations
     banded_aux = nothing
     grouped_aux = nothing
+    free_aux = nothing
     block = if obs == :raw
         if error_cov !== nothing
             R_obs = SparseMatrixCSC{Float64,Int}(sparse(error_cov)[obs_mask, obs_mask])
@@ -239,6 +258,23 @@ function suffstats(
                 # parameter-dependent and assembled per evaluation in
                 # objective_stats; the stored weights are the omega = 1 point.
                 weights = trivial_weight_stats(n_groups),
+                within_ss = 0.0,
+                within_df = 0,
+                rho_eps_likelihood = nothing,
+            )
+        elseif error_blocks !== nothing
+            blocks_obs = Int.(collect(firm_group))[obs_mask]
+            Vfb, yfb, block_of, sz, dsz, dof_b =
+                build_freeblock_V_stats(f_obs, w_obs, y_obs_scaled, blocks_obs, n_f, n_w)
+            free_aux = (V = Vfb, y = yfb, block_of = block_of, sizes = sz,
+                        distinct = dsz, dof_blocks = dof_b)
+            (
+                K = length(yfb),
+                base = EdgeData(f_obs, w_obs, y_obs_scaled, ones(Int, personyear_rows)),
+                # The iid edge-level design is only a placeholder; the EM reads
+                # V and y from `free_blocks` directly.
+                design = build_V_stats(f_obs, w_obs, y_obs_scaled, n_f, n_w),
+                weights = trivial_weight_stats(length(yfb)),
                 within_ss = 0.0,
                 within_df = 0,
                 rho_eps_likelihood = nothing,
@@ -340,11 +376,16 @@ function suffstats(
         graph_only_edges = nnz(A_prior) - n_edges,
         correlated_errors = error_cov !== nothing,
         error_groups = error_groups !== nothing,
+        error_blocks = error_blocks !== nothing,
     )
 
     error_classes = grouped_aux === nothing ? nothing :
         ErrorClassStats(grouped_aux.sizes, grouped_aux.counts, grouped_aux.vtv_nzvals,
                         grouped_aux.projected, grouped_aux.ydot, grouped_mean)
+
+    free_blocks = free_aux === nothing ? nothing :
+        FreeBlockStats(free_aux.V, free_aux.y, free_aux.block_of, free_aux.sizes,
+                       free_aux.distinct, free_aux.dof_blocks)
 
     return BipartiteGMRFStats(
         block.design,
@@ -366,6 +407,7 @@ function suffstats(
         block.weights,
         mean_stats,
         error_classes,
+        free_blocks,
         metadata,
     )
 end

@@ -147,6 +147,13 @@ counts four; a `fix_rho` fit counts one fewer, and a jointly estimated
 `rho_eps=:estimate` counts one more. Parameters held fixed do not count.
 """
 function dof(result::GMRFResult)
+    fb = result.stats.free_blocks
+    if fb !== nothing
+        # (ρ, σ_a, σ_z) + the free block entries; `bar σ²` is a pinned trace, not a
+        # free parameter (issue #112 §6). Singleton blocks still contribute their
+        # diagonal entry, which plays the scale role the iid σ_ε does.
+        return 3 + fb.dof_blocks + (result.beta === nothing ? 0 : length(result.beta))
+    end
     k = 4
     get(result.metadata, :fix_rho, nothing) === nothing || (k -= 1)
     w = result.stats.weighting
