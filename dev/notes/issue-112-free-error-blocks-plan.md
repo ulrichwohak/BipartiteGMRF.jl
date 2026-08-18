@@ -1,6 +1,9 @@
 # Issue #112 — Free per-firm error covariance (arbitrary Ωᵢ): implementation plan
 
-- **Status:** incomplete — core dense-verified + score verified, but criterion-4 MC shows `σ_a` collapses on a tree (open investigation, see Status)
+- **Status:** blocked on a model-level decision — criterion 1 resolved: the
+  unconstrained free-Ω marginal likelihood is **unbounded** (MLE does not exist);
+  the MC collapse is the true optimum, not an EM bug. See §0. Needs maintainer
+  decision on the remedy before criteria 3/4 can be finished.
 - **Issue:** `ulrichwohak/BipartiteGMRF.jl#112`
 - **Baseline:** PR #111 (`error_cov = R`, `error_groups`) on `origin/feat/eta-error-bands` (`ec85427`)
 - **Branch:** `feat/free-error-blocks` (off `ec85427`)
@@ -27,23 +30,75 @@
   warnings.
 - `solve`/`validate_capability`/`build_emfree_result`/`dof`; **33 tests green**.
 
-**Open — the blocking finding.** Criterion-4 MC (`dev/mc_identification.jl`,
-caterpillar tree N=60, 25 draws, AR(1)-equicorrelated errors, 25/25 converged) is
-**negative**: `σ̂a`, `σ̂z` collapse to **exactly 0** (`sd = 0`), `σ̂_eps` over-absorbs
-(bias +0.83), `ρ̂` biased to 0.83. This is a *hard* collapse (not the large dispersion
-§4.4 predicts), and it survives a correct score — so it is either (a) a genuine
-property of the free-Ω model on trees (free blocks absorb the latent variance;
-`ρ ≠ 0` alone does **not** suffice empirically), or (b) the EM stuck in the `σa = 0`
-boundary basin from the default init. **Discriminator = criterion 1 (dense joint /
-multi-start optimization), not yet done.**
+**Resolved (2026-08-18) — criterion 1 discriminator ran; answer is (a), in the
+strongest form.** See §0 below. The earlier MC collapse (`dev/mc_identification.jl`,
+caterpillar N=60, 25 draws: `σ̂a = σ̂z = 0` exactly, `σ̂_eps` bias +0.83) is the
+**correct floored optimum** of an unbounded likelihood, not an EM basin artifact.
 
-**Remaining todos:**
-1. **Criterion 1** — dense joint-MLE (or multi-start EM from truth) to decide (a) vs (b).
-2. **Criterion 4** — resolve the collapse; add the bridge-heavy-vs-less graph
-   comparison the criterion requires (currently one tree only).
-3. **Criterion 3** — reduction to `error_groups` (algebraic constrained-mode + MC).
-4. **M-E** — API/docs/README/CHANGELOG, Aqua/JET, `dof` convention reconcile with
-   maintainer.
+**Remaining todos (re-scoped, see §0.3):**
+1. **Decision with maintainer** — pick the remedy (recommended: inverse-Wishart
+   penalized EM / MAP). Post the §0 finding on issue #112. Blocking.
+2. **Implement the remedy** (small delta on the existing EM; closed-form M-step
+   preserved under IW prior).
+3. **Criterion 4** — rerun MC with the remedy (tree + bridge-heavy comparison).
+4. **Criterion 3** — reduction to `error_groups` (algebraic constrained-mode + MC);
+   valid regardless of the remedy, can proceed in parallel.
+5. **M-E** — API/docs/README/CHANGELOG, Aqua/JET, `dof` convention reconcile with
+   maintainer (a penalty changes the honest `dof` story too).
+
+---
+
+## 0. Criterion-1 finding: the unconstrained free-Ω likelihood is unbounded
+
+**Probe:** `dev/probe_unbounded.jl` (dense marginal NLL, no EM in the loop).
+Walk the degenerate ray `σ_a = σ_z = s → 0`, `Ωᵢ = yᵢyᵢ' + δI`, `δ → 0`
+(rank-one blocks that reproduce each firm's data exactly at `α = 0`).
+
+**Result:** the dense NLL **diverges to −∞** along the ray, at exactly the
+predicted rate `½ Σᵢ(mᵢ−1)·ln 10` per decade of δ (predicted 3.4539, observed
+3.4539–3.4735 on the 5-obs toy with blocks {3,2}). `emfree_nll` tracks the dense
+reference to all printed digits, re-confirming the implementation. Control: with
+`σ_a = σ_z` held at 0.7, `δ → 0` alone is **bounded** — the divergence needs the
+joint ray (the latent term `AK⁻¹A'` otherwise keeps Σ full-rank).
+
+**Mechanism (general, not tree-specific):** for any block with `mᵢ ≥ 2`,
+`logdet(yᵢyᵢ' + δI) = log(‖yᵢ‖² + δ) + (mᵢ−1)log δ → −∞` while the quadratic
+form `yᵢ'Ωᵢ⁻¹yᵢ → 1`. So the sup of the likelihood is +∞ whenever **any** firm
+has ≥ 2 observations. This is the classic Kiefer–Wolfowitz-type degeneracy
+(unbounded likelihood with per-unit free covariances) — the issue's §5.1(ii)
+intuition ("each Ω̂ᵢ terrible, pooled traces fine") understated it: the joint
+MLE **does not exist**, so there is nothing to pool.
+
+**Consequences:**
+- The `eig_floor` is not a numerical guardrail; it is the only thing making the
+  optimum finite. With floor `λ_lo`, the maximum sits at the degenerate corner
+  `σ_a = σ_z = 0`, `Ωᵢ ≈ yᵢyᵢ' + λ_lo I` (probe: NLL ≈ −9.9 at `δ = 10⁻³` vs
+  1.7 at an interior reference). The EM found the true optimum; the score, the
+  E-step, and the convergence logic are all working as designed.
+- `ρ ≠ 0` does **not** rescue identification: the divergence is along Ω, and no
+  finite `ρ` term can offset a −∞ logdet.
+- Criterion 4 as originally stated (centering at truth) **cannot pass** for the
+  unconstrained model on any graph where firms have ≥ 2 edges.
+
+### 0.3 Remedies (decision for maintainer; recommend A)
+
+- **A. Penalized EM / MAP (recommended).** Inverse-Wishart prior per block,
+  `Ωᵢ ~ IW(ν, Ψ)` with pooled scale `Ψ = τ·ω̄I` (ω̄ = pooled mean variance,
+  either fixed from an iid pre-fit or updated as an outer EM). M-step stays
+  closed-form: `Ωᵢ ← (Sᵢ + Ψ)/(1 + (ν + mᵢ + 1)/mᵢ)`-type shrinkage (exact
+  formula: `(mᵢ·Sᵢ_avg + Ψ)/(mᵢ + ν + mᵢ + 1)` per the IW-MAP identity — write
+  it once against a dense reference as usual). Bounded objective, estimator
+  well-defined, `ν/τ` are explicit user knobs, reduces to today's code at
+  `ν = 0` modulo the floor. Report the *penalized* NLL and say so in metadata.
+- **B. Parametric block families** (equicorrelated/AR(1) per firm or size
+  class): bounded and interpretable, but it is a different rung — largely
+  subsumed by `error_groups`, and abandons "arbitrary Ωᵢ".
+- **C. Keep unconstrained + floor and document the collapse:** the estimator is
+  then useless for variance decomposition (σ̂'s are 0 by construction). Reject.
+
+The scaffold, dense-verified E-step/NLL/score, pattern-fixed workspaces, and the
+suffstats/API surface are all remedy-agnostic and carry over unchanged.
+
 ---
 
 ## 1. Scope
@@ -207,7 +262,8 @@ is unchanged.
 3. **Reduction to `error_groups` (criterion 3) — re-scoped.** See §8.1.
 4. **Identification MC gate (criterion 4).** Fixed graph, redraw `a,z,ε` many times →
    `(ρ̂, σ̂a, σ̂z)` centered at truth; `σ̂a` dispersion grows on bridge-heavy graphs.
-   Script/experiment, **not** a unit test.
+   Script/experiment, **not** a unit test. **Note (§0): can only pass under the
+   chosen remedy (penalized EM); the unconstrained estimator provably collapses.**
 5. **PD + rank-def guardrails (criteria 5, 6).** Cholesky failure throws with firm
    idx/mᵢ/dᵢ; duplicated-manager block rejected at `suffstats`/`fit_mle`.
 6. **ρ=0 behavior (criterion 7).** Warn + set `metadata.unidentified_at_rho_zero` /
