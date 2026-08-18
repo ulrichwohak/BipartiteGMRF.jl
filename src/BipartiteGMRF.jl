@@ -23,6 +23,7 @@ import Random
 using Random: AbstractRNG, MersenneTwister, rand, randn
 using SparseArrays: SparseMatrixCSC, findnz, nnz, nonzeros, nzrange, rowvals, sparse, spdiagm, spzeros
 import StatsAPI: StatisticalModel, aic, bic, coef, coefnames, dof, isfitted, islinear, loglikelihood, nobs
+using SpecialFunctions: digamma, loggamma
 using Statistics: mean, std
 
 # Model types (LatentModel subtypes)
@@ -38,7 +39,8 @@ export AbstractBipartiteModel,
 export AbstractGMRFSolver,
     HutchSLQ,
     ExactCholesky,
-    EMFreeBlocks
+    EMFreeBlocks,
+    EMIWBlocks
 
 # Sufficient statistics (extends the Distributions.jl fit_mle/suffstats API)
 export SufficientStats,
@@ -94,6 +96,7 @@ include("solvers/common.jl")
 include("solvers/exact.jl")
 include("solvers/hutch.jl")
 include("solvers/emfreeblocks.jl")
+include("solvers/emiwblocks.jl")
 include("decomposition/model.jl")
 include("decomposition/fitted.jl")
 include("covariance/operator.jl")

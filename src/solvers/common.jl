@@ -11,8 +11,8 @@ function validate_capability(model::AbstractBipartiteModel, stats::BipartiteGMRF
         throw(ArgumentError("error_groups currently supports only the ExactCholesky solver."))
     end
     if stats.free_blocks !== nothing
-        solver isa EMFreeBlocks ||
-            throw(ArgumentError("error_blocks=:free requires the EMFreeBlocks solver."))
+        solver isa Union{EMFreeBlocks,EMIWBlocks} ||
+            throw(ArgumentError("error_blocks=:free requires the EMIWBlocks (or EMFreeBlocks) solver."))
         model isa BipartiteVarianceStableModel ||
             throw(ArgumentError("error_blocks=:free requires the BipartiteVarianceStableModel."))
     end
@@ -227,6 +227,42 @@ function build_emfree_result(fit, solver::EMFreeBlocks, fix_rho::Union{Nothing,F
     )
 end
 
+function build_emiw_result(fit, solver::EMIWBlocks, fix_rho::Union{Nothing,Float64})
+    base = fit_result_metadata(fit.model, fit.rho, fix_rho)
+    return GMRFResult(
+        fit.rho,
+        fit.sigma_a,
+        fit.sigma_z,
+        fit.sigma_epsilon,
+        fit.rho_eps,
+        fit.beta,
+        fit.nll,
+        fit.converged,
+        fit.iterations,
+        fit.obj_evals,
+        fit.optimization_time,
+        fit.model,
+        fit.stats,
+        solver,
+        fit.theta_unconstrained,
+        merge(base, (
+            # integrated-likelihood free blocks: Ω_i marginalized out under
+            # IW(δ + m_i − 1, ∝ φR(r)); nll is −ELBO (a bound, not the exact
+            # marginal NLL — see EMIWBlocks docs).
+            omega_bar = fit.omega_bar,          # mean error variance = sigma_epsilon²
+            error_scale_phi = fit.phi,
+            error_corr_r = fit.r,
+            t_dof_delta = fit.delta,
+            u_bar = fit.u_bar,
+            elbo = -fit.nll,
+            objective = :elbo,
+            free_block_sizes = fit.stats.free_blocks.sizes,
+            sigma_a_network_identified = true,
+            unidentified_at_rho_zero = abs(fit.rho) < 1e-8,
+        )),
+    )
+end
+
 function optimize_problem(
     model::AbstractBipartiteModel,
     stats::BipartiteGMRFStats,
@@ -354,4 +390,18 @@ function solve(
     validate_capability(model, stats, solver)
     fit = optimize_emfree(model, stats, solver; verbose=verbose)
     return build_emfree_result(fit, solver, fix_rho)
+end
+function solve(
+    model::BipartiteVarianceStableModel,
+    stats::BipartiteGMRFStats,
+    solver::EMIWBlocks;
+    fix_rho::Union{Nothing,Float64}=nothing,
+    seed::Int=42,
+    verbose::Bool=false,
+)
+    fix_rho === nothing ||
+        throw(ArgumentError("fix_rho is not yet supported for EMIWBlocks."))
+    validate_capability(model, stats, solver)
+    fit = optimize_emiw(model, stats, solver; verbose=verbose)
+    return build_emiw_result(fit, solver, fix_rho)
 end

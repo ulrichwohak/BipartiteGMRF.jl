@@ -149,6 +149,14 @@ counts four; a `fix_rho` fit counts one fewer, and a jointly estimated
 function dof(result::GMRFResult)
     fb = result.stats.free_blocks
     if fb !== nothing
+        if result.solver isa EMIWBlocks
+            # Integrated likelihood: the Ω_i are marginalized out, so only the
+            # pooled mixing-law hyperparameters count — (ρ, σ_a, σ_z) + φ + the
+            # estimated members of (r, δ).
+            k = 4 + (result.solver.r == :estimate ? 1 : 0) +
+                (result.solver.delta == :estimate ? 1 : 0)
+            return k + (result.beta === nothing ? 0 : length(result.beta))
+        end
         # (ρ, σ_a, σ_z) + the free block entries; `bar σ²` is a pinned trace, not a
         # free parameter (issue #112 §6). Singleton blocks still contribute their
         # diagonal entry, which plays the scale role the iid σ_ε does.

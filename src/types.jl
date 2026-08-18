@@ -407,6 +407,62 @@ struct EMFreeBlocks <: AbstractGMRFSolver
     end
 end
 
+"""
+    EMIWBlocks(; max_iter=500, ftol=1e-8, delta=:estimate, r=:estimate)
+
+Integrated-likelihood solver for the free per-firm error-covariance model
+(`error_blocks=:free`): the per-firm blocks `Ω_i` are **nuisance realizations,
+never estimated** — they are integrated out under an inverse-Wishart population
+law `Ω_i ~ IW(δ + m_i − 1, scale ∝ Ψ_{m_i})` with size-free parameters, so each
+firm's marginal error block is multivariate Student-t with the same tail
+parameter `δ` regardless of degree (the family is projective across block
+sizes). `Ψ_m = φ·[(1−r)I + r𝟙𝟙']` is built at each size from the pooled scale
+`φ` and the mean within-firm error correlation `r`. Estimated hyperparameters:
+`(ρ, σ_a, σ_z, φ, r, δ)` — all finite, all pooled; the profile-MLE degeneracy
+of the unconstrained free-Ω model (issue #112 §0) does not arise because a
+proper mixing law puts vanishing mass near singular `Ω_i`.
+
+Equivalently (scalar scale-mixture): `u_i ~ Gamma(δ/2, δ/2)` iid per firm and
+`ε_i | u_i ~ N(0, Ψ_{m_i}/u_i)`. Estimation is variational EM under the
+mean-field family `q(α)·∏_i q(u_i)` (the exact joint E-step is intractable
+because α couples the firms through the network); the reported objective is
+the ELBO, a lower bound on the integrated log-likelihood, monotone across
+iterations by construction.
+
+- `delta` — Student-t degrees of freedom: `:estimate` (default) or a fixed
+  `Float64 > 2`. `δ → ∞` recovers fixed equal blocks; small `δ` means strongly
+  heterogeneous firms. Must exceed 2 so the mean error variance
+  `ω̄ = φ·δ/(δ−2)` (reported as `sigma_epsilon²`) is finite.
+- `r` — mean within-firm error correlation: `:estimate` (default) or a fixed
+  `Float64` in `(−1/(max mᵢ − 1), 1)`.
+"""
+struct EMIWBlocks <: AbstractGMRFSolver
+    max_iter::Int
+    ftol::Float64
+    delta::Union{Symbol,Float64}
+    r::Union{Symbol,Float64}
+    function EMIWBlocks(; max_iter::Int=500, ftol::Float64=1e-8,
+                        delta::Union{Symbol,Real}=:estimate,
+                        r::Union{Symbol,Real}=:estimate)
+        max_iter > 0 || throw(ArgumentError("max_iter must be positive."))
+        ftol > 0 || throw(ArgumentError("ftol must be positive."))
+        if delta isa Symbol
+            delta == :estimate ||
+                throw(ArgumentError("delta must be :estimate or a Float64 > 2."))
+        else
+            delta > 2 || throw(ArgumentError("delta must exceed 2 (finite mean error variance)."))
+        end
+        if r isa Symbol
+            r == :estimate ||
+                throw(ArgumentError("r must be :estimate or a Float64 in (-1, 1)."))
+        else
+            -1 < r < 1 || throw(ArgumentError("r must lie in (-1, 1)."))
+        end
+        new(max_iter, ftol, delta isa Symbol ? delta : Float64(delta),
+            r isa Symbol ? r : Float64(r))
+    end
+end
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Sufficient statistics
 # ═══════════════════════════════════════════════════════════════════════════
