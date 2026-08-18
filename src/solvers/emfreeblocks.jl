@@ -123,6 +123,23 @@ function _floor_spectrum(S::Matrix{Float64}, λ_lo::Float64)
     return Matrix(Symmetric((F.vectors .* transpose(λc)) * F.vectors'))
 end
 
+# Values of `Q + P` read onto `ws`'s fixed pattern, as an nzval vector for
+# `update_precision_values!`. Keeps the workspace pattern stable even when a
+# diagonal Ω (or ρ → 0) would otherwise drop entries from `Q + P` and trip the
+# exact-pattern check in `update_precision!`.
+function _align_to_ws(Q::SparseMatrixCSC{Float64,Int}, P::Union{Nothing,SparseMatrixCSC{Float64,Int}},
+                      ws::GaussianMarkovRandomFields.GMRFWorkspace)
+    n = size(Q, 1)
+    vals = zeros(Float64, nnz(ws.Q))
+    for j in 1:n
+        for p in nzrange(ws.Q, j)
+            i = ws.Q.rowval[p]
+            vals[p] = Q[i, j] + (P === nothing ? 0.0 : P[i, j])
+        end
+    end
+    return vals
+end
+
 function make_emfree_workspace(model::AbstractBipartiteModel, fb::FreeBlockStats, nf::Int, nw::Int)
     # Seed ω_M with the FULL free-Ω pattern (reference blocks carry full
     # within-firm off-diagonal support), so the symbolic factorization covers
@@ -171,9 +188,9 @@ function emfree_e_step(
 )
     P, b = assemble_freeblock_precision(fb, Ωs, nf, nw)
     Q = model_precision(model, rho, sa, sz)
-    GaussianMarkovRandomFields.update_precision!(ew.ws_Q, Q)
+    GaussianMarkovRandomFields.update_precision_values!(ew.ws_Q, _align_to_ws(Q, nothing, ew.ws_Q))
     GaussianMarkovRandomFields.ensure_numeric!(ew.ws_Q)
-    GaussianMarkovRandomFields.update_precision!(ew.ws_M, Q + P)
+    GaussianMarkovRandomFields.update_precision_values!(ew.ws_M, _align_to_ws(Q, P, ew.ws_M))
     GaussianMarkovRandomFields.ensure_numeric!(ew.ws_M)
     alpha = GaussianMarkovRandomFields.workspace_solve(ew.ws_M, b)
 
@@ -211,9 +228,9 @@ function emfree_nll(
     try
         P, b = assemble_freeblock_precision(fb, Ωs, nf, nw)
         Q = model_precision(model, rho, sa, sz)
-        GaussianMarkovRandomFields.update_precision!(ew.ws_Q, Q)
+        GaussianMarkovRandomFields.update_precision_values!(ew.ws_Q, _align_to_ws(Q, nothing, ew.ws_Q))
         GaussianMarkovRandomFields.ensure_numeric!(ew.ws_Q)
-        GaussianMarkovRandomFields.update_precision!(ew.ws_M, Q + P)
+        GaussianMarkovRandomFields.update_precision_values!(ew.ws_M, _align_to_ws(Q, P, ew.ws_M))
         GaussianMarkovRandomFields.ensure_numeric!(ew.ws_M)
 
         logdet_Ω = 0.0

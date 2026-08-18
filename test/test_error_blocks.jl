@@ -109,6 +109,26 @@
         @test Matrix(P) ≈ (1 / σ²) .* Matrix(iid) atol = 1e-12
         @test b ≈ (1 / σ²) .* ss.design.projected_y atol = 1e-12
     end
+
+    @testset "diagonal Ω = σ²I is evaluable in emfree_nll (pattern alignment)" begin
+        ss = suffstats(BipartiteVarianceStableModel, f, w, y;
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_blocks = :free, firm_group = f)
+        fb = ss.free_blocks
+        nf, nw = ss.N_firms, ss.N_workers
+        model = BipartiteVarianceStableModel(ss.A_prior; rho_limit = 0.99)
+        ew = BipartiteGMRF.make_emfree_workspace(model, fb, nf, nw)
+        σ² = 0.16
+        Ωs = [σ² .* Matrix{Float64}(LinearAlgebra.I, m, m) for m in fb.sizes]
+        rho, sa, sz = 0.3, 0.7, 0.6
+        nll = BipartiteGMRF.emfree_nll(model, fb, ew, Ωs, rho, sa, sz, nf, nw)
+        @test isfinite(nll)   # was BIG_NLL (1e30) before pattern alignment
+        A = Matrix(fb.V)
+        Q = Matrix(BipartiteGMRF.model_precision(model, rho, sa, sz))
+        V = A * inv(Q) * A' + σ² * LinearAlgebra.I
+        nll_dense = 0.5 * (logdet(Symmetric(V)) + dot(fb.y, V \ fb.y))
+        @test nll ≈ nll_dense atol = 1e-8 rtol = 1e-8
+    end
     @testset "spectral floor clamps a near-singular block" begin
         # one slightly-negative eigenvalue → must be floored up to λ_lo
         S = [-0.01 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 2.0]
