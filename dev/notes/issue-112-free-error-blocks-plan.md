@@ -1,9 +1,10 @@
 # Issue #112 — Free per-firm error covariance (arbitrary Ωᵢ): implementation plan
 
-- **Status:** blocked on a model-level decision — criterion 1 resolved: the
-  unconstrained free-Ω marginal likelihood is **unbounded** (MLE does not exist);
-  the MC collapse is the true optimum, not an EM bug. See §0. Needs maintainer
-  decision on the remedy before criteria 3/4 can be finished.
+- **Status:** remedy E (integrated likelihood, IW mixing) **chosen and
+  implemented** — `EMIWBlocks` (variational EM, `src/solvers/emiwblocks.jl`),
+  41 dedicated tests green, full suite green, and the criterion-4 MC that
+  collapsed under the profile MLE now **centers** on both graphs (see §0.4).
+  Remaining: criterion 3, docs/CHANGELOG, dof/naming reconcile (M-E).
 - **Issue:** `ulrichwohak/BipartiteGMRF.jl#112`
 - **Baseline:** PR #111 (`error_cov = R`, `error_groups`) on `origin/feat/eta-error-bands` (`ec85427`)
 - **Branch:** `feat/free-error-blocks` (off `ec85427`)
@@ -35,16 +36,53 @@ strongest form.** See §0 below. The earlier MC collapse (`dev/mc_identification
 caterpillar N=60, 25 draws: `σ̂a = σ̂z = 0` exactly, `σ̂_eps` bias +0.83) is the
 **correct floored optimum** of an unbounded likelihood, not an EM basin artifact.
 
-**Remaining todos (re-scoped, see §0.3):**
-1. **Decision with maintainer** — pick the remedy (recommended: inverse-Wishart
-   penalized EM / MAP). Post the §0 finding on issue #112. Blocking.
-2. **Implement the remedy** (small delta on the existing EM; closed-form M-step
-   preserved under IW prior).
-3. **Criterion 4** — rerun MC with the remedy (tree + bridge-heavy comparison).
-4. **Criterion 3** — reduction to `error_groups` (algebraic constrained-mode + MC);
-   valid regardless of the remedy, can proceed in parallel.
-5. **M-E** — API/docs/README/CHANGELOG, Aqua/JET, `dof` convention reconcile with
-   maintainer (a penalty changes the honest `dof` story too).
+**Remaining todos:**
+1. ~~Decision with maintainer~~ — **done** (remedy E, issue comments 2026-08-18).
+2. ~~Implement the remedy~~ — **done**: `EMIWBlocks` VEM, see §0.4.
+3. ~~Criterion 4 rerun~~ — **done, positive** on tree + dense graph (§0.4);
+   optional extension: a wider bridge-heavy-vs-less graph ladder.
+4. **Criterion 3** — reduction to `error_groups` (algebraic constrained-mode + MC).
+5. **M-E** — API/docs/README/CHANGELOG, JET, `dof`/naming reconcile with
+   maintainer; decide whether `EMIWBlocks` becomes the default (and whether the
+   profile-MLE `EMFreeBlocks` stays as a documented negative-control).
+
+### 0.4 Implementation status of remedy E (2026-08-18, this branch)
+
+`src/solvers/emiwblocks.jl` — `EMIWBlocks(; max_iter, ftol, delta, r)`:
+mean-field VEM (`q(α)·∏q(uᵢ)`), reusing the dense-verified free-block
+machinery (assembly at effective blocks `(φ/ūᵢ)R(r)`, workspaces, `S_{ε,i}`
+posterior moments, Fisher-identity θ score). Design points:
+
+- θ step: Armijo with **sufficient decrease** (any-decrease acceptance made θ
+  random-walk on flat regions), up to 4 inner steps per iteration (candidates
+  cost one numeric `ws_Q` update + one `selinv_dot` on the factored `ws_M`).
+- `(q(u), δ)` updated to their **joint** fixed point inside each iteration
+  (single alternation made δ crawl for hundreds of iterations); δ capped at
+  `DELTA_CAP = 1e4` (t ≡ Gaussian there; cap = "no detectable heterogeneity").
+- ELBO exact incl. constants (so `nll = −ELBO` differs from other solvers'
+  constant-dropped convention — `metadata.objective = :elbo` flags it); the
+  Gamma-KL u-terms use a cancellation-free form (`log1p` + stable
+  `_loggamma_diff`), verified against the naive form and the δ → ∞ limit.
+- Reporting: `ω̄ = φδ/(δ−2)` → `sigma_epsilon²`; metadata `error_scale_phi`,
+  `error_corr_r`, `t_dof_delta`, `u_bar`, `elbo`. `dof` = 4 + estimated
+  members of (r, δ).
+
+**Verification** (`test/test_error_blocks_iw.jl`, 41 tests): equicorrelation
+closed forms vs dense; ELBO ≤ exact marginal (2·10⁵-draw MC over u, bound
+holds and is tight to < 0.5 nat on the toy); ELBO trace monotone; iid MLE is a
+VEM fixed point at `δ = 1e8, r = 0` (planted caterpillar, interior MLE,
+agreement to 1e-3); end-to-end `fit_mle` surface + `dof`.
+
+**Criterion-4 MC** (`dev/mc_iw.jl`, same DGPs that collapsed the profile MLE;
+fixed equicorrelated blocks r = 0.5, 25 draws): dense graph (40×83, mᵢ = 5):
+`ρ̂` bias −0.02 (sd 0.06), `σ̂_a` bias −0.06 (was −0.70 = total collapse),
+`σ̂_z` −0.02, `r̂` bias −0.001 ✓, `δ̂` → cap (correct: DGP has fixed blocks).
+Caterpillar tree: `σ̂_a` bias −0.12 with sd 0.17 and `σ̂_eps` +0.16 — the
+tree-graph degradation issue §4.4 predicts (cross-firm information is minimal
+on trees); usable, with the documented weak-identification caveat. Convergence
+flags at `ftol = 1e-9` are conservative (2–5/25 within 800 iterations; the θ/φ
+EM ridge tail is slow) — estimates are stable well before the flag trips, and
+the non-convergence warning states exactly that.
 
 ---
 
