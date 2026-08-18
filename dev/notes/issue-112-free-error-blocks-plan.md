@@ -117,9 +117,25 @@ model is simply the wrong vehicle for that information.
   unconstrained model on any graph where firms have ≥ 2 edges — regardless of
   graph density or init.
 
-### 0.3 Remedies (decision for maintainer; recommend A)
+### 0.3 Remedies (decision for maintainer; recommend E, which supersedes A)
 
-- **A. Penalized EM / MAP (recommended).** Inverse-Wishart prior per block,
+- **E. Integrated likelihood / random-effects Ω (recommended, per maintainer
+  direction 2026-08-18: "Ωᵢ are nuisance parameters — integrate them out, don't
+  estimate them").** Model `Ωᵢ ~ iid IW(ν, Ψ)` across firms; realizations are
+  never estimated — only the pooled `(ν, Ψ)` (finitely many parameters, so no
+  incidental-parameter problem, and the objective is bounded for any proper
+  mixing law). Blockwise integration is closed-form: `εᵢ` marginally is
+  multivariate Student-t, `t_δᵢ(0, Ψ/δᵢ)`, `δᵢ = ν − mᵢ + 1`, and the
+  scalar-gamma scale-mixture representation (`εᵢ|uᵢ ~ N(0, Ψ/uᵢ)`,
+  `uᵢ ~ Gamma(δᵢ/2, δᵢ/2)`) makes the EM tractable with **one scalar latent
+  weight per firm**: E-step = standard robust-EM weights `ūᵢ = E[uᵢ|y]` + the
+  existing α moments; M-step = the already-verified Gaussian machinery at
+  known blocks `Ψ/ūᵢ`, plus a closed-form pooled Ψ update (scalar `ω̄I`, or
+  equicorrelated/full per size class — an `error_groups`-style ladder). No
+  within-firm averaging anywhere; cross-firm covariance information intact.
+  Constraint to state in docs: the mixing law must be proper — a flat prior
+  over PD matrices diverges exactly like the profile likelihood does.
+- **A. Penalized EM / MAP (crude version of E; fallback).** Inverse-Wishart prior per block,
   `Ωᵢ ~ IW(ν, Ψ)` with pooled scale `Ψ = τ·ω̄I` (ω̄ = pooled mean variance,
   either fixed from an iid pre-fit or updated as an outer EM). M-step stays
   closed-form: `Ωᵢ ← (Sᵢ + Ψ)/(1 + (ν + mᵢ + 1)/mᵢ)`-type shrinkage (exact
