@@ -135,6 +135,26 @@ model is simply the wrong vehicle for that information.
   within-firm averaging anywhere; cross-firm covariance information intact.
   Constraint to state in docs: the mixing law must be proper — a flat prior
   over PD matrices diverges exactly like the profile likelihood does.
+
+  **Size handling / parametrization (maintainer-agreed, 2026-08-18).** The
+  population law is defined by size-free scalars, generated at each block size
+  on demand:
+  - scale `Ψ_m = ω̄·[(1−r)I_m + r𝟙𝟙']` (v1: `r = 0`; AR-in-tenure a later
+    option); dispersion via the **marginal t dof** `δ`, i.e. per-firm
+    `νᵢ = δ + mᵢ − 1`, so every firm's integrated error block is `t_δ(0, Ψ_mᵢ)`
+    with the same tail parameter regardless of degree.
+  - This makes the family **projective**: a k×k principal submatrix of an
+    `IW(δ + m − 1, Ψ_m)` draw is `IW(δ + k − 1, Ψ_k)` — the same law a size-k
+    firm gets directly. Firm size is bookkeeping, not modeling; adding/dropping
+    an edge is coherent.
+  - Scale-mixture form: `uᵢ ~ Gamma(δ/2, δ/2)` iid (identical law for every
+    firm), `εᵢ | uᵢ ~ N(0, Ψ_mᵢ/uᵢ)`. Estimated hyperparameters: `(δ, ω̄, r)`
+    (or `ω̄, r` per size class later). `δ → ∞` recovers fixed equal blocks =
+    the `error_cov`-style homogeneous model; small `δ` = heterogeneous firms.
+  - Epistemic status: same as `α ~ N(0, K⁻¹)` — a random-effects distribution
+    with ML-estimated hyperparameters (empirical Bayes / KW mixture MLE), not
+    a fixed subjective prior. Realized `Ωᵢ` remain arbitrary PD; only the
+    population mean is exchangeable within firm.
 - **A. Penalized EM / MAP (crude version of E; fallback).** Inverse-Wishart prior per block,
   `Ωᵢ ~ IW(ν, Ψ)` with pooled scale `Ψ = τ·ω̄I` (ω̄ = pooled mean variance,
   either fixed from an iid pre-fit or updated as an outer EM). M-step stays
