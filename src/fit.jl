@@ -58,6 +58,8 @@ function fit_mle(
     error_cov::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
     error_groups::Union{Nothing,AbstractVector{<:Integer}}=nothing,
     error_group_cap::Integer=8,
+    error_eta::Union{Nothing,Real,Symbol}=nothing,
+    edge_index::Union{Nothing,AbstractVector{<:Integer}}=nothing,
     solver::AbstractGMRFSolver=ExactCholesky(),
     rho_limit::Union{Real,Symbol}=0.99,
     fix_rho::Union{Nothing,Float64}=nothing,
@@ -76,6 +78,8 @@ function fit_mle(
         error_cov=error_cov,
         error_groups=error_groups,
         error_group_cap=error_group_cap,
+        error_eta=error_eta,
+        edge_index=edge_index,
     )
     return fit_mle(M, ss;
         solver=solver,

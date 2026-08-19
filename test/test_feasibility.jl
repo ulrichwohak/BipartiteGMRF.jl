@@ -100,6 +100,7 @@
         fixed_result.sigma_z,
         fixed_result.sigma_epsilon,
         fixed_result.rho_eps,
+        nothing,  # eta
         nothing,  # beta
         fixed_result.nll,
         fixed_result.converged,

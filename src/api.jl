@@ -76,6 +76,7 @@ from [`coefnames`](@ref); a named view from [`params`](@ref).
 function coef(result::GMRFResult)
     c = [result.rho, result.sigma_a, result.sigma_z, result.sigma_epsilon]
     result.rho_eps === nothing || push!(c, result.rho_eps)
+    result.eta === nothing || push!(c, result.eta)
     result.beta !== nothing && append!(c, result.beta)
     return c
 end
@@ -88,6 +89,7 @@ Return the names of the entries of [`coef`](@ref).
 function coefnames(result::GMRFResult)
     names = ["rho", "sigma_a", "sigma_z", "sigma_epsilon"]
     result.rho_eps === nothing || push!(names, "rho_eps")
+    result.eta === nothing || push!(names, "eta")
     if result.beta !== nothing
         for j in 1:length(result.beta)
             push!(names, "beta_$j")
@@ -109,6 +111,7 @@ params(result::GMRFResult) = (
     sigma_z = result.sigma_z,
     sigma_epsilon = result.sigma_epsilon,
     rho_eps = result.rho_eps,
+    eta = result.eta,
     beta = result.beta,
 )
 
@@ -151,6 +154,8 @@ function dof(result::GMRFResult)
     get(result.metadata, :fix_rho, nothing) === nothing || (k -= 1)
     w = result.stats.weighting
     w.observations == :effective && w.estimate_rho_eps && (k += 1)
+    ar = result.stats.error_ar1
+    ar !== nothing && ar.eta_fixed === nothing && (k += 1)
     ec = result.stats.error_classes
     ec !== nothing && (k += length(ec.counts) - 1)
     result.beta !== nothing && (k += length(result.beta))
@@ -227,6 +232,7 @@ function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
     println(io, "    sigma_z: ", result.sigma_z)
     println(io, "    sigma_epsilon: ", result.sigma_epsilon)
     result.rho_eps !== nothing && println(io, "    rho_eps: ", result.rho_eps)
+    result.eta !== nothing && println(io, "    eta: ", result.eta)
     result.beta !== nothing && println(io, "    beta: ", result.beta)
     println(io, "  model:")
     println(io, "    model: ", nameof(typeof(result.model)))

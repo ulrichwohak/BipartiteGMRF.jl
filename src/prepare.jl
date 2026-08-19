@@ -672,3 +672,175 @@ function build_grouped_V_stats(
           vtv_nzvals = vtv_nzvals, projected = projected, ydot = ydot)
     return design, K, ec, (G = G, Vg = Vg, yg = yg, class_idx = class_idx, src = src)
 end
+
+# ─── AR(1) within-firm error correlation: sigma_eps^2 R(eta), estimated ─────
+
+"""
+    build_ar1_V_stats(f_obs, w_obs, y, edge_index_obs, n_firms, n_workers)
+
+Design-product components under an AR(1) within-firm error correlation
+`Corr(eps_k, eps_l) = eta^|k-l|`: the error covariance is `sigma_eps^2 * R(eta)`
+with `R(eta)` block-diagonal by firm and block `[eta^|k-l|]`, where `k, l` are
+the caller-supplied `edge_index` values (a unique permutation of `1..m_i`
+within each firm). The AR(1) precision is tridiagonal:
+
+    Rinv(eta) = (S_full - eta*S_adj + eta^2*S_int) / (1 - eta^2)
+
+with `S_full = I`, `S_adj` the within-firm edge adjacency (|k-l| == 1), and
+`S_int` the diagonal correction: +1 on interior edges (excludes the first and
+last edge of each firm), -1 on singleton-firm edges (whose precision is exactly
+1, cancelling the `1/(1-eta^2)` base).
+three-way linear combination, so this returns the three precomputed
+components aligned to the **union pattern** `V'V + V'S_adj V + V'S_int V`
+rather than a single design. The union is needed because raw rows carry one
+worker each: `V'V` has a diagonal-only worker–worker block, while adjacent
+distinct workers create off-diagonal worker–worker entries in `V'S_adj V`
+that `V'V` does not contain.
+
+`match_id` is deliberately NOT supported: collapsing raw rows to match means
+changes the within-block covariance to `G R_raw(eta) G'`, a different model
+from the unit-diagonal Toeplitz over the collapsed rows. The caller's rows
+must already be the AR(1) units (one per raw observation, ordered by
+`edge_index` within firm).
+
+Returns `(pattern, vtv_full, vtv_adj, vtv_int, projected_full, projected_adj,
+projected_int, ydot_full, ydot_adj, ydot_int, n_blocks, K, V, Sadj, Sint, yv,
+src)`.
+"""
+function build_ar1_V_stats(
+    f_obs::Vector{Int},
+    w_cols::Vector{Int},
+    y::Vector{Float64},
+    edge_index_obs::Vector{Int},
+    n_firms::Int,
+    n_workers::Int,
+)
+    n = n_firms + n_workers
+    K = length(y)
+    V, yv, src = observation_rows(f_obs, w_cols, y, nothing, n_firms, n_workers)
+
+    # Group raw rows by firm; validate edge_index is 1..m_i, and derive the
+    # within-firm adjacency (S_adj) and interior diagonal (S_int).
+    firm_groups = Dict{Int,Vector{Int}}()
+    for s in 1:K
+        push!(get!(firm_groups, f_obs[s], Int[]), s)
+    end
+    Sadj_I = Int[]; Sadj_J = Int[]; Sadj_V = Float64[]
+    Sint_I = Int[]; Sint_J = Int[]; Sint_V = Float64[]
+    for (_, rows) in firm_groups
+        m = length(rows)
+        es = edge_index_obs[rows]
+        sort(es) == collect(1:m) || throw(ArgumentError(
+            "error_eta requires edge_index to be a permutation of 1:$m within each firm; got $(sort(es)) for a firm with $m rows."))
+        ord = sortperm(es)
+        for pos in 1:m
+            r = rows[ord[pos]]
+            if pos < m
+                rnext = rows[ord[pos+1]]
+                push!(Sadj_I, r); push!(Sadj_J, rnext); push!(Sadj_V, 1.0)
+                push!(Sadj_I, rnext); push!(Sadj_J, r); push!(Sadj_V, 1.0)
+            end
+            if 1 < pos < m
+                push!(Sint_I, r); push!(Sint_J, r); push!(Sint_V, 1.0)
+            elseif m == 1
+                # Singleton firm: its AR(1) precision is exactly 1 (no 1/(1-eta^2)
+                # scaling), so mark the diagonal correction -1 to cancel the base.
+                push!(Sint_I, r); push!(Sint_J, r); push!(Sint_V, -1.0)
+            end
+        end
+    end
+    Sadj = sparse(Sadj_I, Sadj_J, Sadj_V, K, K)
+    Sint = sparse(Sint_I, Sint_J, Sint_V, K, K)
+
+    Pfull = SparseMatrixCSC{Float64,Int}(transpose(V) * V)
+    Padj = SparseMatrixCSC{Float64,Int}(transpose(V) * Sadj * V)
+    Pint = SparseMatrixCSC{Float64,Int}(transpose(V) * Sint * V)
+    # Union pattern (see docstring): P_adj is not pattern-contained in P_full,
+    # and Pint carries a -1 on singleton diagonals that would cancel Pfull and
+    # be dropped by sparse +. Build the structural union from all-ones markers
+    # so no position is lost to exact cancellation.
+    mark(A) = SparseMatrixCSC(A.m, A.n, copy(A.colptr), copy(A.rowval), ones(Float64, nnz(A)))
+    P = SparseMatrixCSC{Float64,Int}(mark(Pfull) + mark(Padj) + mark(Pint))
+    vtv_full = align_nzvals(P, Pfull)
+    vtv_adj = align_nzvals(P, Padj)
+    vtv_int = align_nzvals(P, Pint)
+
+    projected_full = Vector{Float64}(transpose(V) * yv)
+    projected_adj = Vector{Float64}(transpose(V) * (Sadj * yv))
+    projected_int = Vector{Float64}(transpose(V) * (Sint * yv))
+
+    ydot_full = dot(yv, yv)
+    ydot_adj = dot(yv, Sadj * yv)
+    ydot_int = dot(yv, Sint * yv)
+
+    return (pattern = P,
+            vtv_full = vtv_full, vtv_adj = vtv_adj, vtv_int = vtv_int,
+            projected_full = projected_full, projected_adj = projected_adj, projected_int = projected_int,
+            ydot_full = ydot_full, ydot_adj = ydot_adj, ydot_int = ydot_int,
+            n_blocks = length(firm_groups), K = K,
+            V = V, Sadj = Sadj, Sint = Sint, y = yv, src = src)
+end
+
+"""
+Three-component R-weighted mean-structure statistics for the AR(1) error
+model: `(full, adj, int)` hold `V'X`, `X'X`, `X'y` under the identity,
+`S_adj`, and `S_int` weightings respectively, so the per-evaluation products
+are the same three-way combination as the design.
+"""
+function build_ar1_mean_stats(ar1_aux, X_rows::Matrix{Float64})
+    V = ar1_aux.V
+    SX = ar1_aux.Sadj * X_rows
+    TX = ar1_aux.Sint * X_rows
+    Sy = ar1_aux.Sadj * ar1_aux.y
+    Ty = ar1_aux.Sint * ar1_aux.y
+    p = size(X_rows, 2)
+    return (
+        full = MeanStats(Matrix{Float64}(transpose(V) * X_rows),
+                         Matrix{Float64}(transpose(X_rows) * X_rows),
+                         Vector{Float64}(transpose(X_rows) * ar1_aux.y), p),
+        adj = MeanStats(Matrix{Float64}(transpose(V) * SX),
+                        Matrix{Float64}(transpose(X_rows) * SX),
+                        Vector{Float64}(transpose(X_rows) * Sy), p),
+        int = MeanStats(Matrix{Float64}(transpose(V) * TX),
+                        Matrix{Float64}(transpose(X_rows) * TX),
+                        Vector{Float64}(transpose(X_rows) * Ty), p),
+    )
+end
+
+"""
+Reassemble the R(eta)-weighted observation products for a given `eta`. The
+likelihood constant `log det R = (K - n_blocks) * log(1 - eta^2)` rides in
+`WeightStats.log_weight_sum` as `-logdet R` (matching the `error_cov`
+convention), so every downstream solver and the profiled mean structure work
+unchanged. Returns `(design, weights, mean_stats)`.
+"""
+function ar1_observation_stats(ar::ErrorAR1Stats, eta::Float64, n_firms::Int)
+    denom = 1.0 - eta^2
+    denom > 0 || throw(ArgumentError("eta must satisfy -1 < eta < 1; got $(eta)."))
+    c_full = 1.0 / denom
+    c_adj = -eta / denom
+    c_int = eta^2 / denom
+    nzvals = c_full .* ar.vtv_full .+ c_adj .* ar.vtv_adj .+ c_int .* ar.vtv_int
+    n = size(ar.pattern, 1)
+    VtV = SparseMatrixCSC(n, n, ar.pattern.colptr, ar.pattern.rowval, nzvals)
+    FF = SparseMatrixCSC{Float64,Int}(VtV[1:n_firms, 1:n_firms])
+    WW = SparseMatrixCSC{Float64,Int}(VtV[(n_firms+1):n, (n_firms+1):n])
+    A_obs = SparseMatrixCSC{Float64,Int}(VtV[1:n_firms, (n_firms+1):n])
+    design = DesignStats(
+        VtV,
+        c_full .* ar.projected_full .+ c_adj .* ar.projected_adj .+ c_int .* ar.projected_int,
+        c_full * ar.ydot_full + c_adj * ar.ydot_adj + c_int * ar.ydot_int,
+        A_obs,
+        SparseMatrixCSC{Float64,Int}(copy(transpose(A_obs))),
+        FF,
+        WW,
+    )
+    logdet_R = (ar.K - ar.n_blocks) * log(denom)
+    weights = WeightStats(-logdet_R, Float64(ar.K), Float64(ar.K), 1.0, 1.0)
+    ms = ar.mean_full === nothing ? nothing :
+        MeanStats(c_full .* ar.mean_full.VtX .+ c_adj .* ar.mean_adj.VtX .+ c_int .* ar.mean_int.VtX,
+                  c_full .* ar.mean_full.XtX .+ c_adj .* ar.mean_adj.XtX .+ c_int .* ar.mean_int.XtX,
+                  c_full .* ar.mean_full.Xty .+ c_adj .* ar.mean_adj.Xty .+ c_int .* ar.mean_int.Xty,
+                  ar.mean_full.p)
+    return design, weights, ms
+end

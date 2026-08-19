@@ -14,6 +14,18 @@ function rhoeps_to_unconstrained(r::Real)
     return log(x / (1.0 - x))
 end
 
+# AR(1) within-firm error correlation eta in (-1, 1), estimated on an
+# unconstrained scale. tanh saturates to +-1.0 for |u| ~> 19, so clamp to the
+# strictly-interior Float64 values to keep the correlation matrix non-singular
+# (same philosophy as the rho codec in unpack_params).
+eta_from_unconstrained(u::Real) = clamp(tanh(Float64(u)), nextfloat(-1.0), prevfloat(1.0))
+
+function eta_to_unconstrained(e::Real)
+    -1.0 < e < 1.0 ||
+        throw(ArgumentError("eta must satisfy -1 < eta < 1; got $(e)."))
+    return atanh(clamp(Float64(e), nextfloat(-1.0), prevfloat(1.0)))
+end
+
 function effective_match_weights(T::AbstractVector{<:Real}, rho_eps::Float64)
     0.0 <= rho_eps < 1.0 ||
         throw(ArgumentError("rho_eps must satisfy 0 <= rho_eps < 1; got $(rho_eps)."))

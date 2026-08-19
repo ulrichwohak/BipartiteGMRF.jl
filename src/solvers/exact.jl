@@ -31,6 +31,28 @@ end
 make_nll_cache(::ExactCholesky, model::AbstractBipartiteModel, stats::BipartiteGMRFStats) =
     make_exact_workspace(model, stats)
 
+# Rebuild `A` on `target`'s sparsity pattern, filling 0.0 at structural
+# positions that `A` lacks. `A`'s pattern must be a subset of `target`'s, and
+# both must be column-sorted CSC. Used by the AR(1) error model to restore the
+# zeroed worker-worker off-diagonal slots that sparse `+` drops at eta = 0.
+function _align_to_pattern(A::SparseMatrixCSC{Float64,Int}, target::SparseMatrixCSC{Float64,Int})
+    vals = zeros(Float64, nnz(target))
+    Arv = rowvals(A); Anz = nonzeros(A); Trv = rowvals(target)
+    @inbounds for j in 1:size(target, 2)
+        Alo = A.colptr[j]; Ahi = A.colptr[j+1] - 1
+        Tlo = target.colptr[j]; Thi = target.colptr[j+1] - 1
+        a = Alo
+        for p in Tlo:Thi
+            i = Trv[p]
+            while a <= Ahi && Arv[a] < i
+                a += 1
+            end
+            a <= Ahi && Arv[a] == i && (vals[p] = Anz[a])
+        end
+    end
+    return SparseMatrixCSC(target.m, target.n, copy(target.colptr), copy(target.rowval), vals)
+end
+
 function nll_exact_value(
     model::AbstractBipartiteModel,
     stats::BipartiteGMRFStats,
@@ -46,6 +68,13 @@ function nll_exact_value(
     try
         Q = model_precision(model, p.rho, p.sigma_a, p.sigma_z)
         M = Q + lambda .* obs.design.VtV
+        # AR(1): at eta = 0 the worker-worker off-diagonal slots of V'R^-1 V are
+        # zero and get dropped by sparse `+`, shrinking the numeric pattern below
+        # the fixed symbolic factorization (built at a nonzero reference eta).
+        # Restore them as explicit zeros so update_precision! matches.
+        if stats.error_ar1 !== nothing && nnz(M) != nnz(ew.ws_M.Q)
+            M = _align_to_pattern(M, ew.ws_M.Q)
+        end
         GaussianMarkovRandomFields.update_precision!(ew.ws_Q, Q)
         GaussianMarkovRandomFields.ensure_numeric!(ew.ws_Q)
         GaussianMarkovRandomFields.update_precision!(ew.ws_M, M)

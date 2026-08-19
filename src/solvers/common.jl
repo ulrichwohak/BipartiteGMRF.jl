@@ -10,6 +10,9 @@ function validate_capability(model::AbstractBipartiteModel, stats::BipartiteGMRF
        !(solver isa ExactCholesky)
         throw(ArgumentError("error_groups currently supports only the ExactCholesky solver."))
     end
+    if stats.error_ar1 !== nothing && !(solver isa ExactCholesky)
+        throw(ArgumentError("error_eta currently supports only the ExactCholesky solver."))
+    end
     return nothing
 end
 
@@ -114,6 +117,14 @@ function objective_stats(model::AbstractBipartiteModel, stats::BipartiteGMRFStat
         weights = WeightStats(lws, Float64(stats.K), Float64(stats.K), 1.0, 1.0)
         return ObservationStats(design, weights, stats.rho_eps_likelihood, ms)
     end
+    ar = stats.error_ar1
+    if ar !== nothing
+        # error_eta is mutually exclusive with rho_eps (observations mode) and
+        # error_groups, so the eta codec is the 5th entry of params_full.
+        eta = ar.eta_fixed === nothing ? eta_from_unconstrained(params_full[5]) : ar.eta_fixed
+        design, weights, ms = ar1_observation_stats(ar, eta, model.graph.n_firms)
+        return ObservationStats(design, weights, stats.rho_eps_likelihood, ms)
+    end
     return ObservationStats(stats.design, stats.weights, stats.rho_eps_likelihood, stats.mean_stats)
 end
 
@@ -168,12 +179,19 @@ function mean_profile_correction(
 end
 
 function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothing,Float64})
+    meta = fit_result_metadata(fit.model, fit.rho, fix_rho)
+    if fit.omega !== nothing
+        meta = merge(meta, (error_class_sizes = vcat(fit.omega_sizes),
+                            error_class_variances = vcat(1.0, fit.omega)))
+    end
+    fit.eta !== nothing && (meta = merge(meta, (error_eta = fit.eta,)))
     return GMRFResult(
         fit.rho,
         fit.sigma_a,
         fit.sigma_z,
         fit.sigma_epsilon,
         fit.rho_eps,
+        fit.eta,
         fit.beta,
         fit.nll,
         fit.converged,
@@ -184,11 +202,7 @@ function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothi
         fit.stats,
         solver,
         fit.theta_unconstrained,
-        fit.omega === nothing ?
-            fit_result_metadata(fit.model, fit.rho, fix_rho) :
-            merge(fit_result_metadata(fit.model, fit.rho, fix_rho),
-                  (error_class_sizes = vcat(fit.omega_sizes),
-                   error_class_variances = vcat(1.0, fit.omega))),
+        meta,
     )
 end
 
@@ -208,9 +222,11 @@ function optimize_problem(
 
     estimate_rho_eps = stats.weighting.observations == :effective &&
         stats.weighting.estimate_rho_eps
+    estimate_eta = stats.error_ar1 !== nothing && stats.error_ar1.eta_fixed === nothing
     p0 = initial_params(fix_rho, estimate_rho_eps; rho_limit=limit)
     n_omega = stats.error_classes === nothing ? 0 : length(stats.error_classes.counts) - 1
     n_omega > 0 && append!(p0, zeros(n_omega))
+    estimate_eta && append!(p0, [eta_to_unconstrained(0.5)])
     evals = Ref(0)
     cache = make_nll_cache(solver, model, stats)
 
@@ -238,6 +254,9 @@ function optimize_problem(
     elseif n_omega > 0
         # Store the omega-weighted design so decompositions and posterior
         # objects built from the result use the fitted error weighting.
+        replace_stats(stats; design=obs.design, weights=obs.weights,
+            mean_stats=obs.mean_stats)
+    elseif stats.error_ar1 !== nothing
         replace_stats(stats; design=obs.design, weights=obs.weights,
             mean_stats=obs.mean_stats)
     else
@@ -268,6 +287,9 @@ function optimize_problem(
         sigma_z = decoded.sigma_z * final_stats.y_std,
         sigma_epsilon = decoded.sigma_epsilon * final_stats.y_std,
         rho_eps = rho_eps,
+        eta = stats.error_ar1 === nothing ? nothing :
+            (stats.error_ar1.eta_fixed === nothing ? eta_from_unconstrained(pfull[5]) :
+             stats.error_ar1.eta_fixed),
         beta = beta_original,
         nll = val,
         converged = converged(res),

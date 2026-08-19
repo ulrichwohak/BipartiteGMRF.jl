@@ -457,6 +457,35 @@ struct ErrorClassStats
 end
 
 """
+Sufficient statistics for an estimated AR(1) within-firm error correlation
+(`suffstats(...; error_eta=..., edge_index=...)`). The error covariance is
+`sigma_eps^2 * R(eta)` with `R(eta)` block-diagonal by firm and block
+`R_k = [eta^|k-l|]`; its inverse is the tridiagonal
+`Rinv = (S_full - eta*S_adj + eta^2*S_int) / (1 - eta^2)`, so every weighted
+design product is the same three-way linear combination of precomputed
+components aligned to the pooled sparsity pattern (which equals `V'V` at
+`eta = 0`). `eta_fixed === nothing` means `eta` is estimated inside the MLE.
+"""
+struct ErrorAR1Stats
+    pattern::SparseMatrixCSC{Float64,Int}  # V'V at eta = 0 (defines the pooled pattern)
+    vtv_full::Vector{Float64}              # nonzeros(V'V), aligned to `pattern`
+    vtv_adj::Vector{Float64}               # nonzeros(V'S_adj V), aligned
+    vtv_int::Vector{Float64}               # nonzeros(V'S_int V), aligned
+    projected_full::Vector{Float64}        # V'y (n)
+    projected_adj::Vector{Float64}         # V'(S_adj y) (n)
+    projected_int::Vector{Float64}         # V'(S_int y) (n)
+    ydot_full::Float64
+    ydot_adj::Float64
+    ydot_int::Float64
+    n_blocks::Int                          # distinct firms with >= 1 row
+    K::Int                                 # observation count
+    eta_fixed::Union{Nothing,Float64}      # nothing => estimate
+    mean_full::Union{Nothing,MeanStats}
+    mean_adj::Union{Nothing,MeanStats}
+    mean_int::Union{Nothing,MeanStats}
+end
+
+"""
     BipartiteGMRFStats <: Distributions.SufficientStats
 
 Sufficient statistics for bipartite GMRF maximum-likelihood estimation.
@@ -488,6 +517,7 @@ struct BipartiteGMRFStats <: SufficientStats
 
     mean_stats::Union{Nothing,MeanStats}
     error_classes::Union{Nothing,ErrorClassStats}
+    error_ar1::Union{Nothing,ErrorAR1Stats}
     metadata::NamedTuple
 end
 
@@ -553,6 +583,7 @@ struct GMRFResult{
     sigma_z::Float64
     sigma_epsilon::Float64
     rho_eps::Union{Nothing,Float64}
+    eta::Union{Nothing,Float64}
     beta::Union{Nothing,Vector{Float64}}
     nll::Float64
     converged::Bool

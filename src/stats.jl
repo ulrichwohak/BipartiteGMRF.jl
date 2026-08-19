@@ -69,6 +69,19 @@ unknown. Fitted `ω` are reported in the result metadata
 `Weighting(observations=:raw)` and the `ExactCholesky` solver; composes
 with `match_id` (rows of one match must share a group id) and `X`;
 mutually exclusive with `error_cov`.
+
+## AR(1) within-firm error correlation
+
+`error_eta = e` with `e in (-1, 1)` (or `:estimate` to estimate it jointly)
+models the error covariance as `σ_ε² R(eta)` with `R(eta)` block-diagonal by
+firm and block `[eta^|k-l|]`, where `k, l` are the caller-supplied
+`edge_index` values (a unique permutation of `1..m_i` over the raw rows of
+each firm — one within-firm position per observation). `edge_index` is
+required and must have the same length as `y`. `match_id` is **not**
+supported (collapsing rows to match means changes the covariance to
+`G R_raw G'`, a different model). Requires `Weighting(observations=:raw)`
+and the `ExactCholesky` solver; composes with `X`; mutually exclusive with
+`error_cov` and `error_groups`. Fitted `eta` is reported as `result.eta`.
 """
 function suffstats(
     ::Type{M},
@@ -85,6 +98,8 @@ function suffstats(
     error_cov::Union{Nothing,AbstractMatrix{<:Real}}=nothing,
     error_groups::Union{Nothing,AbstractVector{<:Integer}}=nothing,
     error_group_cap::Integer=8,
+    error_eta::Union{Nothing,Real,Symbol}=nothing,
+    edge_index::Union{Nothing,AbstractVector{<:Integer}}=nothing,
 ) where {M<:AbstractBipartiteModel}
     model_adjacency in (:binary, :counts) ||
         throw(ArgumentError("model_adjacency must be :binary or :counts; got $(model_adjacency)."))
@@ -111,6 +126,34 @@ function suffstats(
             throw(ArgumentError("error_groups must have the same length as y."))
         error_group_cap >= 2 ||
             throw(ArgumentError("error_group_cap must be at least 2."))
+    end
+
+    if error_eta !== nothing
+        error_cov === nothing ||
+            throw(ArgumentError("error_eta and error_cov are mutually exclusive."))
+        error_groups === nothing ||
+            throw(ArgumentError("error_eta and error_groups are mutually exclusive."))
+        match_id === nothing ||
+            throw(ArgumentError("error_eta does not support match_id; pass raw rows ordered by edge_index."))
+        weighting.observations == :raw ||
+            throw(ArgumentError("error_eta currently supports only Weighting(observations=:raw)."))
+        if error_eta isa Symbol
+            error_eta == :estimate ||
+                throw(ArgumentError("error_eta symbol must be :estimate; got $(error_eta)."))
+        elseif error_eta isa Real
+            -1.0 < error_eta < 1.0 ||
+                throw(ArgumentError("error_eta must satisfy -1 < error_eta < 1; got $(error_eta)."))
+        else
+            throw(ArgumentError("error_eta must be nothing, a Real in (-1, 1), or :estimate; got $(error_eta)."))
+        end
+        edge_index !== nothing ||
+            throw(ArgumentError("error_eta requires edge_index (per-row within-firm position)."))
+        length(edge_index) == length(y) ||
+            throw(ArgumentError("edge_index must have the same length as y."))
+        all(k -> isfinite(k) && k == round(k), edge_index) ||
+            throw(ArgumentError("edge_index entries must be finite integers."))
+    elseif edge_index !== nothing
+        throw(ArgumentError("edge_index is only meaningful with error_eta."))
     end
 
     length(y) > 0 || throw(ArgumentError("Empty dataset."))
@@ -207,6 +250,8 @@ function suffstats(
     obs = weighting.observations
     banded_aux = nothing
     grouped_aux = nothing
+    ar1_aux = nothing
+    ar1_stats = nothing
     block = if obs == :raw
         if error_cov !== nothing
             R_obs = SparseMatrixCSC{Float64,Int}(sparse(error_cov)[obs_mask, obs_mask])
@@ -239,6 +284,30 @@ function suffstats(
                 # parameter-dependent and assembled per evaluation in
                 # objective_stats; the stored weights are the omega = 1 point.
                 weights = trivial_weight_stats(n_groups),
+                within_ss = 0.0,
+                within_df = 0,
+                rho_eps_likelihood = nothing,
+            )
+        elseif error_eta !== nothing
+            edge_index_obs = Int.(collect(edge_index))[obs_mask]
+            ar1_aux = build_ar1_V_stats(f_obs, w_obs, y_obs_scaled, edge_index_obs, n_f, n_w)
+            eta_fixed = error_eta isa Real ? Float64(error_eta) : nothing
+            # Reference eta for the stored base design: the fixed value, or a
+            # nonzero start (0.5) when estimated, so the symbolic factorization
+            # sees the full union sparsity pattern (eta = 0 would collapse the
+            # worker-worker off-diagonal block and break the fixed pattern).
+            eta_ref = eta_fixed === nothing ? 0.5 : eta_fixed
+            ar1_stats = ErrorAR1Stats(
+                ar1_aux.pattern, ar1_aux.vtv_full, ar1_aux.vtv_adj, ar1_aux.vtv_int,
+                ar1_aux.projected_full, ar1_aux.projected_adj, ar1_aux.projected_int,
+                ar1_aux.ydot_full, ar1_aux.ydot_adj, ar1_aux.ydot_int,
+                ar1_aux.n_blocks, ar1_aux.K, eta_fixed, nothing, nothing, nothing)
+            ar1_design0, ar1_weights0, _ = ar1_observation_stats(ar1_stats, eta_ref, n_f)
+            (
+                K = ar1_aux.K,
+                base = EdgeData(f_obs, w_obs, y_obs_scaled, ones(Int, personyear_rows)),
+                design = ar1_design0,
+                weights = ar1_weights0,
                 within_ss = 0.0,
                 within_df = 0,
                 rho_eps_likelihood = nothing,
@@ -287,6 +356,7 @@ function suffstats(
 
     # ── Mean-structure statistics ──
     grouped_mean = nothing
+    ar1_mean = nothing
     mean_stats = if X !== nothing
         X_obs = Matrix{Float64}(X[obs_mask, :])
         if banded_aux !== nothing
@@ -304,6 +374,9 @@ function suffstats(
             MeanStats(sum(ms.VtX for ms in grouped_mean),
                       sum(ms.XtX for ms in grouped_mean),
                       sum(ms.Xty for ms in grouped_mean), p_cols)
+        elseif ar1_aux !== nothing
+            ar1_mean = build_ar1_mean_stats(ar1_aux, X_obs[ar1_aux.src, :])
+            ar1_mean.full
         elseif obs == :raw
             if match_id_obs !== nothing
                 build_match_mean_stats(f_obs, w_obs, y_obs_scaled, X_obs, match_id_obs, n_f, n_w)
@@ -340,7 +413,18 @@ function suffstats(
         graph_only_edges = nnz(A_prior) - n_edges,
         correlated_errors = error_cov !== nothing,
         error_groups = error_groups !== nothing,
+        ar1_errors = error_eta !== nothing,
     )
+
+    # AR(1) mean-structure components (populated only when X is supplied).
+    if ar1_aux !== nothing && ar1_mean !== nothing
+        ar1_stats = ErrorAR1Stats(
+            ar1_stats.pattern, ar1_stats.vtv_full, ar1_stats.vtv_adj, ar1_stats.vtv_int,
+            ar1_stats.projected_full, ar1_stats.projected_adj, ar1_stats.projected_int,
+            ar1_stats.ydot_full, ar1_stats.ydot_adj, ar1_stats.ydot_int,
+            ar1_stats.n_blocks, ar1_stats.K, ar1_stats.eta_fixed,
+            ar1_mean.full, ar1_mean.adj, ar1_mean.int)
+    end
 
     error_classes = grouped_aux === nothing ? nothing :
         ErrorClassStats(grouped_aux.sizes, grouped_aux.counts, grouped_aux.vtv_nzvals,
@@ -366,6 +450,7 @@ function suffstats(
         block.weights,
         mean_stats,
         error_classes,
+        ar1_stats,
         metadata,
     )
 end
