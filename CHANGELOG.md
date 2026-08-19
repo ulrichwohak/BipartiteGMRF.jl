@@ -3,7 +3,7 @@
 All notable changes to BipartiteGMRF.jl are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] &mdash; feat/eta-error-bands
+## [v0.4.0] &mdash; 2026-08-19
 
 ### Added
 
