@@ -3,6 +3,28 @@
 All notable changes to BipartiteGMRF.jl are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] &mdash; feat/eta-error-bands
+
+### Added
+
+- **Correlated errors** (`error_cov = R`). The error covariance becomes
+  `σ_ε² R`, a sparse symmetric matrix over input rows whose connected blocks
+  are arbitrary positive-definite matrices (any correlation pattern, any
+  within-block heteroskedasticity). The scale is pinned by `tr(R) = K` so
+  `σ_ε²` keeps its mean-error-variance meaning.
+- **Group-robust errors** (`error_groups = g`). Observations sharing a group id
+  are collapsed to their group mean, so an arbitrary unknown PD within-group
+  error covariance enters the likelihood only through the group-mean variance.
+  One free `ω` per group-size class is estimated inside the MLE and reported in
+  the result metadata (`error_class_sizes`, `error_class_variances`).
+- **AR(1) within-firm error correlation** (`error_eta`, `edge_index`, issue
+  #113). The error covariance is `σ_ε² R(η)` with `R(η)` block-diagonal by firm
+  and `Corr(ε_k, ε_l) = η^|k-l|` over the per-row within-firm `edge_index`
+  (a unique permutation of `1..m_i` per firm). `η` is fixed in `(-1, 1)` or
+  estimated jointly via `error_eta = :estimate`, and reported as `result.eta`;
+  `dof` counts it. Requires `Weighting(observations=:raw)` and the
+  `ExactCholesky` solver.
+
 ## [v0.3.0] &mdash; 2026-08-17
 
 ### Added
