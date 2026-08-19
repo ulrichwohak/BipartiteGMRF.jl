@@ -325,12 +325,62 @@ Abstract supertype for marginal-likelihood solvers.
 """
 abstract type AbstractGMRFSolver end
 
+# Both Nelder-Mead solvers take the same two simplex knobs; validated here so
+# the rule lives in one place.
+function validate_simplex(scale::Real, shift::Real)
+    (isfinite(scale) && scale >= 0) ||
+        throw(ArgumentError("simplex_scale must be finite and non-negative; got $(scale)."))
+    (isfinite(shift) && shift >= 0) ||
+        throw(ArgumentError("simplex_shift must be finite and non-negative; got $(shift)."))
+    scale + shift > 0 || throw(ArgumentError(
+        "simplex_scale and simplex_shift cannot both be zero: every vertex would " *
+        "equal the starting point, and Nelder-Mead would report convergence on a " *
+        "degenerate simplex without moving."))
+    return nothing
+end
+
 """
     HutchSLQ(; logdet_probes=30, lanczos_iters=30, cg_tol=1e-6,
-             cg_maxiter=700, optim_iters=1000, g_reltol=1e-7)
+             cg_maxiter=700, optim_iters=1000, g_reltol=1e-7,
+             simplex_scale=0.5, simplex_shift=0.025)
 
 Matrix-free stochastic solver using Hutchinson stochastic Lanczos quadrature
 for log determinants and preconditioned conjugate gradients for linear solves.
+
+# The initial simplex
+
+Nelder-Mead starts from a simplex built around the starting point `x`: vertex
+`j+1` differs from `x` in coordinate `j` only, and equals
+`(1 + simplex_scale)·x_j + simplex_shift`. The defaults are Optim's own.
+
+The relative term dominates for a coordinate of ordinary magnitude — at the
+default `simplex_scale = 0.5`, `log σ = −0.9` reaches `−1.325`, i.e. `σ` down
+35% — so the simplex spans a wide region even when the starting point is
+already good. Lower it to search locally around a warm start:
+
+```julia
+ExactCholesky(simplex_scale = 0.05)                          # 5% around init
+ExactCholesky(simplex_scale = 0.0, simplex_shift = 0.05)     # uniform box
+```
+
+The absolute term is what saves coordinates near zero. At exactly zero the
+relative term vanishes and only `simplex_shift` remains, so setting it to zero
+makes the simplex degenerate in that coordinate and Nelder-Mead can report
+convergence having barely moved. A warm start produces exactly those
+coordinates: `log ω = 0`, `atanh(η) ≈ 0`, `log σ ≈ 0` at `σ ≈ 1`,
+`atanh(ρ/rho_limit) ≈ 0` at `ρ ≈ 0`. `ExactCholesky` is protected by its L-BFGS
+polish; `HutchSLQ` has no polish, so verify that a warm-started `HutchSLQ` fit
+actually moved.
+
+Setting both to zero is rejected.
+
+!!! note "The stopping tolerance also depends on the starting point"
+    `g_reltol` is scaled by `max(1, |NLL(x₀)|)`, so a better starting point
+    yields a tighter absolute threshold. `ExactCholesky` floors it at `1e-3`, so
+    it usually does not move there; under `HutchSLQ` the scaling passes through,
+    and a better start can therefore cost extra iterations rather than fewer.
+    (For a negative NLL the direction reverses.) This is deliberate — see issue
+    #115 — and means "warm start ⇒ fewer evaluations" is not guaranteed.
 """
 struct HutchSLQ <: AbstractGMRFSolver
     logdet_probes::Int
@@ -339,6 +389,8 @@ struct HutchSLQ <: AbstractGMRFSolver
     cg_maxiter::Int
     optim_iters::Int
     g_reltol::Float64
+    simplex_scale::Float64
+    simplex_shift::Float64
     function HutchSLQ(;
         logdet_probes::Int=30,
         lanczos_iters::Int=30,
@@ -346,6 +398,8 @@ struct HutchSLQ <: AbstractGMRFSolver
         cg_maxiter::Int=700,
         optim_iters::Int=1000,
         g_reltol::Float64=1e-7,
+        simplex_scale::Float64=0.5,
+        simplex_shift::Float64=0.025,
     )
         logdet_probes > 0 || throw(ArgumentError("logdet_probes must be positive."))
         lanczos_iters > 0 || throw(ArgumentError("lanczos_iters must be positive."))
@@ -353,27 +407,37 @@ struct HutchSLQ <: AbstractGMRFSolver
         cg_maxiter > 0 || throw(ArgumentError("cg_maxiter must be positive."))
         optim_iters > 0 || throw(ArgumentError("optim_iters must be positive."))
         g_reltol > 0 || throw(ArgumentError("g_reltol must be positive."))
-        new(logdet_probes, lanczos_iters, cg_tol, cg_maxiter, optim_iters, g_reltol)
+        validate_simplex(simplex_scale, simplex_shift)
+        new(logdet_probes, lanczos_iters, cg_tol, cg_maxiter, optim_iters, g_reltol,
+            simplex_scale, simplex_shift)
     end
 end
 
 """
-    ExactCholesky(; optim_iters=200, polish=true, autodiff=:finitediff, g_reltol=1e-7)
+    ExactCholesky(; optim_iters=200, polish=true, autodiff=:finitediff, g_reltol=1e-7,
+                  simplex_scale=0.5, simplex_shift=0.025)
 
 Deterministic solver based on sparse Cholesky factorizations.
+
+`simplex_scale` and `simplex_shift` size the initial Nelder-Mead simplex — see
+[`HutchSLQ`](@ref) for what they mean and when to lower them.
 """
 struct ExactCholesky <: AbstractGMRFSolver
     optim_iters::Int
     polish::Bool
     autodiff::Symbol
     g_reltol::Float64
+    simplex_scale::Float64
+    simplex_shift::Float64
     function ExactCholesky(; optim_iters::Int=200, polish::Bool=true,
-                           autodiff::Symbol=:finitediff, g_reltol::Float64=1e-7)
+                           autodiff::Symbol=:finitediff, g_reltol::Float64=1e-7,
+                           simplex_scale::Float64=0.5, simplex_shift::Float64=0.025)
         optim_iters > 0 || throw(ArgumentError("optim_iters must be positive."))
         autodiff in (:finitediff, :none) ||
             throw(ArgumentError("ExactCholesky supports autodiff=:finitediff or :none; got $(autodiff)."))
         g_reltol > 0 || throw(ArgumentError("g_reltol must be positive."))
-        new(optim_iters, polish, autodiff, g_reltol)
+        validate_simplex(simplex_scale, simplex_shift)
+        new(optim_iters, polish, autodiff, g_reltol, simplex_scale, simplex_shift)
     end
 end
 

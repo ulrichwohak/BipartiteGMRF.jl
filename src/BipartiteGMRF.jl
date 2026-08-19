@@ -9,6 +9,7 @@ import GaussianMarkovRandomFields: LatentModel, precision_matrix, model_name, hy
 using LinearAlgebra: Symmetric, SymTridiagonal, I, cholesky, diag, dot, eigen, issuccess, issymmetric, logdet, mul!, norm, tr
 using LinearSolve: CHOLMODFactorization
 import Optim:
+    AffineSimplexer,
     LBFGS,
     NelderMead,
     Options,

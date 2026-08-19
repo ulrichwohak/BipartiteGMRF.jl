@@ -147,12 +147,13 @@ end
 # Optimization loop
 # ═══════════════════════════════════════════════════════════════════════════
 #
-# Solver-specific behavior enters through four methods, each dispatching on
+# Solver-specific behavior enters through five methods, each dispatching on
 # the solver type (implemented in exact.jl and hutch.jl):
 #
 #   make_nll_cache(solver, model, stats)             -> cache
 #   nll_value(solver, model, stats, p, obs, cache; seed) -> Float64
 #   nelder_g_abstol(solver, g_rel)                   -> Float64
+#   nelder_simplexer(solver)                         -> Optim.Simplexer
 #   polish(solver, obj, res, verbose)                -> (res, elapsed_seconds)
 
 """
@@ -354,7 +355,8 @@ function optimize_problem(
     fscale = (isfinite(f0) && f0 < BIG_NLL) ? max(1.0, abs(f0)) : 1.0
     g_abstol = nelder_g_abstol(solver, solver.g_reltol * fscale)
     opts = Options(iterations=solver.optim_iters, show_trace=verbose, g_tol=g_abstol)
-    elapsed = @elapsed res = optimize(obj, p0, NelderMead(), opts)
+    nm = NelderMead(initial_simplex=nelder_simplexer(solver))
+    elapsed = @elapsed res = optimize(obj, p0, nm, opts)
     res, polish_elapsed = polish(solver, obj, res, verbose)
     elapsed += polish_elapsed
 
@@ -453,7 +455,7 @@ ELBO rather than the exact likelihood. `fix_rho` is not supported here. `init`
 warm-starts `rho`, `sigma_a`, `sigma_z` and the error scale (`phi`, or
 `sigma_epsilon` converted through `omega_bar = phi*delta/(delta-2)`); `r` and
 `delta` are re-estimated by bracketed searches, so passing them seeds only the
-first E-step. See [`optimize_emiw`](@ref) and [`fit_mle`](@ref).
+first E-step. See [`fit_mle`](@ref) for the full `init` contract.
 """
 function solve(
     model::BipartiteVarianceStableModel,

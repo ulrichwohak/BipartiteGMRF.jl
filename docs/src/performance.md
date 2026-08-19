@@ -35,19 +35,43 @@ boundary — `rho` pinned at `rho_limit`, a variance collapsed to zero — refit
 from a different, informed starting point is what separates a genuine feature of
 the likelihood from an artifact of where the optimizer began.
 
-A warm start is not guaranteed to be faster, and the reasons are worth knowing
-before reading too much into a timing:
+A warm start on its own is not guaranteed to be faster, and the reasons are
+worth knowing before reading too much into a timing.
 
-- Nelder-Mead's initial simplex perturbs each coordinate by 50%, so it still
-  spans a wide region around `init`.
-- Coordinates whose *unconstrained* value is near zero — `log omega = 0`,
-  `atanh(eta) ≈ 0`, `log sigma ≈ 0` at `sigma ≈ 1`, all of which a warm start
-  tends to produce — get an absolute step of 0.025 instead. A simplex that is
-  near-degenerate in one coordinate can satisfy the convergence test almost
-  immediately. `ExactCholesky` recovers through its L-BFGS polish; `HutchSLQ`
-  has no polish, so check that a warm-started `HutchSLQ` fit actually moved.
-- The convergence threshold is scaled by the objective *at the starting point*,
-  so a better start also buys a tighter tolerance. Under `ExactCholesky` a floor
-  masks this; under `HutchSLQ` it can cost extra iterations.
+### Size the simplex to match the start
 
-Exposing the simplex scale is tracked as issue #115.
+Nelder-Mead does not begin at a point but at a simplex around it: vertex `j+1`
+differs from the start in coordinate `j` only, and equals
+`(1 + simplex_scale)·x_j + simplex_shift`. At the default `simplex_scale = 0.5`
+that is a 50% relative perturbation — enormous on the unconstrained scale, where
+`log σ = −0.9` reaches `−1.325`, i.e. `σ` down 35%. So a warm-started fit with
+default settings still searches a wide region, and most of the benefit of `init`
+is thrown away. Shrink the simplex to keep the search local:
+
+```julia
+# search ±5% around a good starting point
+fit_mle(BipartiteVarianceStableModel, f, w, y;
+        solver = ExactCholesky(simplex_scale = 0.05),
+        init   = params(pilot))
+
+# or a uniform absolute box, independent of coordinate magnitude
+ExactCholesky(simplex_scale = 0.0, simplex_shift = 0.05)
+```
+
+`simplex_shift` is the absolute term, and it is what rescues coordinates near
+zero: at exactly zero the relative term vanishes and only the shift remains. A
+warm start produces exactly those coordinates — `log omega = 0`,
+`atanh(eta) ≈ 0`, `log sigma ≈ 0` at `sigma ≈ 1`, `atanh(rho/rho_limit) ≈ 0` at
+`rho ≈ 0` — so a simplex that is degenerate in one of them can satisfy the
+convergence test having barely moved. Setting both knobs to zero is rejected for
+that reason. `ExactCholesky` recovers through its L-BFGS polish; `HutchSLQ` has
+no polish, so check that a warm-started `HutchSLQ` fit actually moved.
+
+### The stopping tolerance also depends on the start
+
+`g_reltol` is scaled by `max(1, |NLL(x₀)|)`, so a better starting point yields a
+tighter absolute threshold. `ExactCholesky` floors it at `1e-3`, so it usually
+does not move there; under `HutchSLQ` the scaling passes through and a better
+start can cost extra iterations rather than fewer. (For a negative NLL the
+direction reverses.) This is deliberate — pinning it would silently change when
+existing fits stop.

@@ -131,6 +131,9 @@ nll_value(::ExactCholesky, model, stats, params_full, obs, cache::ExactWorkspace
 # the L-BFGS polish stage early instead of letting the simplex stall.
 nelder_g_abstol(::ExactCholesky, g_rel::Float64) = max(1e-3, g_rel)
 
+nelder_simplexer(solver::ExactCholesky) =
+    AffineSimplexer(solver.simplex_shift, solver.simplex_scale)
+
 function polish(solver::ExactCholesky, obj, res, verbose::Bool)
     (solver.polish && solver.autodiff == :finitediff) || return res, 0.0
     p_start = Vector{Float64}(minimizer(res))

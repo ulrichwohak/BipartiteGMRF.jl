@@ -180,6 +180,9 @@ nll_value(solver::HutchSLQ, model, stats, params_full, obs, cache::Union{HutchCa
 
 nelder_g_abstol(::HutchSLQ, g_rel::Float64) = g_rel
 
+nelder_simplexer(solver::HutchSLQ) =
+    AffineSimplexer(solver.simplex_shift, solver.simplex_scale)
+
 # No gradient polish for the stochastic objective: finite differences of a
 # noisy function are dominated by probe noise.
 polish(::HutchSLQ, obj, res, verbose::Bool) = res, 0.0

@@ -229,6 +229,74 @@
             ss_fixed, nothing, false, 0, false, params(r_fixed); rho_limit = 0.99)
     end
 
+    # The initial simplex is what decides whether a warm start is worth
+    # anything: Optim's default perturbs each coordinate by 50%, so the simplex
+    # spans a wide region around `init` no matter how good `init` is.
+    @testset "initial simplex (issue #115)" begin
+        # AffineSimplexer's constructor is positional (a, b) while the solver
+        # kwargs are named for what they do — guard the mapping, because
+        # swapping them would be silent and would invert the whole feature.
+        s = BipartiteGMRF.nelder_simplexer(
+            ExactCholesky(simplex_scale = 0.3, simplex_shift = 0.07))
+        @test s.b == 0.3        # relative
+        @test s.a == 0.07       # absolute
+        sh = BipartiteGMRF.nelder_simplexer(
+            HutchSLQ(simplex_scale = 0.2, simplex_shift = 0.01))
+        @test sh.b == 0.2
+        @test sh.a == 0.01
+
+        # Defaults are Optim's own, so nothing pre-#115 moves.
+        for d0 in (BipartiteGMRF.nelder_simplexer(ExactCholesky()),
+                   BipartiteGMRF.nelder_simplexer(HutchSLQ()))
+            @test d0.b == 0.5
+            @test d0.a == 0.025
+        end
+        r_def = fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y; seed = 1,
+            solver = ExactCholesky(optim_iters = 40, polish = false))
+        r_exp = fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y; seed = 1,
+            solver = ExactCholesky(optim_iters = 40, polish = false,
+                                   simplex_scale = 0.5, simplex_shift = 0.025))
+        @test r_def.nll == r_exp.nll
+        @test r_def.theta_unconstrained == r_exp.theta_unconstrained
+
+        # ... and the setting must actually reach the optimizer: a deliberately
+        # tiny simplex has to change the fit. Without this, a silent revert to
+        # a bare NelderMead() would leave every other assertion here passing.
+        r_tiny = fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y; seed = 1,
+            solver = ExactCholesky(optim_iters = 40, polish = false,
+                                   simplex_scale = 0.0, simplex_shift = 1e-4))
+        @test r_tiny.theta_unconstrained != r_def.theta_unconstrained
+
+        # Vertex j+1 is (1 + b)*x_j + a. At x_j exactly 0 the relative term
+        # vanishes, so `simplex_shift` is the only thing that moves that
+        # coordinate — which is precisely the case a warm start produces
+        # (log omega = 0, atanh(eta) ~ 0, log sigma ~ 0 at sigma ~ 1).
+        @test (1 + s.b) * 0.0 + s.a == s.a
+        @test BipartiteGMRF.nelder_simplexer(ExactCholesky()).a > 0
+
+        # A warm start with a tight simplex searches locally: same optimum or
+        # better, and no more work than the cold default.
+        r_warm = fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y; seed = 1,
+            solver = ExactCholesky(optim_iters = 40, polish = false,
+                                   simplex_scale = 0.05),
+            init = params(r_def))
+        @test r_warm.nll <= r_def.nll + 1e-8
+        @test r_warm.obj_evals <= r_def.obj_evals
+
+        # A uniform absolute box (no relative term) is a valid configuration.
+        r_box = fit_mle(BipartiteNormalizedModel, d.f, d.w, d.y; seed = 1,
+            solver = ExactCholesky(optim_iters = 40, polish = false,
+                                   simplex_scale = 0.0, simplex_shift = 0.05),
+            init = params(r_def))
+        @test isfinite(r_box.nll)
+        @test r_box.nll <= r_def.nll + 1e-8
+
+        for (sc, sh_) in ((-0.1, 0.025), (0.5, -1.0), (0.0, 0.0), (NaN, 0.025), (0.5, Inf))
+            @test_throws ArgumentError ExactCholesky(simplex_scale = sc, simplex_shift = sh_)
+            @test_throws ArgumentError HutchSLQ(simplex_scale = sc, simplex_shift = sh_)
+        end
+    end
+
     @testset "error_blocks = :iw (EMIWBlocks)" begin
         fb = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6]
         wb = [1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 1]

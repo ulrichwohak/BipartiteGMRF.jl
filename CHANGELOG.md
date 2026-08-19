@@ -19,6 +19,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   solver `r`/`delta`) warns and is ignored. `init = nothing` reproduces the
   previous starting point exactly. See `docs/src/performance.md` for when a
   warm start does and does not save time.
+- **Nelder-Mead initial simplex controls** (`simplex_scale`, `simplex_shift` on
+  `ExactCholesky` and `HutchSLQ`, issue #115). Vertex `j+1` of the initial
+  simplex is `(1 + simplex_scale)·x_j + simplex_shift`. The defaults (0.5 and
+  0.025) are Optim's own, so existing fits are unchanged; lowering
+  `simplex_scale` is what makes a warm start actually search locally rather
+  than re-spanning the region around it. `simplex_shift` is the absolute term
+  that keeps a coordinate sitting at exactly zero — which warm starts routinely
+  produce (`log ω = 0`, `atanh(η) ≈ 0`) — from degenerating; setting both to
+  zero is rejected.
 
 ### Changed
 
