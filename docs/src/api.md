@@ -23,6 +23,7 @@ fit_mle(::Type{<:AbstractBipartiteModel}, ::BipartiteGMRFStats)
 fit_mle(::Type{<:AbstractBipartiteModel}, ::AbstractVector{<:Integer}, ::AbstractVector{<:Integer}, ::AbstractVector{<:Real})
 fit_mle(::AbstractBipartiteModel, ::BipartiteGMRFStats)
 solve(::AbstractBipartiteModel, ::BipartiteGMRFStats, ::AbstractGMRFSolver)
+solve(::BipartiteVarianceStableModel, ::BipartiteGMRFStats, ::EMIWBlocks)
 BipartiteGMRFStats
 GMRFResult
 ```
