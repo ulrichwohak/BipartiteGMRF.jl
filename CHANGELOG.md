@@ -3,6 +3,20 @@
 All notable changes to BipartiteGMRF.jl are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] &mdash; feat/iw-blocks
+
+### Added
+
+- **Inverse-Wishart per-firm error blocks** (`error_blocks = :iw`,
+  `firm_group`, `EMIWBlocks`, issue #112). The per-firm error covariances
+  `Ω_i` are treated as nuisance realizations drawn iid from an inverse-Wishart
+  population law and integrated out — never estimated — via variational EM
+  over `q(α)·∏q(u_i)`. Estimated hyperparameters `(ρ, σ_a, σ_z, φ, r, δ)`
+  (mean error scale, within-firm correlation, and Student-t tail dof) are
+  reported in the result metadata (`error_scale_phi`, `error_corr_r`,
+  `t_dof_delta`, `omega_bar`); the objective is the ELBO, a lower bound on the
+  integrated log-likelihood. Requires `BipartiteVarianceStableModel`.
+
 ## [v0.4.0] &mdash; 2026-08-19
 
 ### Added

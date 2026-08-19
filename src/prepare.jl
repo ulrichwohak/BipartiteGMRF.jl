@@ -844,3 +844,57 @@ function ar1_observation_stats(ar::ErrorAR1Stats, eta::Float64, n_firms::Int)
                   ar.mean_full.p)
     return design, weights, ms
 end
+
+# ─── Per-firm error blocks: edge-level, never collapsed ────────────────────
+
+"""
+    build_block_V_stats(f_obs, w_obs, y_obs, firm_group, n_firms, n_workers)
+
+Design products for `error_blocks=:iw`: observations stay at edge level (the
+returns of [`observation_rows`](@ref) with no `match_ids`), and each firm's
+rows form one error block modeled by the active block solver ([`EMIWBlocks`](@ref),
+which integrates the block covariance out). Blocks are discovered from
+`firm_group` (first-appearance order), never parametrized.
+
+Returns `(V, yv, block_of, sizes)`. Each `firm_group` value must span a single
+firm (the grouping key is the firm id per row).
+"""
+function build_block_V_stats(
+    f_obs::Vector{Int},
+    w_obs::Vector{Int},
+    y_obs::Vector{Float64},
+    firm_group::Vector{Int},
+    n_firms::Int,
+    n_workers::Int,
+)
+    V, yv, _ = observation_rows(f_obs, w_obs, y_obs, nothing, n_firms, n_workers)
+    K = length(yv)
+
+    # firm_group must be the rowwise firm mapping: the estimator has one latent
+    # mixing weight u_i per firm, so a firm split across several labels (or a
+    # label spanning firms) would fit a different model than the API claims.
+    firm_group == f_obs || throw(ArgumentError(
+        "error_blocks=:iw requires firm_group to equal the firm id per row; " *
+        "each row's firm_group value must match its firm index."))
+
+    gpos = Dict{Int,Int}()
+    members = Vector{Vector{Int}}()
+    for s in 1:K
+        g = get!(gpos, firm_group[s]) do
+            push!(members, Int[])
+            length(members)
+        end
+        push!(members[g], s)
+    end
+    B = length(members)
+    block_of = zeros(Int, K)
+    sizes = Vector{Int}(undef, B)
+    for i in 1:B
+        rows = members[i]
+        sizes[i] = length(rows)
+        for s in rows
+            block_of[s] = i
+        end
+    end
+    return V, yv, block_of, sizes
+end

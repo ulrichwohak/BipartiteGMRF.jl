@@ -100,6 +100,8 @@ function suffstats(
     error_group_cap::Integer=8,
     error_eta::Union{Nothing,Real,Symbol}=nothing,
     edge_index::Union{Nothing,AbstractVector{<:Integer}}=nothing,
+    error_blocks::Union{Nothing,Symbol}=nothing,
+    firm_group::Union{Nothing,AbstractVector{<:Integer}}=nothing,
 ) where {M<:AbstractBipartiteModel}
     model_adjacency in (:binary, :counts) ||
         throw(ArgumentError("model_adjacency must be :binary or :counts; got $(model_adjacency)."))
@@ -154,6 +156,27 @@ function suffstats(
             throw(ArgumentError("edge_index entries must be finite integers."))
     elseif edge_index !== nothing
         throw(ArgumentError("edge_index is only meaningful with error_eta."))
+    end
+
+    if error_blocks !== nothing
+        error_blocks == :iw ||
+            throw(ArgumentError("error_blocks must be :iw; got $(error_blocks)."))
+        error_cov === nothing ||
+            throw(ArgumentError("error_blocks and error_cov are mutually exclusive."))
+        error_groups === nothing ||
+            throw(ArgumentError("error_blocks and error_groups are mutually exclusive."))
+        error_eta === nothing ||
+            throw(ArgumentError("error_blocks and error_eta are mutually exclusive."))
+        weighting.observations == :raw ||
+            throw(ArgumentError("error_blocks=:iw currently supports only Weighting(observations=:raw)."))
+        firm_group !== nothing ||
+            throw(ArgumentError("error_blocks=:iw requires firm_group (firm id per row)."))
+        length(firm_group) == length(y) ||
+            throw(ArgumentError("firm_group must have the same length as y."))
+        match_id === nothing ||
+            throw(ArgumentError("error_blocks=:iw does not yet support match_id."))
+    elseif firm_group !== nothing
+        throw(ArgumentError("firm_group is only meaningful with error_blocks."))
     end
 
     length(y) > 0 || throw(ArgumentError("Empty dataset."))
@@ -252,6 +275,7 @@ function suffstats(
     grouped_aux = nothing
     ar1_aux = nothing
     ar1_stats = nothing
+    block_aux = nothing
     block = if obs == :raw
         if error_cov !== nothing
             R_obs = SparseMatrixCSC{Float64,Int}(sparse(error_cov)[obs_mask, obs_mask])
@@ -308,6 +332,22 @@ function suffstats(
                 base = EdgeData(f_obs, w_obs, y_obs_scaled, ones(Int, personyear_rows)),
                 design = ar1_design0,
                 weights = ar1_weights0,
+                within_ss = 0.0,
+                within_df = 0,
+                rho_eps_likelihood = nothing,
+            )
+        elseif error_blocks !== nothing
+            blocks_obs = Int.(collect(firm_group))[obs_mask]
+            Vfb, yfb, block_of, sz =
+                build_block_V_stats(f_obs, w_obs, y_obs_scaled, blocks_obs, n_f, n_w)
+            block_aux = (V = Vfb, y = yfb, block_of = block_of, sizes = sz)
+            (
+                K = length(yfb),
+                base = EdgeData(f_obs, w_obs, y_obs_scaled, ones(Int, personyear_rows)),
+                # The iid edge-level design is a placeholder; the EM reads V and y
+                # from `error_blocks` directly.
+                design = build_V_stats(f_obs, w_obs, y_obs_scaled, n_f, n_w),
+                weights = trivial_weight_stats(length(yfb)),
                 within_ss = 0.0,
                 within_df = 0,
                 rho_eps_likelihood = nothing,
@@ -414,6 +454,7 @@ function suffstats(
         correlated_errors = error_cov !== nothing,
         error_groups = error_groups !== nothing,
         ar1_errors = error_eta !== nothing,
+        error_blocks = error_blocks !== nothing,
     )
 
     # AR(1) mean-structure components (populated only when X is supplied).
@@ -425,10 +466,12 @@ function suffstats(
             ar1_stats.n_blocks, ar1_stats.K, ar1_stats.eta_fixed,
             ar1_mean.full, ar1_mean.adj, ar1_mean.int)
     end
-
     error_classes = grouped_aux === nothing ? nothing :
         ErrorClassStats(grouped_aux.sizes, grouped_aux.counts, grouped_aux.vtv_nzvals,
                         grouped_aux.projected, grouped_aux.ydot, grouped_mean)
+
+    error_blocks_stats = block_aux === nothing ? nothing :
+        FirmBlockStats(block_aux.V, block_aux.y, block_aux.block_of, block_aux.sizes)
 
     return BipartiteGMRFStats(
         block.design,
@@ -451,6 +494,7 @@ function suffstats(
         mean_stats,
         error_classes,
         ar1_stats,
+        error_blocks_stats,
         metadata,
     )
 end

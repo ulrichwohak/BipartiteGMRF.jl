@@ -150,6 +150,14 @@ counts four; a `fix_rho` fit counts one fewer, and a jointly estimated
 `rho_eps=:estimate` counts one more. Parameters held fixed do not count.
 """
 function dof(result::GMRFResult)
+    if result.solver isa EMIWBlocks
+        # Integrated likelihood: the Ω_i are marginalized out, so only the
+        # pooled mixing-law hyperparameters count — (ρ, σ_a, σ_z) + φ + the
+        # estimated members of (r, δ).
+        k = 4 + (result.solver.r == :estimate ? 1 : 0) +
+            (result.solver.delta == :estimate ? 1 : 0)
+        return k + (result.beta === nothing ? 0 : length(result.beta))
+    end
     k = 4
     get(result.metadata, :fix_rho, nothing) === nothing || (k -= 1)
     w = result.stats.weighting

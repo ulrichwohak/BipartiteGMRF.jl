@@ -13,6 +13,12 @@ function validate_capability(model::AbstractBipartiteModel, stats::BipartiteGMRF
     if stats.error_ar1 !== nothing && !(solver isa ExactCholesky)
         throw(ArgumentError("error_eta currently supports only the ExactCholesky solver."))
     end
+    if stats.error_blocks !== nothing
+        solver isa EMIWBlocks ||
+            throw(ArgumentError("error_blocks=:iw requires the EMIWBlocks solver."))
+        model isa BipartiteVarianceStableModel ||
+            throw(ArgumentError("error_blocks=:iw requires the BipartiteVarianceStableModel."))
+    end
     return nothing
 end
 
@@ -206,6 +212,43 @@ function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothi
     )
 end
 
+function build_emiw_result(fit, solver::EMIWBlocks, fix_rho::Union{Nothing,Float64})
+    base = fit_result_metadata(fit.model, fit.rho, fix_rho)
+    return GMRFResult(
+        fit.rho,
+        fit.sigma_a,
+        fit.sigma_z,
+        fit.sigma_epsilon,
+        fit.rho_eps,
+        nothing,  # eta (not part of the integrated-likelihood model)
+        fit.beta,
+        fit.nll,
+        fit.converged,
+        fit.iterations,
+        fit.obj_evals,
+        fit.optimization_time,
+        fit.model,
+        fit.stats,
+        solver,
+        fit.theta_unconstrained,
+        merge(base, (
+            # integrated-likelihood blocks: Ω_i marginalized out under
+            # IW(δ + m_i − 1, ∝ φR(r)); nll is −ELBO (a bound, not the exact
+            # marginal NLL — see EMIWBlocks docs).
+            omega_bar = fit.omega_bar,          # mean error variance = sigma_epsilon²
+            error_scale_phi = fit.phi,
+            error_corr_r = fit.r,
+            t_dof_delta = fit.delta,
+            u_bar = fit.u_bar,
+            elbo = -fit.nll,
+            objective = :elbo,
+            block_sizes = fit.stats.error_blocks.sizes,
+            sigma_a_network_identified = true,
+            unidentified_at_rho_zero = abs(fit.rho) < 1e-8,
+        )),
+    )
+end
+
 function optimize_problem(
     model::AbstractBipartiteModel,
     stats::BipartiteGMRFStats,
@@ -326,4 +369,19 @@ function solve(
 )
     fit = optimize_problem(model, stats, solver; fix_rho=fix_rho, seed=seed, verbose=verbose)
     return build_gmrf_result(fit, solver, fix_rho)
+end
+
+function solve(
+    model::BipartiteVarianceStableModel,
+    stats::BipartiteGMRFStats,
+    solver::EMIWBlocks;
+    fix_rho::Union{Nothing,Float64}=nothing,
+    seed::Int=42,
+    verbose::Bool=false,
+)
+    fix_rho === nothing ||
+        throw(ArgumentError("fix_rho is not yet supported for EMIWBlocks."))
+    validate_capability(model, stats, solver)
+    fit = optimize_emiw(model, stats, solver; verbose=verbose)
+    return build_emiw_result(fit, solver, fix_rho)
 end
