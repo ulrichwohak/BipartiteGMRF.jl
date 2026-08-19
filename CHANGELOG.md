@@ -3,6 +3,29 @@
 All notable changes to BipartiteGMRF.jl are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Warm starts** (`init`, issue #114). `fit_mle`, `solve` and
+  `optimize_problem` take an optional `init` NamedTuple of starting values,
+  replacing the fixed heuristic in `initial_params` field by field: `rho`,
+  `sigma_a`, `sigma_z`, `sigma_epsilon`, plus `rho_eps`, `eta` (`error_eta`),
+  `omega` (`error_groups`) and `phi`/`r`/`delta` (`error_blocks = :iw`).
+  Values are read in **original outcome units**, so `init = params(result)`
+  restarts a previous fit and a minimum-distance pilot estimate needs no
+  rescaling. A field for a parameter the fit does not estimate is an error; one
+  for a parameter that is pinned (`fix_rho`, a numeric `error_eta`, a fixed
+  solver `r`/`delta`) warns and is ignored. `init = nothing` reproduces the
+  previous starting point exactly. See `docs/src/performance.md` for when a
+  warm start does and does not save time.
+
+### Changed
+
+- `optimize_emiw`'s private `init_theta` / `init_phi` keywords are replaced by
+  the single `init` NamedTuple, which accepts partial specifications and is
+  validated (the old `init_theta` reached `atanh` unguarded).
+
 ## [v0.4.1] &mdash; 2026-08-19
 
 ### Added

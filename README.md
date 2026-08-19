@@ -175,6 +175,24 @@ ss = suffstats(BipartiteNormalizedModel, f, w, y)
 result = fit_mle(BipartiteNormalizedModel, ss; solver = ExactCholesky())
 ```
 
+Pass `init` to start the optimizer somewhere other than the built-in
+heuristic &mdash; useful for seeding several error models from one pilot
+estimate, and for checking whether a boundary solution is a feature of the
+likelihood or an artifact of where the optimizer started:
+
+```julia
+pilot = fit_mle(BipartiteNormalizedModel, ss; solver = ExactCholesky())
+
+result = fit_mle(BipartiteNormalizedModel, ss;
+    solver = ExactCholesky(),
+    init   = params(pilot),      # or (rho = 0.55, sigma_a = 1.4, ...)
+)
+```
+
+Every field is optional and read in the outcome's own units; whatever is
+omitted keeps its default. See [Performance](docs/src/performance.md) for when
+a warm start does and does not save time.
+
 `GMRFResult` implements `StatsAPI.StatisticalModel`:
 
 ```julia

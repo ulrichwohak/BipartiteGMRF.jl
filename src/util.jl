@@ -167,10 +167,13 @@ end
 
 Check an `init` NamedTuple against the parameters this fit actually estimates.
 `status` maps each optional block parameter (`rho`, `rho_eps`, `eta`, `omega`,
-`phi`, `r`, `delta`) to `:free`, `:pinned`, or `:absent`. A field for an
-`:absent` parameter is an error — silently ignoring it would look like a
-working warm start. A field for a `:pinned` parameter warns and is ignored.
-Fields whose value is `nothing` count as not supplied.
+`phi`, `r`, `delta`) to `:free`, `:absent`, or — for a parameter that is part
+of the fit but held fixed — the value it is pinned at (`:pinned` when that
+value is not a number). A field for an `:absent` parameter is an error;
+silently ignoring it would look like a working warm start. A field for a pinned
+parameter is ignored, with a warning *unless* it already agrees with the pinned
+value, which is what keeps `init = params(result)` quiet when re-fitting the
+same configuration. Fields whose value is `nothing` count as not supplied.
 """
 function validate_init(
     init::Union{Nothing,NamedTuple},
@@ -194,12 +197,20 @@ function validate_init(
             hint = get(INIT_ABSENT_HINT, k, "it is not part of this fit")
             throw(ArgumentError(
                 "init.$(k) was given, but this fit does not estimate $(k); $(hint)."))
-        elseif st === :pinned
-            # The value is discarded, so its domain is not checked.
-            hint = get(INIT_PINNED_HINT, k, "it is held fixed for this fit")
-            @warn "init.$(k) is ignored: $(hint)."
-        else
+        elseif st === :free
             validate_init_domain(v, k, limit)
+        else
+            # Pinned: the value is discarded, so its domain is not checked.
+            # Stay quiet when it already agrees with the value in effect —
+            # re-fitting the same configuration with init = params(result)
+            # legitimately carries the pinned parameter along.
+            pinned = st isa Real ? Float64(st) : nothing
+            agrees = pinned !== nothing && v isa Real &&
+                isapprox(Float64(v), pinned; rtol=1e-8, atol=1e-12)
+            if !agrees
+                hint = get(INIT_PINNED_HINT, k, "it is held fixed for this fit")
+                @warn "init.$(k) is ignored: $(hint)."
+            end
         end
     end
 
@@ -240,6 +251,32 @@ function validate_init_domain(v, name::Symbol, rho_limit::Float64)
             "init.r must satisfy -1 < r < 1; got $(v)."))
     end
     return nothing
+end
+
+"""
+    rescale_init_sigmas(init, y_std)
+
+Map an `init` written in original outcome units onto the standardized scale the
+optimizer works in. `suffstats(...; standardize=true)` divides `y` by `y_std`
+and every scale is multiplied back by `y_std` on the way out, so a caller's
+`sigma_a`, `sigma_z`, `sigma_epsilon` (and the EMIW scale `phi`, a variance)
+are the ones that need converting. `rho`, `rho_eps`, `eta`, `omega` and `r` are
+scale-free and pass through untouched.
+"""
+function rescale_init_sigmas(init::Union{Nothing,NamedTuple}, y_std::Real)
+    init === nothing && return nothing
+    s = Float64(y_std)
+    s == 1.0 && return init
+    out = init
+    for name in (:sigma_a, :sigma_z, :sigma_epsilon)
+        v = init_field(init, name)
+        v === nothing && continue
+        out = merge(out, NamedTuple{(name,)}((validate_positive_init(v, name) / s,)))
+    end
+    phi = init_field(init, :phi)
+    phi === nothing ||
+        (out = merge(out, (phi = validate_positive_init(phi, :phi) / s^2,)))
+    return out
 end
 
 """

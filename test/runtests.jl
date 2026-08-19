@@ -24,6 +24,7 @@ include("test_decomposition.jl")
 include("test_covariance.jl")
 include("integration.jl")
 include("test_fit_mle.jl")
+include("test_init_warm_start.jl")
 include("test_statsapi.jl")
 # test_e2e_leaveout.jl is excluded from the default suite: it depends on the
 # unregistered LeaveOut package (KSS leave-one-out reference implementation)

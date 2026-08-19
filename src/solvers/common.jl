@@ -249,11 +249,82 @@ function build_emiw_result(fit, solver::EMIWBlocks, fix_rho::Union{Nothing,Float
     )
 end
 
+"""
+    init_status(stats, fix_rho, estimate_rho_eps, n_omega, estimate_eta)
+
+Which optional parameters this fit estimates (`:free`), does not have at all
+(`:absent`), or holds fixed — reported as the pinned value itself, so that
+[`validate_init`](@ref) can stay quiet when an `init` field merely repeats it.
+An `init` field for a parameter the fit never touches is reported rather than
+silently dropped.
+
+`rho_eps` is `:absent` under `:raw` and `:edge` weighting, and the ω ladder and
+η are `:raw`-only (`suffstats` enforces this), so at most one of `rho_eps`, ω,
+η is ever present — which is what lets them share slot 5 of the parameter
+vector.
+"""
+function init_status(
+    stats::BipartiteGMRFStats,
+    fix_rho::Union{Nothing,Float64},
+    estimate_rho_eps::Bool,
+    n_omega::Int,
+    estimate_eta::Bool,
+)
+    return (
+        rho = fix_rho === nothing ? :free : fix_rho,
+        rho_eps = stats.weighting.observations == :effective ?
+            (estimate_rho_eps ? :free : stats.weighting.rho_eps) : :absent,
+        eta = stats.error_ar1 === nothing ? :absent :
+            (estimate_eta ? :free : stats.error_ar1.eta_fixed),
+        omega = n_omega > 0 ? :free : :absent,
+        # The inverse-Wishart block parameters live on the EMIWBlocks path,
+        # which has its own solve method and never reaches optimize_problem.
+        phi = :absent,
+        r = :absent,
+        delta = :absent,
+    )
+end
+
+"""
+    initial_point(stats, fix_rho, estimate_rho_eps, n_omega, estimate_eta, init; rho_limit)
+
+Assemble the optimizer's starting vector in the free-parameter layout: the
+`rho` slot (absent under `fix_rho`), `log sigma_a`, `log sigma_z`,
+`log sigma_epsilon`, then whichever of `rho_eps`, the `log omega` ladder, or
+`eta` this fit estimates. `init` is a NamedTuple in *original outcome units*
+(see [`rescale_init_sigmas`](@ref)); `init=nothing` reproduces the heuristic
+defaults exactly.
+
+Split out of `optimize_problem` because the starting point is otherwise
+unobservable: `theta_unconstrained` on the result is the *minimizer*, and
+Nelder-Mead builds its full simplex even at `optim_iters=1`.
+"""
+function initial_point(
+    stats::BipartiteGMRFStats,
+    fix_rho::Union{Nothing,Float64},
+    estimate_rho_eps::Bool,
+    n_omega::Int,
+    estimate_eta::Bool,
+    init::Union{Nothing,NamedTuple};
+    rho_limit::Real=0.99,
+)
+    status = init_status(stats, fix_rho, estimate_rho_eps, n_omega, estimate_eta)
+    # Validate what the caller actually wrote, so the message quotes their
+    # numbers; the sigma rescaling that follows preserves positivity.
+    validate_init(init, status; rho_limit=rho_limit)
+    scaled = rescale_init_sigmas(init, stats.y_std)
+    p0 = initial_params(fix_rho, estimate_rho_eps; rho_limit=rho_limit, init=scaled)
+    n_omega > 0 && append!(p0, init_omega_codes(scaled, n_omega))
+    estimate_eta && push!(p0, init_eta_code(scaled))
+    return p0
+end
+
 function optimize_problem(
     model::AbstractBipartiteModel,
     stats::BipartiteGMRFStats,
     solver::AbstractGMRFSolver;
     fix_rho::Union{Nothing,Float64}=nothing,
+    init::Union{Nothing,NamedTuple}=nothing,
     seed::Int=42,
     verbose::Bool=false,
 )
@@ -266,10 +337,9 @@ function optimize_problem(
     estimate_rho_eps = stats.weighting.observations == :effective &&
         stats.weighting.estimate_rho_eps
     estimate_eta = stats.error_ar1 !== nothing && stats.error_ar1.eta_fixed === nothing
-    p0 = initial_params(fix_rho, estimate_rho_eps; rho_limit=limit)
     n_omega = stats.error_classes === nothing ? 0 : length(stats.error_classes.counts) - 1
-    n_omega > 0 && append!(p0, zeros(n_omega))
-    estimate_eta && append!(p0, [eta_to_unconstrained(0.5)])
+    p0 = initial_point(stats, fix_rho, estimate_rho_eps, n_omega, estimate_eta, init;
+        rho_limit=limit)
     evals = Ref(0)
     cache = make_nll_cache(solver, model, stats)
 
@@ -349,14 +419,15 @@ end
 
 """
     solve(model::AbstractBipartiteModel, stats::BipartiteGMRFStats, solver::AbstractGMRFSolver;
-          fix_rho=nothing, seed=42, verbose=false)
+          fix_rho=nothing, init=nothing, seed=42, verbose=false)
 
 Fit a bipartite GMRF by maximum likelihood with the given solver. Extends
 `CommonSolve.solve`, so it composes with `using LinearSolve` or other
 SciML-style packages without name clashes. [`fit_mle`](@ref) is the
 higher-level entry point and delegates here.
 
-`fix_rho` fixes the local-dependence parameter during optimization. Use
+`fix_rho` fixes the local-dependence parameter during optimization. `init`
+warm-starts the optimizer — see [`fit_mle`](@ref) for its fields and units. Use
 [`decompose`](@ref) on the returned result for variance decompositions.
 """
 function solve(
@@ -364,24 +435,38 @@ function solve(
     stats::BipartiteGMRFStats,
     solver::AbstractGMRFSolver;
     fix_rho::Union{Nothing,Float64}=nothing,
+    init::Union{Nothing,NamedTuple}=nothing,
     seed::Int=42,
     verbose::Bool=false,
 )
-    fit = optimize_problem(model, stats, solver; fix_rho=fix_rho, seed=seed, verbose=verbose)
+    fit = optimize_problem(model, stats, solver;
+        fix_rho=fix_rho, init=init, seed=seed, verbose=verbose)
     return build_gmrf_result(fit, solver, fix_rho)
 end
 
+"""
+    solve(model::BipartiteVarianceStableModel, stats::BipartiteGMRFStats, solver::EMIWBlocks;
+          init=nothing, seed=42, verbose=false)
+
+Fit the inverse-Wishart error-block model by variational EM, maximizing the
+ELBO rather than the exact likelihood. `fix_rho` is not supported here. `init`
+warm-starts `rho`, `sigma_a`, `sigma_z` and the error scale (`phi`, or
+`sigma_epsilon` converted through `omega_bar = phi*delta/(delta-2)`); `r` and
+`delta` are re-estimated by bracketed searches, so passing them seeds only the
+first E-step. See [`optimize_emiw`](@ref) and [`fit_mle`](@ref).
+"""
 function solve(
     model::BipartiteVarianceStableModel,
     stats::BipartiteGMRFStats,
     solver::EMIWBlocks;
     fix_rho::Union{Nothing,Float64}=nothing,
+    init::Union{Nothing,NamedTuple}=nothing,
     seed::Int=42,
     verbose::Bool=false,
 )
     fix_rho === nothing ||
         throw(ArgumentError("fix_rho is not yet supported for EMIWBlocks."))
     validate_capability(model, stats, solver)
-    fit = optimize_emiw(model, stats, solver; verbose=verbose)
+    fit = optimize_emiw(model, stats, solver; verbose=verbose, init=init)
     return build_emiw_result(fit, solver, fix_rho)
 end

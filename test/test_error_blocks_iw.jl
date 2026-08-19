@@ -150,8 +150,8 @@ end
         model = BipartiteVarianceStableModel(ss.A_prior; rho_limit = 0.99)
         fit = BipartiteGMRF.optimize_emiw(model, ss,
             EMIWBlocks(max_iter = 500, ftol = 1e-12, delta = 1e8, r = 0.0);
-            init_theta = (res0.rho, res0.sigma_a, res0.sigma_z),
-            init_phi = res0.sigma_epsilon^2)
+            init = (rho = res0.rho, sigma_a = res0.sigma_a, sigma_z = res0.sigma_z,
+                    phi = res0.sigma_epsilon^2))
         @test fit.rho ≈ res0.rho atol = 1e-3
         @test fit.sigma_a ≈ res0.sigma_a atol = 1e-3
         @test fit.sigma_z ≈ res0.sigma_z atol = 1e-3

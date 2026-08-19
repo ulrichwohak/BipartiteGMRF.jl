@@ -149,12 +149,12 @@ One reviewable increment each; stop and report between them.
 
 - [x] **1. `src/util.jl` — codec + validation.** *(done)*
       `validate_init(init, status; rho_limit)` implementing D3/D4/D5, plus
-      `init_field`, `check_positive_init`, `init_omega_codes`, `init_eta_code`,
+      `init_field`, `validate_positive_init`, `init_omega_codes`, `init_eta_code`,
       and `initial_params(rho_fixed, estimate_rho_eps; rho_limit, init=nothing)`
       with field-by-field fallback for `rho`, `sigma_a`, `sigma_z`,
       `sigma_epsilon`, `rho_eps`. Sigmas arrive already divided by `y_std`.
       `status` is a NamedTuple over `(rho, rho_eps, eta, omega, phi, r, delta)`
-      with values `:free` / `:pinned` / `:absent`; step 2 builds it.
+      with values `:free`, `:absent`, or the pinned value itself; step 2 builds it.
       **Correction to the golden below:** `default_rho_start(L) = min(0.5, 0.5L)`,
       so for `L ≤ 1` the first entry is `atanh(0.5)`, *not* `atanh(0.5/L)`.
       `init.omega` length is always unambiguous (`n_omega` vs `n_omega+1`).
@@ -181,58 +181,81 @@ One reviewable increment each; stop and report between them.
       and `solvers/common.jl` use bare snake_case for internals
       (`initial_params`, `full_params`, `objective_stats`, `build_gmrf_result`);
       the `_`-prefixed convention lives in `emiwblocks.jl`/`emblocks.jl`.
-- [ ] **2. `src/solvers/common.jl` — `_initial_point` helper + threading.**
-      Extract the whole `p0` assembly (`:269-272`) into
-      `_initial_point(model, stats, solver, fix_rho, init) -> Vector{Float64}`
-      so the layout is unit-testable with exact `==` (there is no other way to
-      observe `p0`: `theta_unconstrained` is the *minimizer*, `:291-292,342`,
-      and NelderMead's simplex means even `optim_iters=1` does not return
-      `p0`). Rescale sigmas by `1/stats.y_std` there; replace the hardcoded
-      `zeros(n_omega)` and `eta_to_unconstrained(0.5)` appends with `init`-aware
-      ones. New `init::Union{Nothing,NamedTuple}=nothing` kwarg on
-      `optimize_problem`. Use per-field `get(init, :x, default)`, never a
-      dynamic loop over `keys(init)` (keeps JET quiet).
-- [ ] **3. Public surface.** `init` kwarg on both `solve` methods
-      (`common.jl:362`, `:374`) and all three `fit_mle` methods
-      (`src/fit.jl:18`, `:46`, `:105`) — pass-through only. Without the second
-      `solve` method, `fit_mle(...; solver=EMIWBlocks(), init=...)` raises an
-      unsupported-keyword error.
-- [ ] **4. EMIW.** Rework `optimize_emiw`'s init kwargs per D6, with the
-      validation `_em_blocks_ψ_from_θ` lacks; map `init` in the EMIW `solve`.
-- [ ] **5. Tests.**
-      - `initial_params` exact-equality goldens: `initial_params(nothing, false;
-        rho_limit=0.99) == [atanh(0.5), log(0.7), log(0.04), log(0.4)]`,
-        plus the `fix_rho` and `estimate_rho_eps` variants. This is the real
-        no-regression surface. (Verified by hand on the step-1 branch.)
-      - `_initial_point` exact-equality for the ω and η appends, and for
-        `init` at a known point (`== init ./ y_std` through the codec). This is
-        the acceptance criterion, relocated to where it is observable.
-      - Same-session equality: `fit_mle(...)` vs `fit_mle(...; init=nothing)`
-        give `==` on `nll` and `theta_unconstrained` (guards the plumbing).
-      - Golden `nll` on a small deterministic `ExactCholesky` fixture with `≈`,
-        not `==` — bitwise equality across BLAS thread counts through the LBFGS
-        polish (`exact.jl:134-156`) would flake.
-      - Warm start from a converged fit's own parameters: assert
-        `obj_evals <= default` **and** the two optima agree, on
-        `ExactCholesky` only. The wall-clock speedup claim is a manual
-        benchmark, not a CI assertion (D7).
-      - Partial `init=(rho=...,)` leaves the other three at defaults.
-      - `init = params(result)` works (D3).
-      - Validation: out-of-range `rho`, non-positive `sigma_a`, `sigma_z=0.0`,
-        unknown key, absent-block key (error), pinned-parameter key (warn),
-        `rho_eps=0.9995`, wrong-length `omega`, `init.r` with `mmax == 1`.
-      - Block smoke tests respecting solver constraints (`common.jl:9-21`):
-        `error_groups` and `error_eta` are `ExactCholesky`-only, `error_blocks`
-        is `EMIWBlocks`-only. There is no `HutchSLQ` × block combination.
-- [ ] **6. Docs + CHANGELOG.** `init` + the D2 units paragraph + the D7 caveats
-      in all three `fit_mle` docstrings (`fit.jl:6-8`, `:38-44`, `:99-101`) and
-      the `solve` docstring (`common.jl:351-360`), all of which spell out their
-      kwarg lists. Also fix `optimize_emiw`'s docstring (`emiwblocks.jl:53`),
-      which currently omits `init_phi` entirely. `docs/src/api.md:25`,
-      `docs/src/solvers.md`. CHANGELOG `Unreleased → Added`; a new public kwarg
-      is a **minor** bump (v0.5.0), not a patch.
+- [x] **2. `src/solvers/common.jl` — `initial_point` helper + threading.** *(done)*
+      `initial_point(stats, fix_rho, estimate_rho_eps, n_omega, estimate_eta,
+      init; rho_limit)` assembles the whole `p0` — the sigma rescaling, the
+      `initial_params` call, the ω ladder and the η append — so the layout is
+      unit-testable with exact `==`. `init_status` builds the `:free` /
+      `:absent` / pinned-value map from the same predicates `optimize_problem`
+      uses. `optimize_problem` gained `init::Union{Nothing,NamedTuple}=nothing`.
+      Validation runs on the caller's *original-unit* init so error messages
+      quote their numbers; the rescaling that follows is positivity-preserving,
+      so nothing escapes.
+- [x] **3. Public surface.** *(done)* `init` on both `solve` methods and all
+      three `fit_mle` methods, pass-through only.
+- [x] **4. EMIW.** *(done)* `optimize_emiw`'s `init_theta`/`init_phi` replaced by
+      one `init` NamedTuple, accepting partial specifications; validation and
+      rescaling moved inside, so `_em_blocks_ψ_from_θ`'s bare `atanh`/`log` are
+      now guarded (they were not before). `emiw_init_status` reports pinned
+      `r`/`delta` by value. `test/test_error_blocks_iw.jl:151` migrated —
+      `standardize=false` there, so the numbers are unchanged.
+- [x] **5. Tests.** *(done)* `test/test_init_warm_start.jl`, 74 assertions,
+      wired into `runtests.jl`. Full suite green including Aqua.
+      `Base.CoreLogging.Warn` rather than `using Logging`, which is not a test
+      dependency and would have meant touching `Project.toml`.
+- [x] **6. Docs + CHANGELOG.** *(done)* `init` section on the suffstats-based
+      `fit_mle` docstring (the other two and `docs/src/api.md` pick it up by
+      reference), a docstring for the previously undocumented `EMIWBlocks`
+      `solve` method, a "Warm starts" section in `docs/src/performance.md`, a
+      README example, and an `Unreleased → Added` CHANGELOG entry. Version bump
+      to v0.5.0 is left for the release commit.
+
+## Advisor findings on increments 2–6, and what was done
+
+Mechanism confirmed correct: parameter layout and every consumer index, the
+`:free`/`:pinned`/`:absent` predicates, unit handling and the completeness of
+the rescale set, `nothing` semantics, EMIW's δ-before-φ ordering, the test
+migration, and end-to-end threading with no silently-ignored `init` on any
+entry point.
+
+Acted on:
+
+- **`init.sigma_epsilon` was silently dropped when `init.phi` was also given**
+  (EMIW) — exactly the failure `validate_init` exists to prevent. Now warns.
+- **Wrong hint when `init.r` is rejected at `mmax == 1`**: the generic message
+  said "pass `error_blocks=:iw`", which the caller had already done. Now a
+  dedicated message naming all-singleton blocks as the reason, plus a test.
+- **Spurious warning on `init = params(result)`**: a fit with a pinned
+  parameter (numeric `rho_eps`, numeric `error_eta`, solver-fixed `r`/`delta`)
+  reports that value on the result, so re-fitting the same configuration warned
+  about a value it had itself produced. `init_status` now reports the pinned
+  *value* rather than the symbol `:pinned`, and the warning is suppressed when
+  the supplied value agrees with it.
+- Four docstring inaccuracies: the incomplete list of pinned cases; the claim
+  that `params(result)` "works directly" without the pinned-block caveat;
+  "0.025 step" (Optim uses `0.5|x|` unless the coordinate is *exactly* zero);
+  and "a better start buys a tighter tolerance" (`fscale = max(1, |f0|)`
+  reverses this for negative NLL, and `ExactCholesky` floors it — the sentence
+  describes `HutchSLQ`). Also completed the suffstats kwarg list.
+- Removed the redundant re-validation in `optimize_emiw` and the now-unreachable
+  `φ > 0` throw whose message named `init.phi` even when the value came from
+  `init.sigma_epsilon`.
+
+Not acted on:
+
+- The advisor flagged a possible layout collision if `estimate_rho_eps` and the
+  ω ladder were ever both active (both would want slot 5). **`suffstats`
+  forbids it**: `error_groups`, `error_eta` and `error_blocks` each require
+  `Weighting(observations=:raw)` (`stats.jl:125`, `:140`, `:171`), while
+  `estimate_rho_eps` requires `:effective`. At most one of the three can occupy
+  slot 5. Documented on `init_status` rather than guarded.
+- JET: `test_jet.jl` is excluded from the default suite and its two targets
+  (`jet_exact_solve_flow`, `jet_covariance_flow`) do not reach `solve`, so the
+  type-unstable NamedTuple operations in `validate_init` / `rescale_init_sigmas`
+  are not covered either way. Pre-existing exclusion, once-per-fit cost.
 
 ## Out of scope
 
 - NelderMead simplex scale and the `g_abstol` start-dependence → **#115**.
-- Raw unconstrained-vector `init` (D1).
+- Raw unconstrained-vector `init` (D1) — so the `sigma_z == 0.0` boundary fit
+  that motivated the issue still cannot be used *as* an init.

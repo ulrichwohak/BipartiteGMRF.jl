@@ -50,7 +50,28 @@ function _elbo_u_terms(a::Float64, b::Float64, δ::Float64)
 end
 
 """
-    optimize_emiw(model, stats, solver; verbose, init_theta) -> NamedTuple
+    emiw_init_status(solver, mmax)
+
+`init` availability on the EMIWBlocks path (see [`init_status`](@ref) for the
+`optimize_problem` counterpart). A solver-fixed `r` or `delta` reports the
+pinned value. `r` is estimated only when the largest block holds more than one
+observation; with all-singleton blocks it is `:absent`, and `optimize_emiw`
+rejects `init.r` with a message that says why.
+"""
+function emiw_init_status(solver::EMIWBlocks, mmax::Int)
+    return (
+        rho = :free,
+        rho_eps = :absent,
+        eta = :absent,
+        omega = :absent,
+        phi = :free,
+        r = solver.r isa Float64 ? solver.r : (mmax > 1 ? :free : :absent),
+        delta = solver.delta isa Float64 ? solver.delta : :free,
+    )
+end
+
+"""
+    optimize_emiw(model, stats, solver; verbose, init) -> NamedTuple
 
 Run the [`EMIWBlocks`](@ref) variational EM to convergence. Latents are the
 GMRF field `α` and one scalar mixing weight `u_i` per firm block; the
@@ -69,14 +90,23 @@ the integrated log-likelihood with the `Ω_i` marginalized out). Each iteration:
 Returns `optimize_problem`-shaped fields plus `(phi, r, delta, omega_bar,
 elbo_trace, u_bar)`. `omega_bar = φδ/(δ−2)` is the mean error variance
 (the `sigma_epsilon²` analogue).
+
+`init` is the warm-start NamedTuple documented on [`fit_mle`](@ref), already
+rescaled to standardized units. Note what each field can and cannot do here:
+`rho`, `sigma_a`, `sigma_z` and `phi` are genuine starting values, but `r` and
+`δ` are re-estimated by *bracketed* searches over their whole domain
+(`optimize(negprof, r_lo, 1-1e-8)` and `optimize(negdof, log(2+1e-6),
+log(DELTA_CAP))`), which take no starting point. `init.r` therefore seeds only
+the first E-step, and `init.delta` is very nearly a no-op — δ is re-minimized
+on the first pass of the inner loop before it influences anything but one
+`Ωeff` build.
 """
 function optimize_emiw(
     model::BipartiteVarianceStableModel,
     stats::BipartiteGMRFStats,
     solver::EMIWBlocks;
     verbose::Bool=false,
-    init_theta::Union{Nothing,NTuple{3,Float64}}=nothing,
-    init_phi::Union{Nothing,Float64}=nothing,
+    init::Union{Nothing,NamedTuple}=nothing,
 )
     fb = stats.error_blocks
     fb !== nothing || throw(ArgumentError("optimize_emiw requires error_blocks=:iw statistics."))
@@ -92,20 +122,70 @@ function optimize_emiw(
     mmax = maximum(ms)
     r_lo = _equicorr_rlo(mmax)
 
-    ψ = init_theta === nothing ?
-        _em_blocks_ψ_from_θ(default_rho_start(limit), 0.7, 0.04, limit) :
-        _em_blocks_ψ_from_θ(init_theta..., limit)
-    φ = init_phi === nothing ? 0.5 : init_phi
-    φ > 0 || throw(ArgumentError("init_phi must be positive."))
+    # Validate what the caller wrote, so the message quotes their numbers, then
+    # move the scale parameters onto the standardized scale the EM works in.
+    # r's own absence has a reason the generic hint cannot state.
+    if mmax == 1 && !(solver.r isa Float64) && init_field(init, :r) !== nothing
+        throw(ArgumentError(
+            "init.r was given, but r is not estimated when every error block holds " *
+            "a single observation (largest block size is 1) — it would become a " *
+            "permanent value rather than a starting one. Pass EMIWBlocks(r=...) to " *
+            "fix it deliberately."))
+    end
+    validate_init(init, emiw_init_status(solver, mmax); rho_limit=limit)
+    init = rescale_init_sigmas(init, stats.y_std)
+
+    # θ: field-by-field over the same heuristic optimize_problem uses. Domains
+    # were checked above, so _em_blocks_ψ_from_θ's bare atanh/log are safe.
+    rho0 = init_field(init, :rho)
+    sa0 = init_field(init, :sigma_a)
+    sz0 = init_field(init, :sigma_z)
+    ψ = _em_blocks_ψ_from_θ(
+        rho0 === nothing ? default_rho_start(limit) : Float64(rho0),
+        sa0 === nothing ? 0.7 : Float64(sa0),
+        sz0 === nothing ? 0.04 : Float64(sz0),
+        limit,
+    )
+
+    δ = if solver.delta isa Float64
+        solver.delta
+    else
+        d0 = init_field(init, :delta)
+        d0 === nothing ? 10.0 : Float64(d0)
+    end
+
+    # EMIW has no sigma_epsilon coordinate: the error scale is φ, tied to it by
+    # omega_bar = φδ/(δ−2) = σ_ε². Prefer an explicit φ; fall back to σ_ε.
+    φ0 = init_field(init, :phi)
+    se0 = init_field(init, :sigma_epsilon)
+    φ0 === nothing || se0 === nothing || @warn(
+        "init.sigma_epsilon is ignored: init.phi sets the error scale directly " *
+        "(they are tied by omega_bar = phi*delta/(delta-2) = sigma_epsilon^2)."
+    )
+    φ = if φ0 !== nothing
+        Float64(φ0)          # positivity already checked by validate_init
+    elseif se0 !== nothing
+        Float64(se0)^2 * (δ - 2.0) / δ
+    else
+        0.5
+    end
+
     r = if solver.r isa Float64
         r_lo <= solver.r < 1.0 || throw(ArgumentError(
             "fixed r = $(solver.r) is outside the PD domain [$(r_lo), 1) for the " *
             "largest block size $mmax."))
         solver.r
     else
-        0.0
+        r0 = init_field(init, :r)
+        if r0 === nothing
+            0.0
+        else
+            r_lo <= Float64(r0) < 1.0 || throw(ArgumentError(
+                "init.r = $(r0) is outside the PD domain [$(r_lo), 1) for the " *
+                "largest block size $mmax."))
+            Float64(r0)
+        end
     end
-    δ = solver.delta isa Float64 ? solver.delta : 10.0
     ubar = ones(Float64, B)
     elogu = zeros(Float64, B)
     ashape = zeros(Float64, B)   # q(u_i) shape/rate, set each iteration
