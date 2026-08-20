@@ -107,6 +107,16 @@ struct EMBlocksWorkspace
     ws_Q::GaussianMarkovRandomFields.GMRFWorkspace
     ws_M::GaussianMarkovRandomFields.GMRFWorkspace
     f::Vector{Int}
+    # Constant across EM iterations and across θ: the node set S_i touched by
+    # each firm block (sorted), and a structural pattern covering every
+    # S_i × S_i, used to read M⁻¹ by selected inversion once per E-step.
+    block_cols::Vector{Vector{Int}}
+    selinv_pattern::SparseMatrixCSC{Float64,Int}
+    # Per edge-level row: the two nodes it loads and their design values.
+    edge_firm::Vector{Int}
+    edge_worker::Vector{Int}
+    edge_vf::Vector{Float64}
+    edge_vw::Vector{Float64}
 end
 
 function _init_blocks(fb::FirmBlockStats)
@@ -140,15 +150,107 @@ function make_em_blocks_workspace(model::AbstractBipartiteModel, fb::FirmBlockSt
     Q0 = model_precision(model, rho_ref, 1.0, 1.0)
     ws_Q = GaussianMarkovRandomFields.GMRFWorkspace(Q0)
     ws_M = GaussianMarkovRandomFields.GMRFWorkspace(Q0 + P0)
-    f, _ = _edge_nodes(fb.V, nf)
-    return EMBlocksWorkspace(ws_Q, ws_M, f)
+    f, w = _edge_nodes(fb.V, nf)
+    vf, vw = _edge_values(fb.V, nf)
+    cols, pattern = _block_selinv_pattern(fb, f, w, nf, nw)
+    # edge_worker is stored as a *node* index (nf + worker), so the E-step never
+    # has to re-derive the offset.
+    return EMBlocksWorkspace(ws_Q, ws_M, f, cols, pattern, f, nf .+ w, vf, vw)
 end
 
-# Posterior correction Aᵢ M⁻¹ Aᵢ' for the block's edge-level design rows Vᵢ,
-# computed as Vᵢ · (M⁻¹ Vᵢ') by triangular solves. This Gram form avoids the
-# cancellation of the 4-term selected-inverse sum when M is ill-conditioned;
-# each entry is an inner product of *solved* vectors, so the result stays PSD
-# to roundoff.
+# Design values on each edge-level row's two nodes, in the same row order as
+# `_edge_nodes`. error_blocks=:iw rejects match_id, so every row loads exactly
+# one firm and one worker; the values are read rather than assumed to be 1.
+function _edge_values(V::SparseMatrixCSC{Float64,Int}, nf::Int)
+    K = size(V, 1)
+    vf = zeros(Float64, K)
+    vw = zeros(Float64, K)
+    rows, cols, vals = findnz(V)
+    for (r, c, v) in zip(rows, cols, vals)
+        c <= nf ? (vf[r] = v) : (vw[r] = v)
+    end
+    return vf, vw
+end
+
+# The node set S_i = {firm_i} ∪ {workers of firm i} for every block, and a
+# structural pattern covering every S_i × S_i. Built with explicit ones rather
+# than reused from an assembled `P`, so an Ω that happens to produce a
+# numerically zero entry can never drop a position out of the pattern.
+function _block_selinv_pattern(fb::FirmBlockStats, f::Vector{Int}, w::Vector{Int},
+                               nf::Int, nw::Int)
+    n = nf + nw
+    rows = _block_rows(fb)
+    cols = Vector{Vector{Int}}(undef, length(rows))
+    total = sum(m -> (m + 1)^2, fb.sizes)
+    I = Vector{Int}(undef, 0); sizehint!(I, total)
+    J = Vector{Int}(undef, 0); sizehint!(J, total)
+    for i in eachindex(rows)
+        r = rows[i]
+        s = Vector{Int}(undef, length(r) + 1)
+        s[1] = f[first(r)]
+        for (a, t) in enumerate(r)
+            s[a + 1] = nf + w[t]
+        end
+        unique!(sort!(s))
+        cols[i] = s
+        for p in s, q in s
+            push!(I, p); push!(J, q)
+        end
+    end
+    return cols, sparse(I, J, ones(Float64, length(I)), n, n, (x, y) -> 1.0)
+end
+
+# Posterior correction Aᵢ M⁻¹ Aᵢ' for one firm block, read off a selected
+# inverse of M instead of solving against the whole factorization once per block
+# row (issue #116: that cost K_tot global solves per E-step, each allocating a
+# dense length-n vector — hours per iteration at n ≈ 2M).
+#
+# `Sig` is M⁻¹ read at the block pattern, `cols` the block's node set S_i.
+# Σ_SS is a principal submatrix of M⁻¹ and therefore PD, so factoring it as
+# LL' and returning (Aᵢ L)(Aᵢ L)' keeps the property the old triangular-solve
+# form was written for: the result is a Gram product of an explicitly formed
+# matrix, PSD to roundoff, with none of the cancellation a termwise
+# selected-inverse sum would suffer. That matters because S_{ε,i} feeds
+# `svals` → the Gamma rate `(δ + s)/2` → `log`, so a lost PSD is a NaN, not a
+# slightly wrong number.
+#
+# If the small Cholesky fails (Σ_SS numerically indefinite at roundoff), fall
+# back to the symmetrized congruence rather than failing the fit.
+function _aptpa_local(
+    Sig::SparseMatrixCSC{Float64,Int},
+    cols::Vector{Int},
+    rr::Vector{Int},
+    ew::EMBlocksWorkspace,
+)
+    m = length(rr)
+    s = length(cols)
+    # Aᵢ restricted to the block's own nodes. `cols` is sorted, so the position
+    # of each node is a binary search; every row loads exactly one firm and one
+    # worker (match_id is rejected for error_blocks=:iw).
+    A = zeros(Float64, m, s)
+    for (a, t) in enumerate(rr)
+        A[a, searchsortedfirst(cols, ew.edge_firm[t])] += ew.edge_vf[t]
+        A[a, searchsortedfirst(cols, ew.edge_worker[t])] += ew.edge_vw[t]
+    end
+
+    Ssub = Matrix{Float64}(undef, s, s)
+    for b in 1:s, a in 1:s
+        Ssub[a, b] = Sig[cols[a], cols[b]]
+    end
+    Ssub .= 0.5 .* (Ssub .+ transpose(Ssub))
+
+    C = cholesky(Symmetric(Ssub); check = false)
+    if issuccess(C)
+        W = A * Matrix(C.L)
+        return W * transpose(W)
+    end
+    S = A * Ssub * transpose(A)
+    return 0.5 .* (S .+ transpose(S))
+end
+
+# Reference implementation, kept for tests: the same quantity by one full
+# triangular solve per block row. Correct but O(n) per row — see `_aptpa_local`,
+# which replaced it in the E-step (issue #116).
 function _aptpa(ws::GaussianMarkovRandomFields.GMRFWorkspace, Vi::SparseMatrixCSC{Float64,Int})
     m = size(Vi, 1)
     n = size(Vi, 2)

@@ -87,6 +87,11 @@ the integrated log-likelihood with the `Ω_i` marginalized out). Each iteration:
 4. `φ` closed-form given `r`; `r` by 1-D profile search; `δ` by 1-D search on
    its exact E-step objective (both optional per solver settings).
 
+Step 1's per-firm correction `Aᵢ M⁻¹ Aᵢ'` is read from a single selected
+inversion of `M` per iteration (issue #116), so its cost follows the blocks'
+own sizes rather than the node count; block count is no longer the bottleneck
+on large graphs.
+
 Returns `optimize_problem`-shaped fields plus `(phi, r, delta, omega_bar,
 elbo_trace, u_bar)`. `omega_bar = φδ/(δ−2)` is the mean error variance
 (the `sigma_epsilon²` analogue).
@@ -214,11 +219,15 @@ function optimize_emiw(
 
         # Posterior residual second moments S_{ε,i} = r̂r̂' + A_i P⁻¹ A_i'
         # (dense-verified in the block EM; q(α)-expectations, θ-free).
+        # One selected inversion serves every block: the union of the blocks'
+        # node sets is exactly this pattern, and it lies inside the factor's
+        # pattern, so the reads are exact (issue #116).
+        Sig = GaussianMarkovRandomFields.selinv_extract_at(ew.ws_M, ew.selinv_pattern)
         resid = fb.y - V * μ
         for i in 1:B
             rr = rows[i]
             ri = resid[rr]
-            S = ri * ri' + _aptpa(ew.ws_M, V[rr, :])
+            S = ri * ri' + _aptpa_local(Sig, ew.block_cols[i], rr, ew)
             Seps[i] = 0.5 .* (S .+ S')
         end
 

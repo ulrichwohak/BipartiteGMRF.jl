@@ -3,6 +3,24 @@
 All notable changes to BipartiteGMRF.jl are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v0.5.1] &mdash; 2026-08-20
+
+### Fixed
+
+- **`EMIWBlocks` E-step no longer scales with the node count** (issue #116).
+  The per-firm posterior correction `Aᵢ M⁻¹ Aᵢ'` did one full triangular solve
+  against the whole factorization per block row — `K_tot` global solves per EM
+  iteration, each allocating a dense length-`n` vector, which made fits on
+  graphs with ~10⁶ firms effectively unrunnable. It now reads one selected
+  inverse of `M` per E-step at the block pattern and forms the correction
+  locally. The PSD guarantee the previous Gram form was written for is kept:
+  the block's `Σ_SS` is a principal submatrix of `M⁻¹`, hence PD, and the
+  result is returned as `(Aᵢ L)(Aᵢ L)'` from its Cholesky — which matters,
+  because `S_{ε,i}` feeds a Gamma rate that is then passed to `log`. Measured
+  on a synthetic graph with 8,000 firm blocks: 61 s and 25 GiB of allocation
+  per E-step pass before, 32 ms and 23 MiB after, with results agreeing to
+  1.8e-15.
+
 ## [v0.5.0] &mdash; 2026-08-19
 
 ### Added

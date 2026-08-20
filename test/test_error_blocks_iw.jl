@@ -176,4 +176,95 @@ end
             solver = EMIWBlocks(max_iter = 50, ftol = 1e-9, delta = 10.0, r = 0.0))
         @test dof(resfix) == 4
     end
+
+    # The E-step's per-firm posterior correction A_i M^-1 A_i' used to cost one
+    # full solve against the whole factorization per block row (issue #116:
+    # K_tot global solves per iteration, hours per iteration at n ~ 2M). It now
+    # reads one selected inverse per E-step. `_aptpa` is retained as the
+    # reference implementation and these tests pin the new path to it.
+    @testset "A M^-1 A' by selected inversion (issue #116)" begin
+        function setup(fs, ws_; rho = 0.4, sa = 0.8, sz = 0.3, scale = 1.0)
+            ys = randn(MersenneTwister(5), length(fs))
+            ss = suffstats(BipartiteVarianceStableModel, fs, ws_, ys;
+                weighting = Weighting(observations = :raw), standardize = false,
+                error_blocks = :iw, firm_group = fs)
+            model = BipartiteVarianceStableModel(ss.A_prior; rho_limit = 0.99)
+            fb, nf, nw = ss.error_blocks, ss.N_firms, ss.N_workers
+            ew = BipartiteGMRF.make_em_blocks_workspace(model, fb, nf, nw)
+            Om = [scale .* (Matrix{Float64}(0.7LinearAlgebra.I, m, m) .+ 0.1) for m in fb.sizes]
+            P, _ = BipartiteGMRF.assemble_block_precision(fb, Om, nf, nw)
+            Q = BipartiteGMRF.model_precision(model, rho, sa, sz)
+            BipartiteGMRF.GaussianMarkovRandomFields.update_precision_values!(
+                ew.ws_M, BipartiteGMRF._align_to_ws(Q, P, ew.ws_M))
+            BipartiteGMRF.GaussianMarkovRandomFields.ensure_numeric!(ew.ws_M)
+            return ss, fb, ew, Q + P
+        end
+
+        fs = [1, 1, 1, 2, 2, 3, 4, 4, 4, 4, 5, 6, 6]
+        wsx = [1, 2, 3, 2, 4, 5, 1, 6, 7, 3, 7, 5, 2]
+
+        @testset "the selinv pattern covers every block, exactly" begin
+            ss, fb, ew, M = setup(fs, wsx)
+            Sig = BipartiteGMRF.GaussianMarkovRandomFields.selinv_extract_at(ew.ws_M, ew.selinv_pattern)
+            Minv = inv(Matrix(M))
+            # Every S_i x S_i position must be present *and* exact. If selinv
+            # returned a structural zero here the correction would be biased
+            # downward with no error raised anywhere.
+            for cols in ew.block_cols, p in cols, q in cols
+                @test Sig[p, q] ≈ Minv[p, q] atol = 1e-12
+            end
+        end
+
+        @testset "agrees with the reference, and stays PSD" begin
+            for (label, args, kw) in (
+                    ("cyclic", (fs, wsx), NamedTuple()),
+                    ("path", ([1, 1, 2, 2, 3, 3, 4], [1, 2, 2, 3, 3, 4, 4]), NamedTuple()),
+                    ("ill-conditioned", (fs, wsx),
+                     (scale = 1e-9, sa = 50.0, sz = 40.0, rho = 0.95)))
+                ss, fb, ew, _ = setup(args...; kw...)
+                rows = BipartiteGMRF._block_rows(fb)
+                Sig = BipartiteGMRF.GaussianMarkovRandomFields.selinv_extract_at(ew.ws_M, ew.selinv_pattern)
+                for i in eachindex(rows)
+                    rr = rows[i]
+                    ref = BipartiteGMRF._aptpa(ew.ws_M, fb.V[rr, :])
+                    new = BipartiteGMRF._aptpa_local(Sig, ew.block_cols[i], rr, ew)
+                    @test maximum(abs.(new .- ref)) <=
+                          1e-10 * max(1.0, maximum(abs.(ref)))
+                    # PSD is load-bearing: S_eps feeds the Gamma rate, which is
+                    # then passed to log. Losing it gives NaN, not a small error.
+                    @test minimum(eigvals(Symmetric(new))) > -1e-10
+                end
+            end
+        end
+
+        # The actual invariant the bug violated: cost must not scale with the
+        # node count. Two graphs with identical block structure, one padded with
+        # extra nodes, must cost about the same.
+        @testset "cost does not scale with the node count" begin
+            function estep_alloc(pad::Int)
+                fs2 = vcat(fs, collect(7:(6 + pad)), collect(7:(6 + pad)))
+                ws2 = vcat(wsx, collect(8:(7 + pad)), collect((8 + pad):(7 + 2pad)))
+                ss, fb, ew, _ = setup(fs2, ws2)
+                rows = BipartiteGMRF._block_rows(fb)
+                run() = begin
+                    Sig = BipartiteGMRF.GaussianMarkovRandomFields.selinv_extract_at(
+                        ew.ws_M, ew.selinv_pattern)
+                    s = 0.0
+                    for i in eachindex(rows)
+                        s += sum(BipartiteGMRF._aptpa_local(
+                            Sig, ew.block_cols[i], rows[i], ew))
+                    end
+                    s
+                end
+                run()                       # compile
+                return @allocated(run()), length(rows)
+            end
+            a_small, b_small = estep_alloc(20)
+            a_big, b_big = estep_alloc(200)
+            # Blocks grew ~10x; allocation per block must not grow with n. The
+            # old implementation allocated a dense length-n vector per row, so
+            # per-block cost grew linearly in n and this would fail loudly.
+            @test a_big / b_big < 3 * (a_small / b_small)
+        end
+    end
 end
