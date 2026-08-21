@@ -891,7 +891,7 @@ function ar1_observation_stats(ar::ErrorAR1Stats, eta::Float64, n_firms::Int)
     return design, weights, ms
 end
 
-# ─── Per-firm error blocks: edge-level, never collapsed ────────────────────
+# ─── Per-firm error blocks: one block per firm's observations ──────────────
 
 """
     build_block_V_stats(f_obs, w_obs, y_obs, firm_group, n_firms, n_workers,

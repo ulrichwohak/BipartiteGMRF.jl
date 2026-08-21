@@ -3,6 +3,35 @@
 All notable changes to BipartiteGMRF.jl are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v0.6.0] &mdash; 2026-08-21
+
+### Added
+
+- **Match-grouped designs under `error_eta` and `error_blocks=:iw`**
+  (issue #120). `match_id` now composes with both structured error models:
+  edges sharing an id collapse to **one** observation (`1/F`-weighted firms,
+  `1/M`-weighted workers, `K` counts matches) and the error process is
+  defined **on the match units**. Under `error_eta`, `Corr(ε_s, ε_t) =
+  η^|rank_s − rank_t|` over a firm's matches ranked by `edge_index` — a
+  co-managed match is one spell with one error draw, so duplicating a member
+  row leaves the fit exactly unchanged (previously each member row entered as
+  a separate observation, asserting `z_{m1} + ε_i = z_{m2} + ε_j` exactly and
+  contaminating the fit). Under `error_blocks=:iw`, the firm's block is its
+  matches (`m_i` = matches at firm `i`, `Ψ_{m_i}` on match errors). New
+  contracts: each match must span a single firm (hard error), and
+  `edge_index` must be constant within a match; on data with one row per
+  match both paths reproduce the previous raw-row results exactly.
+
+### Fixed
+
+- **`EMIWBlocks` workspace pattern seeding is now structural.** With
+  weighted multi-worker rows an assembled reference-block entry can cancel
+  analytically, and sparse `+` would silently drop the position from the
+  fixed symbolic pattern; the workspace now seeds `ws_M` from the all-ones
+  union of the prior pattern and the per-firm block cliques, which cannot
+  cancel. The E-step also reuses the workspace's cached row supports instead
+  of re-deriving them each iteration.
+
 ## [v0.5.1] &mdash; 2026-08-20
 
 ### Fixed

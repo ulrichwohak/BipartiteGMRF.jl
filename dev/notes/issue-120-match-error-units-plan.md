@@ -1,12 +1,12 @@
 # Issue #120 — match-grouped designs under `error_eta` and `error_blocks=:iw`
 
-**Status:** approved 2026-08-21; executing. Steps 1–2 implemented and green
-(prepare 140/140, error_ar1 29/29, error_blocks_iw 148/148). Advisor
-re-reviewed the step-1 diff: approved; its amendments (union-pattern
-docstring fix incl. a pre-existing dangling sentence, rank-vs-appearance
-test fixture, extra component assertions, error-message paren) are applied
-— the paren fix came via the shared `per_observation_value` helper both
-builders now use.
+**Status:** DONE. All six steps implemented; full suite passed twice (after
+step 3's fixes and again after steps 4–6). Commits: `a59e35f` (builders),
+`3ed7092` (EM internals), `fc90a0c` (pattern hardening + cached supports),
+plus the final wiring/tests/docs commit. Advisor reviewed and approved
+every increment (final gate 2026-08-21: "approved for the final commit"
+after three stale comment fixes, applied). All three acceptance criteria
+from issue #120 are pinned by tests. Version bumped to v0.6.0.
 **Branch:** `feat/issue-120-match-error-units`, cut from `3d01414` (tip of
 `feat/issue-114-init-warm-start` = `release/v0.5.0`).
 
@@ -125,7 +125,7 @@ Every estimator then shares one observation equation
       builds from explicit ones independently of `P0`. Keep reading actual
       row supports even where the single-firm constraint makes the firm
       loading exactly 1 — do not "simplify" back to unit loadings.
-- [ ] **4. `suffstats` wiring.** Drop the two `ArgumentError`s; on both paths
+- [x] **4. `suffstats` wiring.** Drop the two `ArgumentError`s; on both paths
       collapse when `match_id` is present (pass `match_id_obs` down), run the
       new validations, `K` = number of matches. On the IW branch the
       placeholder edge-level design becomes `build_match_V_stats` when
@@ -136,7 +136,11 @@ Every estimator then shares one observation equation
       entirely and returns `beta = nothing`, so X + IW is a silent no-op
       today with or without match_id — out of scope here, but say so in
       the docstring rather than leaving it implicit.
-- [ ] **5. Tests** (extend `test_error_ar1.jl`, `test_error_blocks_iw.jl`):
+- [x] **5. Tests** (extend `test_error_ar1.jl`, `test_error_blocks_iw.jl`):
+      Done — including a dense-likelihood reference on match units for
+      AR(1) (the sharpest anchor: exact NLL equals the closed-form Gaussian
+      NLL with `Σ = V_match Q⁻¹ V_match' + σ² R_match(η)`), and EMIW
+      equivalence/duplication at `atol = 1e-10`/`1e-12`.
       - *Invariance* (the property that currently fails): duplicating a
         member row of a co-managed match leaves the fit exactly unchanged,
         AR(1) and IW. Compare **fit outputs** (params/NLL), not stats
@@ -161,7 +165,7 @@ Every estimator then shares one observation equation
         match-grouped fixture; `S_ε` stays PSD.
       - *Mean structure*: AR(1)+`X` on a match fixture runs and matches the
         one-row-per-match raw fit.
-- [ ] **6. Docs + CHANGELOG.** Replace the two "not supported" notes in the
+- [x] **6. Docs + CHANGELOG.** Replace the two "not supported" notes in the
       `suffstats` docstring with the match-level error-process definition and
       the semantic note (error draws live on spells, not member rows); update
       `assemble_block_precision`/`observation_rows` docstrings where they

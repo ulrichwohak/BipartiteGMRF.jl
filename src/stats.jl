@@ -30,7 +30,10 @@ When `match_id` is provided, edges sharing a match id form **one**
 observation whose design row averages `1/F_s` over each distinct firm
 and `1/M_s` over each distinct worker in the match. Outcomes within a
 match must agree (up to machine precision). `K` counts matches, not
-edges. Currently requires `Weighting(observations=:raw)`.
+edges. Currently requires `Weighting(observations=:raw)`. Composes with
+every error model below; the structured ones (`error_eta`,
+`error_blocks`) define their error process on the match units and
+additionally require each match to span a single firm.
 
 ## Correlated errors
 
@@ -75,13 +78,28 @@ mutually exclusive with `error_cov`.
 `error_eta = e` with `e in (-1, 1)` (or `:estimate` to estimate it jointly)
 models the error covariance as `σ_ε² R(eta)` with `R(eta)` block-diagonal by
 firm and block `[eta^|k-l|]`, where `k, l` are the caller-supplied
-`edge_index` values (a unique permutation of `1..m_i` over the raw rows of
-each firm — one within-firm position per observation). `edge_index` is
-required and must have the same length as `y`. `match_id` is **not**
-supported (collapsing rows to match means changes the covariance to
-`G R_raw G'`, a different model). Requires `Weighting(observations=:raw)`
-and the `ExactCholesky` solver; composes with `X`; mutually exclusive with
-`error_cov` and `error_groups`. Fitted `eta` is reported as `result.eta`.
+`edge_index` values (a unique permutation of `1..m_i` over each firm's
+observations — its raw rows, or its matches under `match_id`). `edge_index`
+is required and must have the same length as `y`. Composes with `match_id`:
+the AR(1) process is then defined **on the match units** — a co-managed
+match is one spell with one error draw, `Corr(ε_s, ε_t) = eta^|rank_s −
+rank_t|` over the firm's matches ranked by `edge_index` (which must be
+constant within each match; matches tile a firm's timeline disjointly, so
+ties are structurally impossible and validation is strict). Each match must
+span a single firm. Requires `Weighting(observations=:raw)` and the
+`ExactCholesky` solver; composes with `X` (read at each match's first row);
+mutually exclusive with `error_cov` and `error_groups`. Fitted `eta` is
+reported as `result.eta`.
+
+## Integrated per-firm error blocks
+
+`error_blocks = :iw` with `firm_group` (the firm id per row) keeps each
+firm's observations as one error block whose covariance is integrated out
+by the [`EMIWBlocks`](@ref) solver (see its docstring for the model).
+Composes with `match_id`: the firm's block is then its **matches** — error
+draws live on spells, not member rows — and each match must span a single
+firm. `X` is accepted but currently ignored by the EMIW solver (`beta`
+comes back `nothing`); mutually exclusive with the other error models.
 """
 function suffstats(
     ::Type{M},
@@ -135,8 +153,6 @@ function suffstats(
             throw(ArgumentError("error_eta and error_cov are mutually exclusive."))
         error_groups === nothing ||
             throw(ArgumentError("error_eta and error_groups are mutually exclusive."))
-        match_id === nothing ||
-            throw(ArgumentError("error_eta does not support match_id; pass raw rows ordered by edge_index."))
         weighting.observations == :raw ||
             throw(ArgumentError("error_eta currently supports only Weighting(observations=:raw)."))
         if error_eta isa Symbol
@@ -173,8 +189,6 @@ function suffstats(
             throw(ArgumentError("error_blocks=:iw requires firm_group (firm id per row)."))
         length(firm_group) == length(y) ||
             throw(ArgumentError("firm_group must have the same length as y."))
-        match_id === nothing ||
-            throw(ArgumentError("error_blocks=:iw does not yet support match_id."))
     elseif firm_group !== nothing
         throw(ArgumentError("firm_group is only meaningful with error_blocks."))
     end
@@ -314,7 +328,8 @@ function suffstats(
             )
         elseif error_eta !== nothing
             edge_index_obs = Int.(collect(edge_index))[obs_mask]
-            ar1_aux = build_ar1_V_stats(f_obs, w_obs, y_obs_scaled, edge_index_obs, n_f, n_w)
+            ar1_aux = build_ar1_V_stats(f_obs, w_obs, y_obs_scaled, edge_index_obs,
+                                        n_f, n_w, match_id_obs)
             eta_fixed = error_eta isa Real ? Float64(error_eta) : nothing
             # Reference eta for the stored base design: the fixed value, or a
             # nonzero start (0.5) when estimated, so the symbolic factorization
@@ -339,14 +354,17 @@ function suffstats(
         elseif error_blocks !== nothing
             blocks_obs = Int.(collect(firm_group))[obs_mask]
             Vfb, yfb, block_of, sz =
-                build_block_V_stats(f_obs, w_obs, y_obs_scaled, blocks_obs, n_f, n_w)
+                build_block_V_stats(f_obs, w_obs, y_obs_scaled, blocks_obs, n_f, n_w,
+                                    match_id_obs)
             block_aux = (V = Vfb, y = yfb, block_of = block_of, sizes = sz)
             (
                 K = length(yfb),
                 base = EdgeData(f_obs, w_obs, y_obs_scaled, ones(Int, personyear_rows)),
-                # The iid edge-level design is a placeholder; the EM reads V and y
-                # from `error_blocks` directly.
-                design = build_V_stats(f_obs, w_obs, y_obs_scaled, n_f, n_w),
+                # The iid observation-level design is a placeholder; the EM reads
+                # V and y from `error_blocks` directly.
+                design = match_id_obs !== nothing ?
+                    build_match_V_stats(f_obs, w_obs, y_obs_scaled, match_id_obs, n_f, n_w) :
+                    build_V_stats(f_obs, w_obs, y_obs_scaled, n_f, n_w),
                 weights = trivial_weight_stats(length(yfb)),
                 within_ss = 0.0,
                 within_df = 0,

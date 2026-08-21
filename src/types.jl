@@ -467,6 +467,13 @@ iterations by construction.
   `ω̄ = φ·δ/(δ−2)` (reported as `sigma_epsilon²`) is finite.
 - `r` — mean within-firm error correlation: `:estimate` (default) or a fixed
   `Float64` in `(−1/(max mᵢ − 1), 1)`.
+
+With `match_id` (issue #120) the firm's error block is its **matches** —
+`m_i` counts matches, `Ψ_{m_i}` acts on match errors, and a co-managed match
+is one observation with one error draw. The observation equation collapses
+each match to `1/F`-weighted firms and `1/M`-weighted workers as everywhere
+else; the block sizes and everything derived from them (`δ`'s projectivity,
+`r`'s PD domain) simply read the match counts.
 """
 struct EMIWBlocks <: AbstractGMRFSolver
     max_iter::Int
@@ -605,9 +612,10 @@ end
 
 """
 Per-firm error blocks for `suffstats(...; error_blocks=:iw, firm_group=...)`.
-Observations stay at edge level; each firm's rows form one block whose error
+Observations are the input rows — or the matches, when `match_id` groups them
+(issue #120) — and each firm's observations form one block whose error
 covariance is modeled by the active block solver (only [`EMIWBlocks`](@ref),
-which integrates the blocks out — never collapsed, never read from a matrix).
+which integrates the blocks out — never estimated, never read from a matrix).
 `block_of[s]` maps observation row `s` to its block; `sizes[i]` is `m_i`.
 """
 struct FirmBlockStats

@@ -110,10 +110,6 @@
         @test_throws ArgumentError suffstats(BipartiteNormalizedModel, f, w, y;
             weighting = Weighting(observations = :edge),
             error_eta = 0.3, edge_index = eidx)
-        # match_id not supported
-        @test_throws ArgumentError suffstats(BipartiteNormalizedModel, f, w, y;
-            weighting = Weighting(observations = :raw),
-            match_id = collect(1:K_in), error_eta = 0.3, edge_index = eidx)
         # edge_index required
         @test_throws ArgumentError suffstats(BipartiteNormalizedModel, f, w, y;
             weighting = Weighting(observations = :raw), error_eta = 0.3)
@@ -148,5 +144,93 @@
             error_eta = 0.3, edge_index = eidx)
         @test_throws ArgumentError fit_mle(BipartiteNormalizedModel, ss;
             solver = HutchSLQ())
+    end
+
+    @testset "match-grouped spells (issue #120)" begin
+        # ── one match per row reproduces the raw-row path exactly ──
+        ss_raw = suffstats(BipartiteNormalizedModel, f, w, y;
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_eta = 0.4, edge_index = eidx)
+        ss_mid = suffstats(BipartiteNormalizedModel, f, w, y;
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_eta = 0.4, edge_index = eidx, match_id = collect(1:K_in))
+        @test ss_mid.K == ss_raw.K
+        @test Matrix(ss_mid.design.VtV) ≈ Matrix(ss_raw.design.VtV) atol = 1e-14
+        @test ss_mid.design.projected_y ≈ ss_raw.design.projected_y atol = 1e-14
+        @test ss_mid.design.ydot ≈ ss_raw.design.ydot atol = 1e-14
+        @test ss_mid.weights.log_weight_sum ≈ ss_raw.weights.log_weight_sum atol = 1e-14
+
+        # ── dense likelihood reference on match units ──
+        # Firm 1: match 1 co-managed (workers 1, 2; rank 1), match 2 (worker
+        # 3; rank 2). Firm 2: match 3 (worker 2; rank 1), match 4 (worker 4;
+        # rank 2). The error process lives on the 4 matches.
+        fm = [1, 1, 1, 2, 2]
+        wm = [1, 2, 3, 2, 4]
+        ym = [0.7, 0.7, 0.9, 0.2, -0.5]
+        midm = [1, 1, 2, 3, 4]
+        eidxm = [1, 1, 2, 1, 2]
+        eta = 0.4
+        ssm = suffstats(BipartiteNormalizedModel, fm, wm, ym;
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_eta = eta, edge_index = eidxm, match_id = midm)
+        @test ssm.K == 4
+        model = BipartiteNormalizedModel(ssm.A_prior; rho_limit = 0.99)
+        rho, sa, sz, se = 0.25, 0.8, 0.5, 0.4
+        params = [atanh(rho / 0.99), log(sa), log(sz), log(se)]
+        obs_stats = BipartiteGMRF.objective_stats(model, ssm, params)
+        exact_nll = BipartiteGMRF.nll_exact_value(model, ssm, params, obs_stats)
+
+        n = ssm.N_firms + ssm.N_workers
+        Vd = zeros(4, n)
+        Vd[1, 1] = 1.0; Vd[1, ssm.N_firms + 1] = 0.5; Vd[1, ssm.N_firms + 2] = 0.5
+        Vd[2, 1] = 1.0; Vd[2, ssm.N_firms + 3] = 1.0
+        Vd[3, 2] = 1.0; Vd[3, ssm.N_firms + 2] = 1.0
+        Vd[4, 2] = 1.0; Vd[4, ssm.N_firms + 4] = 1.0
+        ymatch = [0.7, 0.9, 0.2, -0.5]
+        firm_of = [1, 1, 2, 2]
+        rank_of = [1, 2, 1, 2]
+        R = [firm_of[s] == firm_of[t] ? eta^abs(rank_of[s] - rank_of[t]) : 0.0
+             for s in 1:4, t in 1:4]
+        Q = BipartiteGMRF.model_precision(model, rho, sa, sz)
+        Sigma = Vd * inv(Matrix(Q)) * transpose(Vd) + se^2 .* R
+        dense_nll = 0.5 * (logdet(Symmetric(Sigma)) + dot(ymatch, Sigma \ ymatch))
+        @test exact_nll ≈ dense_nll atol = 1e-8 rtol = 1e-8
+
+        # ── duplicating a member row of the co-managed match: fit unchanged ──
+        result0 = fit_mle(BipartiteNormalizedModel, fm, wm, ym;
+            weighting = Weighting(observations = :raw),
+            error_eta = :estimate, edge_index = eidxm, match_id = midm,
+            solver = ExactCholesky(optim_iters = 60, polish = false))
+        resultd = fit_mle(BipartiteNormalizedModel,
+            vcat(fm, 1), vcat(wm, 2), vcat(ym, 0.7);
+            weighting = Weighting(observations = :raw),
+            error_eta = :estimate, edge_index = vcat(eidxm, 1),
+            match_id = vcat(midm, 1),
+            solver = ExactCholesky(optim_iters = 60, polish = false))
+        @test resultd.nll ≈ result0.nll atol = 1e-12
+        @test resultd.rho ≈ result0.rho atol = 1e-12
+        @test resultd.sigma_a ≈ result0.sigma_a atol = 1e-12
+        @test resultd.sigma_z ≈ result0.sigma_z atol = 1e-12
+        @test resultd.sigma_epsilon ≈ result0.sigma_epsilon atol = 1e-12
+        @test resultd.eta ≈ result0.eta atol = 1e-12
+
+        # ── composes with X on match units ──
+        Xm = hcat(ones(length(ym)), Float64.(wm))
+        resultx = fit_mle(BipartiteNormalizedModel, fm, wm, ym;
+            weighting = Weighting(observations = :raw),
+            error_eta = :estimate, edge_index = eidxm, match_id = midm,
+            X = Xm, solver = ExactCholesky(optim_iters = 40, polish = false))
+        @test resultx.beta !== nothing
+        @test all(isfinite, resultx.beta)
+
+        # ── guardrails: multi-firm match; edge_index disagreement in a match ──
+        @test_throws ArgumentError suffstats(BipartiteNormalizedModel,
+            [1, 2], [1, 1], [1.0, 1.0];
+            weighting = Weighting(observations = :raw),
+            error_eta = 0.3, edge_index = [1, 1], match_id = [1, 1])
+        @test_throws ArgumentError suffstats(BipartiteNormalizedModel,
+            [1, 1], [1, 2], [1.0, 1.0];
+            weighting = Weighting(observations = :raw),
+            error_eta = 0.3, edge_index = [1, 2], match_id = [1, 1])
     end
 end

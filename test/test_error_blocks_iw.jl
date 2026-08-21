@@ -177,6 +177,54 @@ end
         @test dof(resfix) == 4
     end
 
+    @testset "match-grouped fit (issue #120)" begin
+        # ── one match per row reproduces the raw-row fit ──
+        res_raw = fit_mle(BipartiteVarianceStableModel, f, w, y;
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_blocks = :iw, firm_group = f,
+            solver = EMIWBlocks(max_iter = 80, ftol = 1e-9))
+        res_mid = fit_mle(BipartiteVarianceStableModel, f, w, y;
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_blocks = :iw, firm_group = f, match_id = collect(1:length(y)),
+            solver = EMIWBlocks(max_iter = 80, ftol = 1e-9))
+        @test res_mid.stats.K == res_raw.stats.K
+        for field in (:rho, :sigma_a, :sigma_z, :sigma_epsilon, :nll)
+            @test getproperty(res_mid, field) ≈ getproperty(res_raw, field) atol = 1e-10
+        end
+        @test res_mid.metadata.error_corr_r ≈ res_raw.metadata.error_corr_r atol = 1e-10
+        @test res_mid.metadata.t_dof_delta ≈ res_raw.metadata.t_dof_delta atol = 1e-6
+
+        # ── duplicating a member row of a co-managed match: fit unchanged ──
+        # Firm 1: match 1 co-managed (workers 1, 2), match 2 (worker 3).
+        # Firm 2: match 3 (worker 2), match 4 (worker 4).
+        fm = [1, 1, 1, 2, 2]
+        wm = [1, 2, 3, 2, 4]
+        ym = [0.7, 0.7, 0.9, 0.2, -0.5]
+        midm = [1, 1, 2, 3, 4]
+        res0 = fit_mle(BipartiteVarianceStableModel, fm, wm, ym;
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_blocks = :iw, firm_group = fm, match_id = midm,
+            solver = EMIWBlocks(max_iter = 60, ftol = 1e-9))
+        @test res0.stats.K == 4                       # matches, not rows
+        @test length(res0.metadata.u_bar) == 2        # one u_i per firm
+        resd = fit_mle(BipartiteVarianceStableModel,
+            vcat(fm, 1), vcat(wm, 2), vcat(ym, 0.7);
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_blocks = :iw, firm_group = vcat(fm, 1), match_id = vcat(midm, 1),
+            solver = EMIWBlocks(max_iter = 60, ftol = 1e-9))
+        for field in (:rho, :sigma_a, :sigma_z, :sigma_epsilon, :nll)
+            @test getproperty(resd, field) ≈ getproperty(res0, field) atol = 1e-12
+        end
+        @test resd.metadata.error_corr_r ≈ res0.metadata.error_corr_r atol = 1e-12
+        @test resd.metadata.u_bar ≈ res0.metadata.u_bar atol = 1e-12
+
+        # ── a match spanning two firms is a hard error through suffstats ──
+        @test_throws ArgumentError suffstats(BipartiteVarianceStableModel,
+            [1, 2], [1, 1], [1.0, 1.0];
+            weighting = Weighting(observations = :raw), standardize = false,
+            error_blocks = :iw, firm_group = [1, 2], match_id = [1, 1])
+    end
+
     # The E-step's per-firm posterior correction A_i M^-1 A_i' used to cost one
     # full solve against the whole factorization per block row (issue #116:
     # K_tot global solves per iteration, hours per iteration at n ~ 2M). It now

@@ -1,12 +1,13 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # Per-firm error blocks: shared EM scaffolding (issue #112)
 #
-# Data stay at edge level. Each firm's rows form one block whose error
-# covariance is handled by whichever block solver is active (only the
-# integrated-likelihood EMIWBlocks estimator in this tree). This file holds
-# the solver-agnostic internals both the E-step and the reporting reuse:
-# the edge design reader, the A'Ω⁻¹A assembly, the fixed-pattern workspace,
-# and the Fisher-identity score.
+# Observations are raw rows, or matches when match_id groups them (issue
+# #120). Each firm's observations form one block whose error covariance is
+# handled by whichever block solver is active (only the integrated-likelihood
+# EMIWBlocks estimator in this tree). This file holds the solver-agnostic
+# internals both the E-step and the reporting reuse: the row-support reader,
+# the A'Ω⁻¹A assembly, the fixed-pattern workspace, and the Fisher-identity
+# score.
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Node columns, design values, and firm node of each observation row, read
@@ -29,7 +30,7 @@ function _row_supports(V::SparseMatrixCSC{Float64,Int}, nf::Int)
     return f, nodes, vals
 end
 
-# Observation gaps: gap i lists the edge-level row indices whose block_of is i.
+# Observation gaps: gap i lists the observation row indices whose block_of is i.
 function _block_rows(fb::FirmBlockStats)
     B = length(fb.sizes)
     rows = [Int[] for _ in 1:B]
@@ -114,7 +115,7 @@ end
 Workspace for the block-solver EM. `ws_Q` factors the prior precision `K`
 (pattern fixed across ρ ≠ 0); `ws_M` factors the posterior `M = K + A'Ω⁻¹A`
 (pattern fixed as the full per-firm block pattern — see the plan notes). `f`
-holds the firm node of each edge-level row (for the PD guardrail).
+holds the firm node of each observation row (for the PD guardrail).
 """
 struct EMBlocksWorkspace
     ws_Q::GaussianMarkovRandomFields.GMRFWorkspace

@@ -1,7 +1,7 @@
 name = "BipartiteGMRF"
 uuid = "7206b2fc-0d28-4a9b-bd42-94918d5f8f40"
 keywords = ["bipartite graphs", "Gaussian Markov random fields", "random effects", "variance components"]
-version = "0.5.1"
+version = "0.6.0"
 authors = ["Ulrich Wohak <ulrich@wohak.eu>", "Miklós Koren"]
 description = "Bipartite-graph Gaussian Markov random-field random-effects estimation"
 
