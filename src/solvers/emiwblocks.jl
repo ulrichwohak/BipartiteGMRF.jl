@@ -209,7 +209,7 @@ function optimize_emiw(
 
         # 1. q(α): P = K + A'Ω⁻¹A at effective blocks Ω_i = (φ/ū_i)·R_i.
         Ωeff = [(_equicorr(ms[i], r) .* (φ / ubar[i])) for i in 1:B]
-        P, b = assemble_block_precision(fb, Ωeff, nf, nw)
+        P, b = assemble_block_precision(fb, Ωeff, nf, nw, (ew.f, ew.row_nodes, ew.row_vals))
         Q = model_precision(model, rho, sa, sz)
         GaussianMarkovRandomFields.update_precision_values!(ew.ws_Q, _align_to_ws(Q, nothing, ew.ws_Q))
         GaussianMarkovRandomFields.ensure_numeric!(ew.ws_Q)

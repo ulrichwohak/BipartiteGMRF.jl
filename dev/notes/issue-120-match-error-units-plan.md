@@ -169,6 +169,29 @@ Every estimator then shares one observation equation
       `init.r` error wording ("single observation" — observations are now
       matches); CHANGELOG entry (next minor, v0.6.0).
 
+## Advisor step-3 verdict (2026-08-21, applied)
+
+Approved with two follow-ups, both applied after commit `3ed7092`:
+
+- **Latent exact-cancellation hole (hardened).** With weighted multi-worker
+  rows, an off-diagonal `P0` entry can cancel *analytically* (chained
+  two-worker matches: `1/4 − 1/4` at the shared-worker position); sparse `+`
+  drops exact zeros, so `Q0 + P0` seeding could silently lose the position
+  from `ws_M`'s fixed symbolic pattern while the runtime `M` is nonzero
+  there. Fix: `make_em_blocks_workspace` now seeds the pattern structurally
+  (all-ones union of `mark(Q0) + mark(selinv_pattern)`, values = `Q0 + P0`
+  read onto it, explicit zeros kept). Adversarial chained-matches test
+  added.
+- **Per-iteration allocation (fixed).** `assemble_block_precision` was
+  re-deriving `_row_supports` (~2·K_tot small vectors) every EM iteration;
+  it now takes the workspace's cached `(f, row_nodes, row_vals)` from the
+  E-step call site.
+
+The advisor confirmed: generic accumulation reduces exactly to the old
+semantics on raw rows (duplicate-combining unchanged, symmetry preserved),
+the 4x COO push count is subordinate to the factorization cost, and nothing
+in `emiwblocks.jl` still assumes scalar row supports.
+
 ## Advisor review (2026-08-21)
 
 Verdict: plan sound, no design-level blocker. Its findings are folded in

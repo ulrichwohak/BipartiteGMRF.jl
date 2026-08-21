@@ -40,7 +40,7 @@ function _block_rows(fb::FirmBlockStats)
 end
 
 """
-    assemble_block_precision(fb, Ωs, nf, nw) -> (P_data, b)
+    assemble_block_precision(fb, Ωs, nf, nw, supports=nothing) -> (P_data, b)
 
 Assemble the data term `A'Ω⁻¹A` (n×n sparse) and `A'Ω⁻¹y` (n) from the per-firm
 blocks `Ωs` (a `Vector{Matrix{Float64}}`, one PD block per firm). `A` is the
@@ -51,9 +51,18 @@ row's actual (node, value) support, so weighted multi-worker rows contribute
 `G[a,c]·v_a·v_c` at every node pair. No global Ω is materialized. Throws if a
 block Cholesky fails (non-PD guardrail).
 """
-function assemble_block_precision(fb::FirmBlockStats, Ωs::Vector{Matrix{Float64}}, nf::Int, nw::Int)
+function assemble_block_precision(
+    fb::FirmBlockStats,
+    Ωs::Vector{Matrix{Float64}},
+    nf::Int,
+    nw::Int,
+    supports::Union{Nothing,Tuple{Vector{Int},Vector{Vector{Int}},Vector{Vector{Float64}}}}=nothing,
+)
     n = nf + nw
-    f, nodes, vals = _row_supports(fb.V, nf)
+    # The row supports are Ω-independent; the EM caches them on the workspace
+    # and passes them in, so the per-iteration call allocates no per-row
+    # vectors.
+    f, nodes, vals = supports === nothing ? _row_supports(fb.V, nf) : supports
     rows = _block_rows(fb)
     length(Ωs) == length(rows) ||
         throw(ArgumentError("one Ω per firm block expected."))
@@ -145,16 +154,33 @@ function _align_to_ws(Q::SparseMatrixCSC{Float64,Int}, P::Union{Nothing,SparseMa
 end
 
 function make_em_blocks_workspace(model::AbstractBipartiteModel, fb::FirmBlockStats, nf::Int, nw::Int)
-    # Seed ω_M with the FULL per-firm block pattern (reference blocks carry full
-    # within-firm off-diagonal support), so the symbolic factorization covers
-    # the manager-manager fill-in that a diagonal (iid) seed would drop.
-    P0, _ = assemble_block_precision(fb, _init_blocks(fb), nf, nw)
+    n = nf + nw
+    f, nodes, vals = _row_supports(fb.V, nf)
+    cols, pattern = _block_selinv_pattern(fb, nodes, n)
+    # Seed ω_M with the FULL per-firm block pattern, taken STRUCTURALLY as the
+    # union of Q's pattern and the S_i × S_i cliques. Numeric seeding
+    # (Q0 + P0) is not safe here: with weighted multi-worker rows an
+    # off-diagonal entry of P0 can cancel analytically (e.g. chained
+    # two-worker matches give 1/4 − 1/4 at the shared-worker position), and
+    # sparse `+` drops exact zeros — silently losing the position from the
+    # fixed symbolic pattern while the runtime M is nonzero there. The
+    # all-ones union cannot cancel; the numeric values are the reference
+    # Q0 + P0 read onto it (explicit zeros kept).
+    P0, _ = assemble_block_precision(fb, _init_blocks(fb), nf, nw, (f, nodes, vals))
     rho_ref = min(0.1, 0.5 * rho_limit(model)) + eps(Float64)
     Q0 = model_precision(model, rho_ref, 1.0, 1.0)
     ws_Q = GaussianMarkovRandomFields.GMRFWorkspace(Q0)
-    ws_M = GaussianMarkovRandomFields.GMRFWorkspace(Q0 + P0)
-    f, nodes, vals = _row_supports(fb.V, nf)
-    cols, pattern = _block_selinv_pattern(fb, nodes, nf + nw)
+    mark(A) = SparseMatrixCSC(A.m, A.n, copy(A.colptr), copy(A.rowval), ones(Float64, nnz(A)))
+    union_pat = SparseMatrixCSC{Float64,Int}(mark(Q0) + mark(pattern))
+    nzv = zeros(Float64, nnz(union_pat))
+    for j in 1:n
+        for p in nzrange(union_pat, j)
+            i = union_pat.rowval[p]
+            nzv[p] = Q0[i, j] + P0[i, j]
+        end
+    end
+    M0 = SparseMatrixCSC(n, n, union_pat.colptr, union_pat.rowval, nzv)
+    ws_M = GaussianMarkovRandomFields.GMRFWorkspace(M0)
     return EMBlocksWorkspace(ws_Q, ws_M, f, cols, pattern, nodes, vals)
 end
 

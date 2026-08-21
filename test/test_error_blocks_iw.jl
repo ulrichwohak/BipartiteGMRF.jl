@@ -329,5 +329,30 @@ end
                 @test minimum(eigvals(Symmetric(new))) > -1e-10
             end
         end
+
+        @testset "chained co-managed matches keep the clique in ws_M's pattern" begin
+            # Three chained two-worker matches at one firm: {w1,w2}, {w2,w3},
+            # {w3,w4}. At the reference blocks the assembled P0 entry at the
+            # (w2, w3) position cancels ANALYTICALLY (1/4 − 1/4·1·1 = 0); only
+            # roundoff in inv(cholesky(·)) keeps it nonzero. The workspace must
+            # therefore seed ws_M's symbolic pattern structurally — every
+            # S_i × S_i position stored — because the runtime M is genuinely
+            # nonzero there once r moves off the reference value.
+            fc = [1, 1, 1, 1, 1, 1]
+            wc = [1, 2, 2, 3, 3, 4]
+            yc = [0.1, 0.1, 0.2, 0.2, 0.3, 0.3]
+            midc = [1, 1, 2, 2, 3, 3]
+            Vc, yvc, boc, szc =
+                BipartiteGMRF.build_block_V_stats(fc, wc, yc, fc, 1, 4, midc)
+            fbc = BipartiteGMRF.FirmBlockStats(Vc, yvc, boc, szc)
+            Ap = sparse(fc, wc, ones(Float64, length(fc)), 1, 4)
+            Ap.nzval .= 1.0
+            modelc = BipartiteVarianceStableModel(Ap; rho_limit = 0.99)
+            ewc = BipartiteGMRF.make_em_blocks_workspace(modelc, fbc, 1, 4)
+            stored(A, i, j) = insorted(i, @view rowvals(A)[nzrange(A, j)])
+            for p in ewc.block_cols[1], q in ewc.block_cols[1]
+                @test stored(ewc.ws_M.Q, p, q)
+            end
+        end
     end
 end
