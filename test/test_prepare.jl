@@ -373,5 +373,9 @@
         # ── a match spanning two firms is a hard error ──
         @test_throws ArgumentError BipartiteGMRF.build_block_V_stats(
             [1, 2], [1, 1], [1.0, 1.0], [1, 2], 2, 1, [1, 1])
+
+        # ── the row-level firm_group == f_obs check fires before any collapse ──
+        @test_throws ArgumentError BipartiteGMRF.build_block_V_stats(
+            f2, w2, y2, [1, 1, 1, 1], 2, 3, mid2)  # merges firms 1 and 2
     end
 end

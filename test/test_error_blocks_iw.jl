@@ -267,4 +267,67 @@ end
             @test a_big / b_big < 3 * (a_small / b_small)
         end
     end
+
+    @testset "match-collapsed rows through the EM internals (issue #120)" begin
+        # Firm 1: match 1 co-managed (workers 1, 2), match 2 (worker 2 again —
+        # a worker shared across two matches of the same firm), match 3
+        # (worker 3). Firm 2: match 4 co-managed (workers 3, 4). Firm 3:
+        # match 5 (worker 1), a singleton block.
+        fm = [1, 1, 1, 1, 2, 2, 3]
+        wm = [1, 2, 2, 3, 3, 4, 1]
+        ym = [0.5, 0.5, -0.3, 0.9, 0.2, 0.2, -0.5]
+        mid = [1, 1, 2, 3, 4, 4, 5]
+        nf, nw = 3, 4
+        Vm, yvm, bom, szm =
+            BipartiteGMRF.build_block_V_stats(fm, wm, ym, fm, nf, nw, mid)
+        fb = BipartiteGMRF.FirmBlockStats(Vm, yvm, bom, szm)
+        @test szm == [3, 1, 1]   # matches per firm
+
+        @testset "assembly equals the dense A'Ω⁻¹A on weighted rows" begin
+            Om = [Matrix{Float64}(0.7LinearAlgebra.I, m, m) .+ 0.1 for m in szm]
+            P, b = BipartiteGMRF.assemble_block_precision(fb, Om, nf, nw)
+            A = Matrix(Vm)
+            K = length(yvm)
+            Oinv = zeros(K, K)
+            rows = BipartiteGMRF._block_rows(fb)
+            for i in eachindex(rows)
+                Oinv[rows[i], rows[i]] = inv(Om[i])
+            end
+            @test Matrix(P) ≈ A' * Oinv * A atol = 1e-12
+            @test b ≈ A' * Oinv * yvm atol = 1e-12
+        end
+
+        @testset "workspace node sets and the local correction" begin
+            A_prior = sparse(fm, wm, ones(Float64, length(fm)), nf, nw)
+            A_prior.nzval .= 1.0
+            model = BipartiteVarianceStableModel(A_prior; rho_limit = 0.99)
+            ew = BipartiteGMRF.make_em_blocks_workspace(model, fb, nf, nw)
+            # Block 1's node set is firm 1 plus the workers of ALL its
+            # matches, deduplicated: {1} ∪ {nf+1, nf+2, nf+3}.
+            @test ew.block_cols[1] == [1, nf + 1, nf + 2, nf + 3]
+            @test ew.block_cols[3] == [3, nf + 1]
+
+            Om = [Matrix{Float64}(0.7LinearAlgebra.I, m, m) .+ 0.1 for m in szm]
+            P, _ = BipartiteGMRF.assemble_block_precision(fb, Om, nf, nw)
+            Q = BipartiteGMRF.model_precision(model, 0.4, 0.8, 0.3)
+            BipartiteGMRF.GaussianMarkovRandomFields.update_precision_values!(
+                ew.ws_M, BipartiteGMRF._align_to_ws(Q, P, ew.ws_M))
+            BipartiteGMRF.GaussianMarkovRandomFields.ensure_numeric!(ew.ws_M)
+            rows = BipartiteGMRF._block_rows(fb)
+            Sig = BipartiteGMRF.GaussianMarkovRandomFields.selinv_extract_at(
+                ew.ws_M, ew.selinv_pattern)
+            Minv = inv(Matrix(Q + P))
+            for cols in ew.block_cols, p in cols, q in cols
+                @test Sig[p, q] ≈ Minv[p, q] atol = 1e-12
+            end
+            for i in eachindex(rows)
+                rr = rows[i]
+                ref = BipartiteGMRF._aptpa(ew.ws_M, fb.V[rr, :])
+                new = BipartiteGMRF._aptpa_local(Sig, ew.block_cols[i], rr, ew)
+                @test maximum(abs.(new .- ref)) <=
+                      1e-10 * max(1.0, maximum(abs.(ref)))
+                @test minimum(eigvals(Symmetric(new))) > -1e-10
+            end
+        end
+    end
 end

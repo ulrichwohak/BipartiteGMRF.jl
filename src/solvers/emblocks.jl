@@ -9,22 +9,24 @@
 # and the Fisher-identity score.
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Firm and worker node column of each observation row, read once from the
-# edge-level design `V` (row t has exactly two nonzeros: one firm column ≤ nf,
-# one worker column > nf).
-function _edge_nodes(V::SparseMatrixCSC{Float64,Int}, nf::Int)
+# Node columns, design values, and firm node of each observation row, read
+# once from the design `V`. A raw row has exactly two nonzeros (firm 1.0,
+# worker 1.0); a match-collapsed row has one firm node (weight `1/F = 1`,
+# matches span a single firm) and one or more worker nodes (weight `1/M`
+# each). All downstream consumers iterate the (node, value) lists rather
+# than assuming a per-row (firm, worker) pair.
+function _row_supports(V::SparseMatrixCSC{Float64,Int}, nf::Int)
     K = size(V, 1)
     f = zeros(Int, K)
-    w = zeros(Int, K)
-    rows, cols, _ = findnz(V)
-    for (r, c) in zip(rows, cols)
-        if c <= nf
-            f[r] = c
-        else
-            w[r] = c - nf
-        end
+    nodes = [Int[] for _ in 1:K]
+    vals = [Float64[] for _ in 1:K]
+    rws, cls, vs = findnz(V)
+    for (r, c, v) in zip(rws, cls, vs)
+        push!(nodes[r], c)
+        push!(vals[r], v)
+        c <= nf && (f[r] = c)
     end
-    return f, w
+    return f, nodes, vals
 end
 
 # Observation gaps: gap i lists the edge-level row indices whose block_of is i.
@@ -41,14 +43,17 @@ end
     assemble_block_precision(fb, Ωs, nf, nw) -> (P_data, b)
 
 Assemble the data term `A'Ω⁻¹A` (n×n sparse) and `A'Ω⁻¹y` (n) from the per-firm
-blocks `Ωs` (a `Vector{Matrix{Float64}}`, one PD block per firm). `A = [D F]`
-is the edge-level design; Ω is block-diagonal by firm, so the only structural
-fill-in over the iid case is the manager-manager clique per firm. No global Ω
-is materialized. Throws if a block Cholesky fails (non-PD guardrail).
+blocks `Ωs` (a `Vector{Matrix{Float64}}`, one PD block per firm). `A` is the
+observation-level design (raw rows, or match-collapsed rows with `1/M`-weighted
+workers); Ω is block-diagonal by firm, so the only structural fill-in over the
+iid case is the manager-manager clique per firm. The accumulation iterates each
+row's actual (node, value) support, so weighted multi-worker rows contribute
+`G[a,c]·v_a·v_c` at every node pair. No global Ω is materialized. Throws if a
+block Cholesky fails (non-PD guardrail).
 """
 function assemble_block_precision(fb::FirmBlockStats, Ωs::Vector{Matrix{Float64}}, nf::Int, nw::Int)
     n = nf + nw
-    f, w = _edge_nodes(fb.V, nf)
+    f, nodes, vals = _row_supports(fb.V, nf)
     rows = _block_rows(fb)
     length(Ωs) == length(rows) ||
         throw(ArgumentError("one Ω per firm block expected."))
@@ -56,9 +61,10 @@ function assemble_block_precision(fb::FirmBlockStats, Ωs::Vector{Matrix{Float64
     I = Int[]
     J = Int[]
     V = Float64[]
-    sizehint!(I, sum(m -> m * m + 2m + 1, fb.sizes))
-    sizehint!(J, sum(m -> m * m + 2m + 1, fb.sizes))
-    sizehint!(V, sum(m -> m * m + 2m + 1, fb.sizes))
+    total = sum(r -> sum(t -> length(nodes[t]), r; init = 0)^2, rows; init = 0)
+    sizehint!(I, total)
+    sizehint!(J, total)
+    sizehint!(V, total)
     b = zeros(Float64, n)
 
     for i in eachindex(rows)
@@ -68,28 +74,26 @@ function assemble_block_precision(fb::FirmBlockStats, Ωs::Vector{Matrix{Float64
         issuccess(C) || throw(ArgumentError(
             "error block $i (firm $(f[first(r)])) is not positive definite (m=$ms)."))
         G = inv(C)                       # Ω_i⁻¹ (dense, block-local ordering)
-        firm = f[first(r)]
         yi = fb.y[r]
         Gy = G * yi
 
-        # D'Ω⁻¹D firm diagonal
-        push!(I, firm); push!(J, firm); push!(V, sum(G))
-        # D'Ω⁻¹y
-        b[firm] += sum(Gy)
-        for a in 1:ms, c in 1:ms
-            t = r[a]; tc = r[c]
-            m = nf + w[t]; mc = nf + w[tc]
-            # F'Ω⁻¹F manager-manager (block-local G entries)
-            push!(I, m); push!(J, mc); push!(V, G[a, c])
-        end
-        # D'Ω⁻¹F cross (and its transpose), and F'Ω⁻¹y
-        colsum = vec(sum(G; dims = 1))   # 1'Ω_i⁻¹ = column sums
         for a in 1:ms
-            t = r[a]
-            m = nf + w[t]
-            push!(I, firm); push!(J, m); push!(V, colsum[a])
-            push!(I, m); push!(J, firm); push!(V, colsum[a])
-            b[m] += Gy[a]
+            ta = r[a]
+            # A'Ω⁻¹y on row a's support
+            for (pa, va) in zip(nodes[ta], vals[ta])
+                b[pa] += va * Gy[a]
+            end
+            # A'Ω⁻¹A: every node pair of rows (a, c) at weight G[a,c]·v_a·v_c
+            for c in 1:ms
+                g = G[a, c]
+                tc = r[c]
+                for (pa, va) in zip(nodes[ta], vals[ta])
+                    gva = g * va
+                    for (pc, vc) in zip(nodes[tc], vals[tc])
+                        push!(I, pa); push!(J, pc); push!(V, gva * vc)
+                    end
+                end
+            end
         end
     end
     return sparse(I, J, V, n, n), b
@@ -112,11 +116,10 @@ struct EMBlocksWorkspace
     # S_i × S_i, used to read M⁻¹ by selected inversion once per E-step.
     block_cols::Vector{Vector{Int}}
     selinv_pattern::SparseMatrixCSC{Float64,Int}
-    # Per edge-level row: the two nodes it loads and their design values.
-    edge_firm::Vector{Int}
-    edge_worker::Vector{Int}
-    edge_vf::Vector{Float64}
-    edge_vw::Vector{Float64}
+    # Per observation row: the nodes it loads and their design values (one
+    # firm plus one or more 1/M-weighted workers under match grouping).
+    row_nodes::Vector{Vector{Int}}
+    row_vals::Vector{Vector{Float64}}
 end
 
 function _init_blocks(fb::FirmBlockStats)
@@ -150,49 +153,31 @@ function make_em_blocks_workspace(model::AbstractBipartiteModel, fb::FirmBlockSt
     Q0 = model_precision(model, rho_ref, 1.0, 1.0)
     ws_Q = GaussianMarkovRandomFields.GMRFWorkspace(Q0)
     ws_M = GaussianMarkovRandomFields.GMRFWorkspace(Q0 + P0)
-    f, w = _edge_nodes(fb.V, nf)
-    vf, vw = _edge_values(fb.V, nf)
-    cols, pattern = _block_selinv_pattern(fb, f, w, nf, nw)
-    # edge_worker is stored as a *node* index (nf + worker), so the E-step never
-    # has to re-derive the offset.
-    return EMBlocksWorkspace(ws_Q, ws_M, f, cols, pattern, f, nf .+ w, vf, vw)
+    f, nodes, vals = _row_supports(fb.V, nf)
+    cols, pattern = _block_selinv_pattern(fb, nodes, nf + nw)
+    return EMBlocksWorkspace(ws_Q, ws_M, f, cols, pattern, nodes, vals)
 end
 
-# Design values on each edge-level row's two nodes, in the same row order as
-# `_edge_nodes`. error_blocks=:iw rejects match_id, so every row loads exactly
-# one firm and one worker; the values are read rather than assumed to be 1.
-function _edge_values(V::SparseMatrixCSC{Float64,Int}, nf::Int)
-    K = size(V, 1)
-    vf = zeros(Float64, K)
-    vw = zeros(Float64, K)
-    rows, cols, vals = findnz(V)
-    for (r, c, v) in zip(rows, cols, vals)
-        c <= nf ? (vf[r] = v) : (vw[r] = v)
-    end
-    return vf, vw
-end
-
-# The node set S_i = {firm_i} ∪ {workers of firm i} for every block, and a
-# structural pattern covering every S_i × S_i. Built with explicit ones rather
-# than reused from an assembled `P`, so an Ω that happens to produce a
-# numerically zero entry can never drop a position out of the pattern.
-function _block_selinv_pattern(fb::FirmBlockStats, f::Vector{Int}, w::Vector{Int},
-                               nf::Int, nw::Int)
-    n = nf + nw
+# The node set S_i = {firm_i} ∪ {workers of the block's observations} for
+# every block, and a structural pattern covering every S_i × S_i. Built with
+# explicit ones rather than reused from an assembled `P`, so an Ω that happens
+# to produce a numerically zero entry can never drop a position out of the
+# pattern.
+function _block_selinv_pattern(fb::FirmBlockStats, nodes::Vector{Vector{Int}}, n::Int)
     rows = _block_rows(fb)
     cols = Vector{Vector{Int}}(undef, length(rows))
-    total = sum(m -> (m + 1)^2, fb.sizes)
-    I = Vector{Int}(undef, 0); sizehint!(I, total)
-    J = Vector{Int}(undef, 0); sizehint!(J, total)
     for i in eachindex(rows)
-        r = rows[i]
-        s = Vector{Int}(undef, length(r) + 1)
-        s[1] = f[first(r)]
-        for (a, t) in enumerate(r)
-            s[a + 1] = nf + w[t]
+        s = Int[]
+        for t in rows[i]
+            append!(s, nodes[t])
         end
         unique!(sort!(s))
         cols[i] = s
+    end
+    total = sum(s -> length(s)^2, cols; init = 0)
+    I = Vector{Int}(undef, 0); sizehint!(I, total)
+    J = Vector{Int}(undef, 0); sizehint!(J, total)
+    for s in cols
         for p in s, q in s
             push!(I, p); push!(J, q)
         end
@@ -225,12 +210,14 @@ function _aptpa_local(
     m = length(rr)
     s = length(cols)
     # Aᵢ restricted to the block's own nodes. `cols` is sorted, so the position
-    # of each node is a binary search; every row loads exactly one firm and one
-    # worker (match_id is rejected for error_blocks=:iw).
+    # of each node is a binary search; each row contributes its full (node,
+    # value) support — one firm plus one or more weighted workers under match
+    # grouping.
     A = zeros(Float64, m, s)
     for (a, t) in enumerate(rr)
-        A[a, searchsortedfirst(cols, ew.edge_firm[t])] += ew.edge_vf[t]
-        A[a, searchsortedfirst(cols, ew.edge_worker[t])] += ew.edge_vw[t]
+        for (p, v) in zip(ew.row_nodes[t], ew.row_vals[t])
+            A[a, searchsortedfirst(cols, p)] += v
+        end
     end
 
     Ssub = Matrix{Float64}(undef, s, s)

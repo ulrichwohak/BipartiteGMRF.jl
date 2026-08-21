@@ -611,10 +611,12 @@ which integrates the blocks out — never collapsed, never read from a matrix).
 `block_of[s]` maps observation row `s` to its block; `sizes[i]` is `m_i`.
 """
 struct FirmBlockStats
-    V::SparseMatrixCSC{Float64,Int}   # edge-level design rows (K × n), NOT collapsed
-    y::Vector{Float64}                # edge-level standardized outcomes (K)
+    V::SparseMatrixCSC{Float64,Int}   # observation design rows (K × n): raw
+                                      # rows, or match-collapsed rows (issue #120)
+    y::Vector{Float64}                # standardized outcomes, one per observation (K)
     block_of::Vector{Int}             # observation row s → block index (1..B)
-    sizes::Vector{Int}                # m_i per block
+    sizes::Vector{Int}                # m_i per block (observations = matches
+                                      # per firm under match grouping)
 end
 
 """

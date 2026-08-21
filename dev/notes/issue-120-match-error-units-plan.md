@@ -90,7 +90,21 @@ Every estimator then shares one observation equation
       matches (sizes = matches per firm). Done via the shared
       `per_observation_value` helper (prepare.jl, next to
       `observation_rows`).
-- [ ] **3. EM internals.** Generalize `emblocks.jl` to weighted multi-worker
+- [x] **3. EM internals.** Done: `_edge_nodes`/`_edge_values` replaced by
+      `_row_supports` (per-row node/value lists + firm), generic
+      `assemble_block_precision` accumulation, node-set union
+      `_block_selinv_pattern`, `_aptpa_local` over row supports; tests
+      assert dense `A'Ω⁻¹A` equality and `_aptpa` agreement on a fixture
+      with a shared worker and co-managed matches (iw 188/188).
+      **Sequencing constraint (advisor):** this step
+      MUST land before step 4 removes the `suffstats` guard —
+      `build_block_V_stats` can now produce multi-worker rows, and until
+      emblocks.jl is generalized, `_edge_nodes` does last-worker-wins
+      overwriting (silently wrong, no error); only the stats.jl
+      ArgumentError blocks the path today. Also add a fixture with a worker
+      shared across two matches of the same firm (stresses the `A[a,pos] +=`
+      accumulation and the block node-set union).
+      Generalize `emblocks.jl` to weighted multi-worker
       observation rows: per-row node/value lists read from `V` (replacing the
       scalar `edge_firm/edge_worker/edge_vf/edge_vw` quartet on
       `EMBlocksWorkspace`), `assemble_block_precision` accumulating
