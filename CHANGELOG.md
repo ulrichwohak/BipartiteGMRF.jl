@@ -3,9 +3,9 @@
 All notable changes to BipartiteGMRF.jl are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [v0.6.0] &mdash; 2026-08-21
+## [v0.5.2] &mdash; 2026-08-21
 
-### Added
+### Fixed
 
 - **Match-grouped designs under `error_eta` and `error_blocks=:iw`**
   (issue #120). `match_id` now composes with both structured error models:
@@ -21,8 +21,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   contracts: each match must span a single firm (hard error), and
   `edge_index` must be constant within a match; on data with one row per
   match both paths reproduce the previous raw-row results exactly.
-
-### Fixed
 
 - **`EMIWBlocks` workspace pattern seeding is now structural.** With
   weighted multi-worker rows an assembled reference-block entry can cancel

@@ -6,7 +6,9 @@ step 3's fixes and again after steps 4–6). Commits: `a59e35f` (builders),
 plus the final wiring/tests/docs commit. Advisor reviewed and approved
 every increment (final gate 2026-08-21: "approved for the final commit"
 after three stale comment fixes, applied). All three acceptance criteria
-from issue #120 are pinned by tests. Version bumped to v0.6.0.
+from issue #120 are pinned by tests. Released as v0.5.2 (patch — the
+user's call: the structured error paths were producing wrong fits on
+co-managed data, so this is a bugfix, not a feature).
 **Branch:** `feat/issue-120-match-error-units`, cut from `3d01414` (tip of
 `feat/issue-114-init-warm-start` = `release/v0.5.0`).
 
