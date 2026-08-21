@@ -240,4 +240,138 @@
         vd_f = decompose(result; kind=:fitted, probes=20, seed=1)
         @test isfinite(vd_f.V_total)
     end
+
+    @testset "build_ar1_V_stats match collapsing (issue #120)" begin
+        # ── unique match per row reproduces the raw-row builder exactly ──
+        f = [1, 1, 1, 2, 2, 3]
+        w = [1, 2, 3, 2, 4, 5]
+        y = [0.7, -0.3, 0.9, 0.2, -0.5, 1.1]
+        eidx = [1, 2, 3, 1, 2, 1]
+        a_raw = BipartiteGMRF.build_ar1_V_stats(f, w, y, eidx, 3, 5)
+        a_mid = BipartiteGMRF.build_ar1_V_stats(f, w, y, eidx, 3, 5, collect(1:6))
+        @test a_mid.K == a_raw.K
+        @test a_mid.n_blocks == a_raw.n_blocks
+        @test a_mid.pattern == a_raw.pattern
+        @test a_mid.vtv_full ≈ a_raw.vtv_full
+        @test a_mid.vtv_adj ≈ a_raw.vtv_adj
+        @test a_mid.vtv_int ≈ a_raw.vtv_int
+        @test a_mid.projected_full ≈ a_raw.projected_full
+        @test a_mid.projected_adj ≈ a_raw.projected_adj
+        @test a_mid.projected_int ≈ a_raw.projected_int
+        @test a_mid.ydot_full ≈ a_raw.ydot_full
+        @test a_mid.ydot_adj ≈ a_raw.ydot_adj
+        @test a_mid.ydot_int ≈ a_raw.ydot_int
+
+        # ── co-managed match: one spell, 1/2-1/2 worker loadings ──
+        # Firm 1: match 1 (workers 1, 2; rank 1) and match 2 (worker 3; rank 2).
+        # Firm 2: match 3 (worker 1; rank 1), a singleton AR(1) block.
+        f2 = [1, 1, 1, 2]
+        w2 = [1, 2, 3, 1]
+        y2 = [1.0, 1.0, 0.5, 0.3]
+        eidx2 = [1, 1, 2, 1]
+        mid2 = [1, 1, 2, 3]
+        a2 = BipartiteGMRF.build_ar1_V_stats(f2, w2, y2, eidx2, 2, 3, mid2)
+        @test a2.K == 3          # matches, not rows
+        @test a2.n_blocks == 2
+        @test a2.V[1, 1] ≈ 1.0          # firm loading (F_s = 1)
+        @test a2.V[1, 2 + 1] ≈ 0.5      # worker 1 of the co-managed match
+        @test a2.V[1, 2 + 2] ≈ 0.5      # worker 2
+        # Firm 1's spell sequence is its matches: obs 1 and 2 adjacent.
+        @test a2.Sadj[1, 2] == 1.0
+        # Firm 2 is a singleton block: -1 diagonal correction on obs 3.
+        @test a2.Sint[3, 3] == -1.0
+
+        # ── duplicating a member row of the co-managed match changes nothing ──
+        a2d = BipartiteGMRF.build_ar1_V_stats(
+            vcat(f2, 1), vcat(w2, 2), vcat(y2, 1.0), vcat(eidx2, 1),
+            2, 3, vcat(mid2, 1))
+        @test a2d.K == a2.K
+        @test a2d.pattern == a2.pattern
+        @test a2d.vtv_full ≈ a2.vtv_full
+        @test a2d.vtv_adj ≈ a2.vtv_adj
+        @test a2d.vtv_int ≈ a2.vtv_int
+        @test a2d.projected_full ≈ a2.projected_full
+        @test a2d.projected_adj ≈ a2.projected_adj
+        @test a2d.projected_int ≈ a2.projected_int
+        @test a2d.ydot_full ≈ a2.ydot_full
+        @test a2d.ydot_adj ≈ a2.ydot_adj
+        @test a2d.ydot_int ≈ a2.ydot_int
+
+        # ── ranks bind, not appearance order ──
+        # Firm 1's rank-2 match appears FIRST in row order; Sadj must still
+        # link the two matches, and reversing the ranks must reverse nothing
+        # structurally but everything rank-dependent. An implementation that
+        # ignored edge_index and used observation order would pass the
+        # fixtures above; this one catches it.
+        f_rk = [1, 1, 1, 1]
+        w_rk = [1, 2, 3, 4]
+        y_rk = [1.0, 1.0, 0.5, 0.2]
+        mid_rk = [1, 1, 2, 3]        # obs 1 = co-managed, obs 2, obs 3
+        e_fwd = [2, 2, 1, 3]         # obs ranks 2, 1, 3: sorted by rank the
+        # spell sequence is obs2 → obs1 → obs3, so adjacency links obs2–obs1
+        # and obs1–obs3, and the interior spell is obs1 (rank 2).
+        a_rk = BipartiteGMRF.build_ar1_V_stats(f_rk, w_rk, y_rk, e_fwd, 1, 4, mid_rk)
+        @test a_rk.Sadj[2, 1] == 1.0
+        @test a_rk.Sadj[1, 3] == 1.0
+        @test a_rk.Sadj[2, 3] == 0.0   # ranks 1 and 3 are not adjacent
+        # interior observation is the rank-2 one (obs 1), not the middle row
+        @test a_rk.Sint[1, 1] == 1.0
+        @test a_rk.Sint[2, 2] == 0.0
+        @test a_rk.Sint[3, 3] == 0.0
+
+        # ── a match spanning two firms is a hard error ──
+        @test_throws ArgumentError BipartiteGMRF.build_ar1_V_stats(
+            [1, 2], [1, 1], [1.0, 1.0], [1, 1], 2, 1, [1, 1])
+        # ── edge_index must agree across the rows of a match ──
+        @test_throws ArgumentError BipartiteGMRF.build_ar1_V_stats(
+            [1, 1], [1, 2], [1.0, 1.0], [1, 2], 1, 2, [1, 1])
+        # ── per-firm rank permutation enforced over matches ──
+        @test_throws ArgumentError BipartiteGMRF.build_ar1_V_stats(
+            [1, 1, 1], [1, 2, 3], [1.0, 1.0, 0.5], [1, 1, 3], 1, 3, [1, 1, 2])
+    end
+
+    @testset "build_block_V_stats match collapsing (issue #120)" begin
+        # ── unique match per row reproduces the raw-row builder exactly ──
+        f = [1, 1, 1, 2, 2]
+        w = [1, 2, 3, 2, 4]
+        y = [0.5, -0.3, 0.9, 0.2, -0.5]
+        V_raw, y_raw, bo_raw, sz_raw =
+            BipartiteGMRF.build_block_V_stats(f, w, y, f, 2, 4)
+        V_mid, y_mid, bo_mid, sz_mid =
+            BipartiteGMRF.build_block_V_stats(f, w, y, f, 2, 4, collect(1:5))
+        @test V_mid == V_raw
+        @test y_mid == y_raw
+        @test bo_mid == bo_raw
+        @test sz_mid == sz_raw
+
+        # ── co-managed match: block sizes count matches, loadings are 1/M ──
+        # Firm 1: match 1 (workers 1, 2) + match 2 (worker 3) → block of 2.
+        # Firm 2: match 3 (worker 2) → singleton block.
+        f2 = [1, 1, 1, 2]
+        w2 = [1, 2, 3, 2]
+        y2 = [1.0, 1.0, 0.5, 0.3]
+        mid2 = [1, 1, 2, 3]
+        V2, yv2, bo2, sz2 =
+            BipartiteGMRF.build_block_V_stats(f2, w2, y2, f2, 2, 3, mid2)
+        @test length(yv2) == 3
+        @test sz2 == [2, 1]
+        @test bo2 == [1, 1, 2]
+        @test V2[1, 1] ≈ 1.0        # firm loading (F_s = 1)
+        @test V2[1, 2 + 1] ≈ 0.5    # worker loadings of the co-managed match
+        @test V2[1, 2 + 2] ≈ 0.5
+        @test yv2 == [1.0, 0.5, 0.3]
+
+        # ── duplicating a member row of the co-managed match changes nothing ──
+        V2d, yv2d, bo2d, sz2d = BipartiteGMRF.build_block_V_stats(
+            vcat(f2, 1), vcat(w2, 2), vcat(y2, 1.0), vcat(f2, 1), 2, 3,
+            vcat(mid2, 1))
+        @test V2d == V2
+        @test yv2d == yv2
+        @test bo2d == bo2
+        @test sz2d == sz2
+
+        # ── a match spanning two firms is a hard error ──
+        @test_throws ArgumentError BipartiteGMRF.build_block_V_stats(
+            [1, 2], [1, 1], [1.0, 1.0], [1, 2], 2, 1, [1, 1])
+    end
 end

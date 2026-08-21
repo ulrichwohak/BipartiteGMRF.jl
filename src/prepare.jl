@@ -438,6 +438,32 @@ function observation_rows(
 end
 
 """
+Collapse a per-row attribute to one value per observation, in the same
+first-appearance order [`observation_rows`](@ref) assigns, requiring the
+attribute to be constant within each match. Used by the structured error
+models to read the per-match firm (each match must span a single firm) and
+the per-match `edge_index`.
+"""
+function per_observation_value(
+    vals::Vector{Int},
+    match_ids::Vector{Int},
+    what::AbstractString,
+)
+    pos = Dict{Int,Int}()
+    out = Int[]
+    for i in eachindex(vals)
+        s = get!(pos, match_ids[i]) do
+            push!(out, vals[i])
+            length(out)
+        end
+        out[s] == vals[i] || throw(ArgumentError(
+            "$what must be constant within a match; match $(match_ids[i]) " *
+            "carries $(out[s]) and $(vals[i])."))
+    end
+    return out
+end
+
+"""
     build_correlated_V_stats(f_obs, w_obs, y, match_ids, R, n_firms, n_workers)
 
 Design products under a general error covariance `sigma_eps^2 R`, where `R` is
@@ -676,7 +702,8 @@ end
 # ─── AR(1) within-firm error correlation: sigma_eps^2 R(eta), estimated ─────
 
 """
-    build_ar1_V_stats(f_obs, w_obs, y, edge_index_obs, n_firms, n_workers)
+    build_ar1_V_stats(f_obs, w_obs, y, edge_index_obs, n_firms, n_workers,
+                      match_ids=nothing)
 
 Design-product components under an AR(1) within-firm error correlation
 `Corr(eps_k, eps_l) = eta^|k-l|`: the error covariance is `sigma_eps^2 * R(eta)`
@@ -689,19 +716,24 @@ within each firm). The AR(1) precision is tridiagonal:
 with `S_full = I`, `S_adj` the within-firm edge adjacency (|k-l| == 1), and
 `S_int` the diagonal correction: +1 on interior edges (excludes the first and
 last edge of each firm), -1 on singleton-firm edges (whose precision is exactly
-1, cancelling the `1/(1-eta^2)` base).
-three-way linear combination, so this returns the three precomputed
-components aligned to the **union pattern** `V'V + V'S_adj V + V'S_int V`
-rather than a single design. The union is needed because raw rows carry one
-worker each: `V'V` has a diagonal-only worker–worker block, while adjacent
-distinct workers create off-diagonal worker–worker entries in `V'S_adj V`
-that `V'V` does not contain.
+1, cancelling the `1/(1-eta^2)` base). The `R(eta)`-weighted design products
+are the corresponding three-way linear combination, so this returns the three
+precomputed components aligned to the **union pattern**
+`V'V + V'S_adj V + V'S_int V` rather than a single design. The union is
+needed because adjacent observations with distinct workers create
+worker–worker entries in `V'S_adj V` that `V'V` need not contain (and the
+`S_int` −1 on singleton diagonals would cancel `V'V` entries under a plain
+sparse sum).
 
-`match_id` is deliberately NOT supported: collapsing raw rows to match means
-changes the within-block covariance to `G R_raw(eta) G'`, a different model
-from the unit-diagonal Toeplitz over the collapsed rows. The caller's rows
-must already be the AR(1) units (one per raw observation, ordered by
-`edge_index` within firm).
+With `match_ids`, edges sharing an id form **one** observation exactly as in
+[`build_match_V_stats`](@ref) (each distinct firm weighted `1/F`, each
+distinct worker `1/M`), and the AR(1) process is defined **on the match
+units**: `Corr(eps_s, eps_t) = eta^|rank_s - rank_t|` over the firm's matches
+ranked by `edge_index`. A co-managed match is one spell with one error draw —
+the error process lives on spells, not member rows, so no `G R_raw G'`
+reweighting arises. Each match must span a single firm (the firm's spell
+timeline is the process index; a multi-firm match is an `ArgumentError`), and
+`edge_index` must agree across the rows of a match.
 
 Returns `(pattern, vtv_full, vtv_adj, vtv_int, projected_full, projected_adj,
 projected_int, ydot_full, ydot_adj, ydot_int, n_blocks, K, V, Sadj, Sint, yv,
@@ -714,24 +746,38 @@ function build_ar1_V_stats(
     edge_index_obs::Vector{Int},
     n_firms::Int,
     n_workers::Int,
+    match_ids::Union{Nothing,Vector{Int}}=nothing,
 )
     n = n_firms + n_workers
-    K = length(y)
-    V, yv, src = observation_rows(f_obs, w_cols, y, nothing, n_firms, n_workers)
+    V, yv, src = observation_rows(f_obs, w_cols, y, match_ids, n_firms, n_workers)
+    K = length(yv)
 
-    # Group raw rows by firm; validate edge_index is 1..m_i, and derive the
+    # Per-observation firm and spell rank. Without match_ids these are the
+    # inputs; with match_ids they are read per match (first-appearance order,
+    # the same order observation_rows assigns) and must be internally
+    # consistent: one firm per match, one edge_index per match.
+    firm_of, eidx = if match_ids === nothing
+        f_obs, edge_index_obs
+    else
+        (per_observation_value(f_obs, match_ids,
+             "the firm index (the AR(1) process is defined on a firm's " *
+             "matches, so each match must span a single firm)"),
+         per_observation_value(edge_index_obs, match_ids, "edge_index"))
+    end
+
+    # Group observations by firm; validate edge_index is 1..m_i, and derive the
     # within-firm adjacency (S_adj) and interior diagonal (S_int).
     firm_groups = Dict{Int,Vector{Int}}()
     for s in 1:K
-        push!(get!(firm_groups, f_obs[s], Int[]), s)
+        push!(get!(firm_groups, firm_of[s], Int[]), s)
     end
     Sadj_I = Int[]; Sadj_J = Int[]; Sadj_V = Float64[]
     Sint_I = Int[]; Sint_J = Int[]; Sint_V = Float64[]
     for (_, rows) in firm_groups
         m = length(rows)
-        es = edge_index_obs[rows]
+        es = eidx[rows]
         sort(es) == collect(1:m) || throw(ArgumentError(
-            "error_eta requires edge_index to be a permutation of 1:$m within each firm; got $(sort(es)) for a firm with $m rows."))
+            "error_eta requires edge_index to be a permutation of 1:$m within each firm; got $(sort(es)) for a firm with $m observations."))
         ord = sortperm(es)
         for pos in 1:m
             r = rows[ord[pos]]
@@ -848,13 +894,20 @@ end
 # ─── Per-firm error blocks: edge-level, never collapsed ────────────────────
 
 """
-    build_block_V_stats(f_obs, w_obs, y_obs, firm_group, n_firms, n_workers)
+    build_block_V_stats(f_obs, w_obs, y_obs, firm_group, n_firms, n_workers,
+                        match_ids=nothing)
 
-Design products for `error_blocks=:iw`: observations stay at edge level (the
-returns of [`observation_rows`](@ref) with no `match_ids`), and each firm's
-rows form one error block modeled by the active block solver ([`EMIWBlocks`](@ref),
-which integrates the block covariance out). Blocks are discovered from
-`firm_group` (first-appearance order), never parametrized.
+Design products for `error_blocks=:iw`: each firm's observations form one
+error block modeled by the active block solver ([`EMIWBlocks`](@ref), which
+integrates the block covariance out). Blocks are discovered from `firm_group`
+(first-appearance order), never parametrized.
+
+Without `match_ids` the observations are the input rows. With `match_ids`,
+edges sharing an id form **one** observation exactly as in
+[`build_match_V_stats`](@ref) (each distinct firm weighted `1/F`, each
+distinct worker `1/M`), and the firm's block is its **matches** — `Ψ_{m_i}`
+acts on match errors, `m_i` = matches at firm `i`. Each match must span a
+single firm (a multi-firm match is an `ArgumentError`).
 
 Returns `(V, yv, block_of, sizes)`. Each `firm_group` value must span a single
 firm (the grouping key is the firm id per row).
@@ -866,8 +919,9 @@ function build_block_V_stats(
     firm_group::Vector{Int},
     n_firms::Int,
     n_workers::Int,
+    match_ids::Union{Nothing,Vector{Int}}=nothing,
 )
-    V, yv, _ = observation_rows(f_obs, w_obs, y_obs, nothing, n_firms, n_workers)
+    V, yv, _ = observation_rows(f_obs, w_obs, y_obs, match_ids, n_firms, n_workers)
     K = length(yv)
 
     # firm_group must be the rowwise firm mapping: the estimator has one latent
@@ -877,10 +931,15 @@ function build_block_V_stats(
         "error_blocks=:iw requires firm_group to equal the firm id per row; " *
         "each row's firm_group value must match its firm index."))
 
+    firm_of = match_ids === nothing ? f_obs :
+        per_observation_value(f_obs, match_ids,
+            "the firm index (an error block is one firm's matches, so each " *
+            "match must span a single firm)")
+
     gpos = Dict{Int,Int}()
     members = Vector{Vector{Int}}()
     for s in 1:K
-        g = get!(gpos, firm_group[s]) do
+        g = get!(gpos, firm_of[s]) do
             push!(members, Int[])
             length(members)
         end
