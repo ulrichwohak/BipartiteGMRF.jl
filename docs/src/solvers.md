@@ -9,6 +9,16 @@ likelihood evaluation: a gradient-free Nelder-Mead search, followed (with
 `polish=true`) by a finite-difference L-BFGS polish. `HutchSLQ()` uses PCG
 and stochastic Lanczos quadrature for larger graphs.
 
+`ExactCholesky()` reuses the sparse matrix layout and symbolic Cholesky
+analysis across parameter evaluations. The layout includes every position
+that can be nonzero under the model, even when its value is zero at the
+initial parameters or cancels at a later evaluation. This is important for
+grouped observations with AR(1) errors: changing `eta` can make a previously
+zero observation-information entry nonzero. Numerical updates preserve these
+positions in both the prior and posterior precisions; an entry outside the
+fixed layout raises an error instead of being discarded. Non-positive-definite
+trial precisions are still treated as infeasible parameter values.
+
 For `BipartiteVarianceStableModel`, `HutchSLQ()` evaluates the log-determinant
 ratio as `logdet(B + lambda*S*VtV*S) - logdet(B)`, using identical random
 probes for both terms. This avoids cancellation between sigma-dependent log

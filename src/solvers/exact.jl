@@ -9,19 +9,42 @@ Symbolic factorization is done once; numeric refactorization per iteration.
 struct ExactWorkspace
     ws_Q::GaussianMarkovRandomFields.GMRFWorkspace
     ws_M::GaussianMarkovRandomFields.GMRFWorkspace
+    q_values::Vector{Float64}
+    m_values::Vector{Float64}
+end
+
+ExactWorkspace(ws_Q::GaussianMarkovRandomFields.GMRFWorkspace,
+               ws_M::GaussianMarkovRandomFields.GMRFWorkspace) =
+    ExactWorkspace(ws_Q, ws_M, zeros(nnz(ws_Q.Q)), zeros(nnz(ws_M.Q)))
+
+# Positive markers describe stored positions, including explicit zeros. They
+# are used only to build structural unions, never as numerical precisions.
+_exact_pattern(A::SparseMatrixCSC{Float64,Int}) =
+    SparseMatrixCSC(A.m, A.n, copy(A.colptr), copy(A.rowval), ones(nnz(A)))
+
+function _exact_prior_pattern(model::AbstractBipartiteModel)
+    g = model.graph
+    return [
+        spdiagm(0 => ones(g.n_firms)) _exact_pattern(g.A)
+        _exact_pattern(g.At) spdiagm(0 => ones(g.n_workers))
+    ]
 end
 
 function make_exact_workspace(model::AbstractBipartiteModel, stats::BipartiteGMRFStats)
-    # Build Q and M at reference parameters for symbolic factorization.
-    # Use a safe rho within the model's limit.
-    rho_ref = min(0.1, 0.5 * rho_limit(model))
-    # Perturb off exact reciprocals of integers: when a match has
-    # F_s·M_s = 1/rho_ref, the Q and VtV off-diagonal entries cancel
-    # exactly, Julia's sparse + drops the zero, and update_precision!
-    # fails at other rho values due to sparsity pattern mismatch (#107).
-    rho_ref += eps(rho_ref)
-    Q0 = model_precision(model, rho_ref, 1.0, 1.0)
-    M0 = Q0 + stats.design.VtV  # λ=1 at reference
+    # All supported exact priors have diagonal + bipartite-graph support.
+    # Observation support must also be structural: AR1 entries can cancel at
+    # ANY reference eta, and Q + VtV can cancel even for independent errors.
+    Q_pattern = _exact_prior_pattern(model)
+    observation_pattern = stats.error_ar1 === nothing ? stats.design.VtV : stats.error_ar1.pattern
+    M0 = Q_pattern + _exact_pattern(observation_pattern)
+
+    # The independent prior (rho=0) is a valid numerical reference even when
+    # cyclic VS graphs have a very small feasible rho range. Its zero edge
+    # values are retained on the complete pattern for symbolic analysis.
+    Q0 = _align_to_pattern(model_precision(model, 0.0, 1.0, 1.0), Q_pattern)
+    fill!(nonzeros(M0), 0.0)
+    _add_to_pattern!(nonzeros(M0), Q0, M0)
+    _add_to_pattern!(nonzeros(M0), stats.design.VtV, M0) # λ=1 at reference
     return ExactWorkspace(
         GaussianMarkovRandomFields.GMRFWorkspace(Q0),
         GaussianMarkovRandomFields.GMRFWorkspace(M0),
@@ -31,25 +54,35 @@ end
 make_nll_cache(::ExactCholesky, model::AbstractBipartiteModel, stats::BipartiteGMRFStats) =
     make_exact_workspace(model, stats)
 
-# Rebuild `A` on `target`'s sparsity pattern, filling 0.0 at structural
-# positions that `A` lacks. `A`'s pattern must be a subset of `target`'s, and
-# both must be column-sorted CSC. Used by the AR(1) error model to restore the
-# zeroed worker-worker off-diagonal slots that sparse `+` drops at eta = 0.
-function _align_to_pattern(A::SparseMatrixCSC{Float64,Int}, target::SparseMatrixCSC{Float64,Int})
-    vals = zeros(Float64, nnz(target))
+# Add scale*A into a value buffer on target's fixed, column-sorted CSC pattern.
+# Reject EVERY unsupported stored position (even an explicit zero); silently
+# discarding entries would change the model. Missing source positions are fine.
+# The caller owns and resets the buffer; on failure it may be partially populated.
+function _add_to_pattern!(vals::Vector{Float64}, A::SparseMatrixCSC{Float64,Int},
+                          target::SparseMatrixCSC{Float64,Int}, scale::Float64=1.0)
+    size(A) == size(target) || throw(DimensionMismatch("source and target precision dimensions differ"))
+    length(vals) == nnz(target) || throw(DimensionMismatch("value buffer does not match target pattern"))
     Arv = rowvals(A); Anz = nonzeros(A); Trv = rowvals(target)
     @inbounds for j in 1:size(target, 2)
-        Alo = A.colptr[j]; Ahi = A.colptr[j+1] - 1
-        Tlo = target.colptr[j]; Thi = target.colptr[j+1] - 1
-        a = Alo
-        for p in Tlo:Thi
-            i = Trv[p]
-            while a <= Ahi && Arv[a] < i
-                a += 1
+        p = target.colptr[j]
+        last = target.colptr[j+1] - 1
+        for a in nzrange(A, j)
+            i = Arv[a]
+            while p <= last && Trv[p] < i
+                p += 1
             end
-            a <= Ahi && Arv[a] == i && (vals[p] = Anz[a])
+            p <= last && Trv[p] == i || throw(ArgumentError(
+                "precision entry ($i, $j) is outside the fixed sparsity pattern"))
+            vals[p] += scale * Anz[a]
         end
     end
+    return vals
+end
+
+# Allocating convenience wrapper for initialization and pattern validation.
+function _align_to_pattern(A::SparseMatrixCSC{Float64,Int}, target::SparseMatrixCSC{Float64,Int})
+    vals = zeros(Float64, nnz(target))
+    _add_to_pattern!(vals, A, target)
     return SparseMatrixCSC(target.m, target.n, copy(target.colptr), copy(target.rowval), vals)
 end
 
@@ -63,25 +96,32 @@ function nll_exact_value(
     p = unpack_params(params_full; rho_limit=rho_limit(model))
     all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
     p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
+    abs(p.rho) < rho_limit(model) || return BIG_NLL
     lambda = 1.0 / p.sigma_epsilon^2
+    isfinite(lambda) || return BIG_NLL
+
+    # Validate support BEFORE numerical factorization. Structural mistakes are
+    # programming errors, not infeasible parameter trials. Assemble directly
+    # into reusable buffers to avoid allocating a sparse posterior each time.
+    Q = model_precision(model, p.rho, p.sigma_a, p.sigma_z)
+    fill!(ew.q_values, 0.0)
+    fill!(ew.m_values, 0.0)
+    _add_to_pattern!(ew.q_values, Q, ew.ws_Q.Q)
+    _add_to_pattern!(ew.m_values, Q, ew.ws_M.Q)
+    _add_to_pattern!(ew.m_values, obs.design.VtV, ew.ws_M.Q, lambda)
+    all(isfinite, ew.q_values) && all(isfinite, ew.m_values) || return BIG_NLL
+    GaussianMarkovRandomFields.update_precision_values!(ew.ws_Q, ew.q_values)
+    GaussianMarkovRandomFields.update_precision_values!(ew.ws_M, ew.m_values)
 
     try
-        Q = model_precision(model, p.rho, p.sigma_a, p.sigma_z)
-        M = Q + lambda .* obs.design.VtV
-        # AR(1): at eta = 0 the worker-worker off-diagonal slots of V'R^-1 V are
-        # zero and get dropped by sparse `+`, shrinking the numeric pattern below
-        # the fixed symbolic factorization (built at a nonzero reference eta).
-        # Restore them as explicit zeros so update_precision! matches.
-        if stats.error_ar1 !== nothing && nnz(M) != nnz(ew.ws_M.Q)
-            M = _align_to_pattern(M, ew.ws_M.Q)
-        end
-        GaussianMarkovRandomFields.update_precision!(ew.ws_Q, Q)
         GaussianMarkovRandomFields.ensure_numeric!(ew.ws_Q)
-        GaussianMarkovRandomFields.update_precision!(ew.ws_M, M)
         GaussianMarkovRandomFields.ensure_numeric!(ew.ws_M)
+        # The workspace's CHOLMOD backend refactorizes with check=false.
+        # A failed factorization therefore need not throw an exception.
+        issuccess(ew.ws_Q.backend.factor) && issuccess(ew.ws_M.backend.factor) || return BIG_NLL
     catch e
-        e isa InterruptException && rethrow()
-        return BIG_NLL
+        e isa PosDefException && return BIG_NLL
+        rethrow()
     end
 
     ldQ = -GaussianMarkovRandomFields.logdet_cov(ew.ws_Q)  # logdet_cov returns -logdet(Q)
@@ -99,8 +139,8 @@ function nll_exact_value(
             mean_corr, _ = mean_profile_correction(obs.mean_stats, lambda,
                 obs.design.projected_y, solve_M)
         catch e
-            e isa InterruptException && rethrow()
-            return BIG_NLL
+            e isa PosDefException && return BIG_NLL
+            rethrow()
         end
     end
 
@@ -148,7 +188,10 @@ function polish(solver::ExactCholesky, obj, res, verbose::Bool)
     elapsed = @elapsed begin
         polished = try
             optimize(only_fg!(fg!), p_start, LBFGS(), polish_opts)
-        catch
+        catch e
+            # Preserve the numerical/line-search fallback, but never conceal
+            # the structural checks above (or an explicit interruption).
+            (e isa ArgumentError || e isa DimensionMismatch || e isa InterruptException) && rethrow()
             nothing
         end
         if polished !== nothing && optim_minimum(polished) <= optim_minimum(res)
