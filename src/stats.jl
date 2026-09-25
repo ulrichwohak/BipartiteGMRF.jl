@@ -331,10 +331,9 @@ function suffstats(
             ar1_aux = build_ar1_V_stats(f_obs, w_obs, y_obs_scaled, edge_index_obs,
                                         n_f, n_w, match_id_obs)
             eta_fixed = error_eta isa Real ? Float64(error_eta) : nothing
-            # Reference eta for the stored base design: the fixed value, or a
-            # nonzero start (0.5) when estimated, so the symbolic factorization
-            # sees the full union sparsity pattern (eta = 0 would collapse the
-            # worker-worker off-diagonal block and break the fixed pattern).
+            # Numerical reference for the stored base design. Exact workspaces
+            # use ar1_aux.pattern for structural support, since entries can
+            # cancel at this reference (or at any other eta).
             eta_ref = eta_fixed === nothing ? 0.5 : eta_fixed
             ar1_stats = ErrorAR1Stats(
                 ar1_aux.pattern, ar1_aux.vtv_full, ar1_aux.vtv_adj, ar1_aux.vtv_int,

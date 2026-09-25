@@ -23,4 +23,22 @@
     post_block = cov_block(post; firms=[1])
     @test size(post_block.matrix) == (1, 1)
     @test post_block.units == :scaled
+
+    @testset "batched extraction" begin
+        # Exercise full batches, a short final batch, repeated/reordered indices,
+        # and both orientations of the rectangular extraction optimization.
+        for batch_size in (1, 2, 3, 5, 16)
+            all_nodes = vcat([3, 1, 2], stats.N_firms .+ [4, 1, 3, 2])
+            full = cov_block(op; firms=[3, 1, 2], workers=[4, 1, 3, 2], batch_size)
+            @test full.matrix ≈ Sigma[all_nodes, all_nodes] atol=1e-8 rtol=1e-8
+
+            rows = [stats.N_firms + 4, stats.N_firms + 1, stats.N_firms + 4]
+            cols = [2, 1]
+            tall = cov_block(op; row_workers=[4, 1, 4], col_firms=[2, 1], batch_size)
+            wide = cov_block(op; row_firms=[2, 1], col_workers=[4, 1, 4], batch_size)
+            @test tall.matrix ≈ Sigma[rows, cols] atol=1e-8 rtol=1e-8
+            @test wide.matrix ≈ Sigma[cols, rows] atol=1e-8 rtol=1e-8
+        end
+        @test_throws ArgumentError cov_block(op; firms=[1], batch_size=0)
+    end
 end

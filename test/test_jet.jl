@@ -18,9 +18,15 @@ function jet_covariance_flow(result)
     return cov_block(op; firms=(1,), workers=(1,))
 end
 
+function jet_batched_covariance_flow(result, batch_size)
+    op = covariance(result; kind=:model)
+    return cov_block(op; firms=(3, 1, 2), workers=(4, 1, 3, 2), batch_size)
+end
+
 @testset "JET" begin
     model, ss, result = setup_jet_fixture()
 
     JET.@test_opt target_modules=(BipartiteGMRF,) jet_exact_solve_flow(model, ss)
     JET.@test_opt target_modules=(BipartiteGMRF,) jet_covariance_flow(result)
+    JET.@test_opt target_modules=(BipartiteGMRF,) jet_batched_covariance_flow(result, 2)
 end

@@ -588,11 +588,12 @@ Sufficient statistics for an estimated AR(1) within-firm error correlation
 `R_k = [eta^|k-l|]`; its inverse is the tridiagonal
 `Rinv = (S_full - eta*S_adj + eta^2*S_int) / (1 - eta^2)`, so every weighted
 design product is the same three-way linear combination of precomputed
-components aligned to the pooled sparsity pattern (which equals `V'V` at
-`eta = 0`). `eta_fixed === nothing` means `eta` is estimated inside the MLE.
+components aligned to their structural union. The union retains positions
+whose values vanish at particular `eta`, including zero. `eta_fixed === nothing`
+means `eta` is estimated inside the MLE.
 """
 struct ErrorAR1Stats
-    pattern::SparseMatrixCSC{Float64,Int}  # V'V at eta = 0 (defines the pooled pattern)
+    pattern::SparseMatrixCSC{Float64,Int}  # structural union of full/adjacent/interior products
     vtv_full::Vector{Float64}              # nonzeros(V'V), aligned to `pattern`
     vtv_adj::Vector{Float64}               # nonzeros(V'S_adj V), aligned
     vtv_int::Vector{Float64}               # nonzeros(V'S_int V), aligned
