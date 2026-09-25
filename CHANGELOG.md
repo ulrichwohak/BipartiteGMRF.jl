@@ -3,6 +3,51 @@
 All notable changes to BipartiteGMRF.jl are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [v0.5.3] &mdash; 2026-09-25
+
+### Fixed
+
+- **ExactCholesky sparse-pattern correctness** (issue #122, PR #123).
+  Reusable precision-matrix layouts are now derived from the graph and
+  observation structure, not from the nonzero values at one initial
+  parameter setting. An entry that temporarily cancels to zero retains its
+  storage position and can become nonzero later. Previously, missing
+  positions could silently discard valid contributions and produce an
+  incorrect likelihood, even when the optimizer reported convergence. This
+  was reproduced for match-grouped AR(1) errors with overlapping worker
+  membership. Valid `rho=0` evaluations are also preserved. Unexpected
+  matrix positions now raise an explicit error, and numerical factorization
+  failures are checked before using a factor. Sparse symbolic-factorization
+  reuse is retained; the statistical model and public API are unchanged.
+- **Covariance extraction on Julia 1.13.** Use concrete dense batches in
+  `cov_block` to avoid widened view types and runtime dispatch detected by
+  JET. Full batches reuse their buffer; a short final batch uses a smaller
+  buffer. Covariance values and indexing semantics are unchanged.
+
+### Tests
+
+- Add dense-reference and cache-reuse regression tests for sparse-pattern
+  cancellation, zero correlations, invalid layouts, and fitted likelihoods.
+- Expand covariance tests to cover partial batches and reordered/repeated
+  indices, including the batched path in the isolated JET check.
+- Replace the single-seed synthetic recovery check with the consecutive
+  seeds `201:208`, retaining per-panel scale tolerances and checking mean
+  correlation recovery. Each fit must converge, have a valid likelihood,
+  and improve on the likelihood at the generating parameters. This is a
+  bounded regression check, not a statistical coverage guarantee; broader
+  recovery-test design remains tracked in issue #58.
+
+### Guidance for existing results
+
+- Re-evaluate potentially affected saved `ExactCholesky` fits at their saved
+  parameters with this release and refit affected models. Upgrading the
+  package does not repair previously saved likelihoods or estimates. The
+  confirmed bug does not imply that every AR(1) fit was affected, and its
+  empirical impact must be assessed on the relevant data.
+- No dependency constraints or model parameterizations change. Existing
+  release tags remain unchanged; downstream projects can adopt `v0.5.3`
+  explicitly when ready.
+
 ## [v0.5.2] &mdash; 2026-08-21
 
 ### Fixed
