@@ -37,13 +37,20 @@ function extract_by_columns(F, n::Int, row_idx::Vector{Int}, col_idx::Vector{Int
     while start <= length(col_idx)
         stop = min(start + batch_size - 1, length(col_idx))
         width = stop - start + 1
-        rhs_view = view(rhs, :, 1:width)
-        fill!(rhs_view, 0.0)
-        @inbounds for j in 1:width
-            rhs_view[col_idx[start + j - 1], j] = 1.0
+        # Keep each solve on a concrete Matrix: inference can widen SubArray
+        # indices across this loop on Julia 1.13. Full batches reuse rhs; only
+        # a short final batch needs a smaller buffer.
+        if size(rhs, 2) != width
+            rhs = Matrix{Float64}(undef, n, width)
         end
-        sol = F \ rhs_view
-        out[:, start:stop] .= sol[row_idx, 1:width]
+        fill!(rhs, 0.0)
+        @inbounds for j in 1:width
+            rhs[col_idx[start + j - 1], j] = 1.0
+        end
+        sol = F \ rhs
+        for j in 1:width, i in eachindex(row_idx)
+            out[i, start + j - 1] = sol[row_idx[i], j]
+        end
         start = stop + 1
     end
     return out
