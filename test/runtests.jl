@@ -36,4 +36,5 @@ include("test_statsapi.jl")
 #   julia --project -e 'using Pkg; Pkg.add("JET")' then include the file
 # after fixtures/synthetic.jl.
 include("test_mean_structure.jl")
+include("test_sparse_mean.jl")
 include("test_aqua.jl")
