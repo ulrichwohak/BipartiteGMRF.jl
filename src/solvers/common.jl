@@ -170,13 +170,14 @@ function mean_profile_correction(
 )
     # M^{-1} V'y (reuse if already computed, but solve_M is cheap here)
     Minv_Vy = solve_M(projected_y)
+    # A solver may return borrowed workspace storage (as PCG does). Consume
+    # the y solution before a subsequent right-hand side overwrites it.
+    c = lambda .* ms.Xty .- lambda^2 .* (ms.VtX' * Minv_Vy)
     # M^{-1} V'X
     Minv_VtX = similar(ms.VtX)
     for j in 1:ms.p
         Minv_VtX[:, j] = solve_M(ms.VtX[:, j])
     end
-    # c = X'Ω^{-1}y = λX'y - λ²(V'X)'M^{-1}V'y
-    c = lambda .* ms.Xty .- lambda^2 .* (ms.VtX' * Minv_Vy)
     # G = X'Ω^{-1}X = λX'X - λ²(V'X)'M^{-1}V'X
     G = Symmetric(lambda .* ms.XtX .- lambda^2 .* (ms.VtX' * Minv_VtX))
     G_chol = cholesky(G)
