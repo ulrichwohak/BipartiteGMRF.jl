@@ -185,8 +185,12 @@ struct MeanProfileError <: Exception
 end
 Base.showerror(io::IO, e::MeanProfileError) = print(io, e.message)
 
-_mean_rhs!(rhs::Vector{Float64}, B::Matrix{Float64}, j::Int) =
-    copyto!(rhs, view(B, :, j))
+function _mean_rhs!(rhs::Vector{Float64}, B::Matrix{Float64}, j::Int)
+    @inbounds for i in eachindex(rhs)
+        rhs[i] = B[i, j]
+    end
+    return rhs
+end
 
 function _mean_rhs!(rhs::Vector{Float64}, B::SparseMatrixCSC{Float64,Int}, j::Int)
     fill!(rhs, 0.0)
@@ -212,13 +216,19 @@ function _assemble_mean_profile!(ws::MeanProfileWorkspace, B::T,
         for k in 1:width
             _mean_rhs!(ws.rhs, B, first + k - 1)
             # Consume borrowed results immediately, before the next solve.
-            copyto!(view(ws.solved, :, k), solve_M(ws.rhs))
+            solution = solve_M(ws.rhs)
+            length(solution) == length(ws.rhs) ||
+                throw(DimensionMismatch("mean-profile solve returned the wrong vector length"))
+            @inbounds for i in eachindex(ws.rhs)
+                ws.solved[i, k] = solution[i]
+            end
         end
-        U = view(ws.solved, :, 1:width)
-        C = view(ws.cross, :, 1:width)
-        mul!(C, transpose(B), U)
+        # Concrete full-width buffers avoid widened SubArray types on Julia
+        # 1.13. On a short final block, extra product columns are unused;
+        # column independence makes their previous contents immaterial.
+        mul!(ws.cross, transpose(B), ws.solved)
         @inbounds for k in 1:width, i in 1:p
-            ws.G[i, first + k - 1] -= lambda^2 * C[i, k]
+            ws.G[i, first + k - 1] -= lambda^2 * ws.cross[i, k]
         end
     end
     return nothing

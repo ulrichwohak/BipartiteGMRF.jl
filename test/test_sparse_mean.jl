@@ -307,6 +307,63 @@ end
         end
     end
 
+    @testset "supported HutchSLQ sparse and dense mean paths" begin
+        Xd = designs.mixed
+        V, yo, _, _ = sparse_mean_rows(f, w, y, nothing)
+        Rin = Matrix(Diagonal(1.0 .+ 0.02 .* (1:K)))
+        for i in 1:K, j in 1:K
+            i != j && f[i] == f[j] && (Rin[i, j] = 0.1)
+        end
+        solver = HutchSLQ(logdet_probes=8, lanczos_iters=size(V, 2),
+            cg_tol=1e-13, cg_maxiter=100, optim_iters=1)
+        for prior in (BipartiteNormalizedModel, BipartiteVarianceStableModel),
+            error_model in (:iid, :singleton_groups, :correlated)
+            kwargs = error_model == :singleton_groups ? (; error_groups=collect(1:K)) :
+                error_model == :correlated ? (; error_cov=sparse(Rin)) : (;)
+            R = error_model == :correlated ? Rin .* (K/tr(Rin)) : Matrix{Float64}(I, K, K)
+            ss0 = suffstats(prior, f, w, y; standardize=false, kwargs...)
+            ssd = suffstats(prior, f, w, y; X=Xd, standardize=false, kwargs...)
+            sss = suffstats(prior, f, w, y; X=sparse(Xd), standardize=false, kwargs...)
+            model = prior(ss0.A_prior; rho_limit=0.8)
+            for stats in (ss0, ssd, sss)
+                @test bg.validate_capability(model, stats, solver) === nothing
+            end
+            caches = map(stats -> bg.make_hutch_cache(model, stats, solver), (ss0, ssd, sss))
+            @test caches[1].mean === nothing
+            @test caches[2].mean isa bg.MeanProfileWorkspace
+            @test caches[3].mean isa bg.MeanProfileWorkspace
+            retained = (caches[2].mean, caches[3].mean)
+            for (rho, se, seed) in ((0.2, 0.5, 17), (-0.15, 0.65, 42), (0.2, 0.5, 17))
+                theta = [atanh(rho/0.8), log(0.8), log(0.6), log(se)]
+                observations = map(stats -> bg.objective_stats(model, stats, theta), (ss0, ssd, sss))
+                values = map((stats, obs, cache) -> bg.nll_hutch_value(
+                    model, stats, solver, theta, obs, cache; seed=seed),
+                    (ss0, ssd, sss), observations, caches)
+                @test all(isfinite, values)
+                @test maximum(values) < bg.BIG_NLL
+                @test values[2] ≈ values[3] atol=1e-10 rtol=1e-10
+                @test caches[2].mean === retained[1]
+                @test caches[3].mean === retained[2]
+                ref = sparse_mean_oracle(model, V, yo, Xd, R, rho, 0.8, 0.6, se)
+                # Paired probe streams cancel stochastic logdet error; this
+                # verifies the real objective's correction, not SLQ accuracy.
+                @test 2*(values[1]-values[2]) ≈ ref.correction atol=1e-9 rtol=1e-9
+                @test 2*(values[1]-values[3]) ≈ ref.correction atol=1e-9 rtol=1e-9
+                cache, obs = caches[3], observations[3]
+                function borrowed_pcg(v)
+                    solution, ok, _, _ = bg.pcg_solve!(cache.pcg, cache.mop, v;
+                        tol=solver.cg_tol, maxiter=solver.cg_maxiter, Mdiag=cache.Mdiag)
+                    ok || error("Tiny sparse-mean reference PCG did not converge")
+                    return solution
+                end
+                correction, beta = bg.mean_profile_correction(obs.mean_stats, inv(se^2),
+                    obs.design.projected_y, borrowed_pcg, cache.mean)
+                @test correction ≈ ref.correction atol=1e-9 rtol=1e-9
+                @test beta ≈ ref.beta atol=1e-9 rtol=1e-9
+            end
+        end
+    end
+
     @testset "bounded storage and explicit numerical failures" begin
         n, p = 200, 30
         B = sparse(1:p, 1:p, fill(0.1, p), n, p)
@@ -341,6 +398,25 @@ end
         illscaled = bg.MeanStats(zeros(2, 2), [1.0 0; 0 1e-40], ones(2), 2)
         @test_throws bg.MeanProfileError bg.mean_profile_correction(
             illscaled, 1.0, ones(2), identity)
+
+        # Warm each specialization before measuring. These byte bounds are
+        # below even one dense K-by-p (preparation) or n-by-p (kernel) array,
+        # but leave ample room for the intended sparse and p-by-p work.
+        alloc_k, alloc_p = 2000, 200
+        alloc_f = collect(1:alloc_k)
+        alloc_w, alloc_y = copy(alloc_f), sin.(Float64.(alloc_f))
+        alloc_X = sparse(alloc_f, mod1.(alloc_f, alloc_p), ones(alloc_k), alloc_k, alloc_p)
+        alloc_ms = bg.build_mean_stats(alloc_f, alloc_w, alloc_y, alloc_X, alloc_k, alloc_k)
+        prep_bytes = @allocated bg.build_mean_stats(
+            alloc_f, alloc_w, alloc_y, alloc_X, alloc_k, alloc_k)
+        @test prep_bytes < sizeof(Float64)*alloc_k*alloc_p
+        alloc_ws = bg.MeanProfileWorkspace(alloc_ms)
+        scratch, projected = zeros(2alloc_k), zeros(2alloc_k)
+        borrowed_identity = v -> copyto!(scratch, v)
+        bg.mean_profile_correction(alloc_ms, 0.01, projected, borrowed_identity, alloc_ws)
+        kernel_bytes = @allocated bg.mean_profile_correction(
+            alloc_ms, 0.01, projected, borrowed_identity, alloc_ws)
+        @test kernel_bytes < sizeof(Float64)*(2alloc_k)*alloc_p
     end
 
     @testset "original-unit fitted means, ownership, and serialization" begin
@@ -391,8 +467,8 @@ end
             effective = suffstats(BipartiteNormalizedModel, [1, 2, 1, 2, 2],
                 [1, 2, 1, 2, 2], [0.3, 0.8, 0.3, 0.8, 0.8];
                 X=convert_X(reshape([1.0, 2.0, 1.0, 2.0, 2.0], 5, 1)),
-                weighting=Weighting(observations=:effective, rho_eps=0.5,
-                                    estimate_rho_eps=true), standardize=false)
+                weighting=Weighting(observations=:effective, rho_eps=:estimate),
+                standardize=false)
             model = BipartiteNormalizedModel(effective.A_prior; rho_limit=0.8)
             theta = [atanh(0.2/0.8), log(0.8), log(0.6), log(0.5),
                      bg.rhoeps_to_unconstrained(0.2)]

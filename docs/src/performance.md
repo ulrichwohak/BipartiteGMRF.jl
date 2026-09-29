@@ -113,6 +113,31 @@ enabled here: a potential speedup must first be checked against direct profiling
 for coefficient, objective, and finite-difference accuracy. No control columns
 are dropped or regularized to make the solve cheaper.
 
+### Scope of the measured improvement
+
+Synthetic comparisons on Julia 1.12.6, GaussianMarkovRandomFields 0.12.4, an
+Apple M3 Pro with 18 GiB RAM, and one Julia/BLAS thread used the script above
+with seed `20260929`. The baseline was v0.5.3 plus the isolated borrowed-buffer
+correction (`85b8490`), which does not change the exact route. Both connected
+and twenty-component cycle graphs were checked, with `n = K = 2000`,
+`p = 32, 128, 256`; additional cases used `n = 4000, p = 128`, small dense
+controls, and a connected AR(1) graph with `n = 10000, p = 512`. These are
+synthetic memory/runtime checks, not production-scale or recovery evidence.
+
+For the connected AR(1) cases, retained statistics changed from 2.38 to 1.06 MB
+at `p = 32`, and from 14.69 to 2.61 MB at `p = 256` (`n = 2000`, decimal MB).
+Across the small comparison grid, fixed-parameter NLL differences were at most
+`2.3e-13`. The package's independent dense-GLS tests, rather than agreement with
+the historical implementation alone, establish numerical correctness.
+
+Sparse storage is not always smaller. In the `p = 3` fixture, the node-by-control
+product was fully populated: representing it sparsely increased retained
+statistics from 0.500 to 0.548 MB. The corresponding genuinely dense input
+retained the same 0.500 MB on both revisions. Vector solve callbacks also still
+allocate, so cumulative allocation can remain substantial despite bounded live
+solution storage. Neither these timings nor a sparse input guarantee a speedup
+for every graph or design.
+
 ### Interpretation and persistence
 
 The coefficient system is checked for finite values, symmetry, positive
@@ -130,8 +155,11 @@ than averaging member rows. Supplying constant-within-match controls makes that
 choice immaterial; this storage change does not impose new constancy validation.
 
 Julia's `Serialization` is not a stable cross-version interchange format for
-package structs. New-version result round trips are tested, but changing mean
-storage types can affect historical artifacts. Keep existing files and the
+package structs. New-version result round trips are tested. A dense mean-statistic
+and fitted-result pair written by the pre-change v0.5.3 code was also loaded on
+Julia 1.12.6 and refitted successfully: its NLL was unchanged and the largest
+coefficient difference was `5.6e-17`. That limited check is not a guarantee for
+every historical artifact or Julia version. Keep existing files and the
 environment that created them. If an old artifact cannot be loaded, recreate
 statistics and refit from the original inputs; do not overwrite the only copy.
 

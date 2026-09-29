@@ -161,6 +161,9 @@ function main(args)
         pilot_obj_evals=result.obj_evals, pilot_converged=result.converged,
         projected_core_seconds, nll, correction, beta_norm=norm(beta),
         pilot_nll=result.nll, pilot_beta_norm=norm(result.beta)))
+    # Returning these small vectors also permits full old/new coefficient
+    # comparisons from a driver script without printing hundreds of values.
+    return (; beta, pilot_beta=result.beta, nll, pilot_nll=result.nll)
 end
 
 main(ARGS)
