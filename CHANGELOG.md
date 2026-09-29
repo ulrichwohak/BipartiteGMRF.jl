@@ -5,6 +5,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [v0.5.4] &mdash; 2026-09-29
+
 ### Fixed
 
 - **Borrowed solve buffers in mean profiling** (issue #125, PR #127).
@@ -47,8 +49,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   means with estimated effective error correlation (#129), the documented
   ignored-`X` policy for EMIWBlocks (#130), and possible within-match constancy
   validation (#131). This change does not silently redefine those semantics.
-- No release, dependency-pin change, new solver capability, production coefficient-CG
-  mode, or application-specific data processing is included.
+- At extreme variance ratios, cancellation can trigger the mean-profile
+  symmetry guard even when the coefficient matrix is reasonably conditioned.
+  The trial is rejected; this is a numerical-domain limitation, not evidence
+  that accepted fits are incorrect. A verified small-graph reproducer and a
+  cancellation-aware numerical follow-up are tracked in #133.
+- Existing tags and downstream dependency pins are unchanged. Adopt
+  `v0.5.4` explicitly in each downstream environment when ready. No new
+  solver capability, production coefficient-CG mode, or application-specific
+  data processing is included.
 
 ## [v0.5.3] &mdash; 2026-09-25
 
