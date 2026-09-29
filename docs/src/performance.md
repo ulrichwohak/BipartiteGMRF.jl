@@ -15,6 +15,126 @@ For larger graphs, prefer `HutchSLQ()` and tune `logdet_probes`,
 `lanczos_iters`, `cg_tol`, and `cg_maxiter` against the desired runtime and
 stochastic tolerance.
 
+## Mean controls: memory and runtime
+
+Supplying `X` estimates a linear mean jointly with the covariance parameters.
+At each covariance-parameter trial, the package solves the covariance-weighted
+coefficient problem exactly on the `ExactCholesky` route. This is profiled maximum
+likelihood, not ordinary demeaning or REML: there is no extra coefficient-system
+log-determinant term.
+
+For sparse `X`, observation filtering and mean-statistic construction preserve
+sparse storage for the large node-by-control products where mathematically
+possible. The same treatment applies to the AR(1) and error-class combinations
+formed during likelihood evaluation. A mathematically dense sparse product can
+still fill in; sparse input is not a guarantee that every later matrix is sparse.
+Dense input continues to use the dense preparation route.
+
+Let `n` denote latent nodes and `p` mean coefficients. The profiling workspace
+retains at most eight dense solved columns, rather than an `n × p` dense solution
+matrix. Its storage is `O(n*b + p*b + p^2)`, with `b = min(8, p)`, in addition to
+the retained mean products, network solver, and factorization. The coefficient
+matrix remains dense: it alone requires approximately `8*p^2` bytes, and its
+Cholesky solve costs `O(p^3)`. Factorization fill-in is a separate potential
+memory limit.
+
+The implementation uses the dependency's public **vector** solve interface.
+A block of eight columns still requires eight vector solves, not one batched
+factor solve. A mean-bearing objective evaluation uses `p + 1` network solves:
+one outcome solve, reused for the profile, and one per control column. Sparse
+storage and streaming do not remove that work. ExactCholesky final coefficient
+reconstruction reuses the final likelihood factorization.
+
+The shared streamed kernel also supports `HutchSLQ` on its existing supported
+model/error combinations and safely consumes solvers' reusable output buffers.
+However, **final coefficient reconstruction after a HutchSLQ fit still uses a
+direct Cholesky factorization**. This implementation therefore does not provide an
+end-to-end matrix-free mean fit on arbitrarily large graphs. AR(1) and multiple
+error classes still require `ExactCholesky`.
+
+### Reproducible synthetic benchmark and runtime gate
+
+`benchmark/mean_profiling.jl` is opt-in and uses only deterministic synthetic data.
+It accepts firm count, coefficient count, connected-component count, error kind,
+and input storage. For example, from the repository root:
+
+```sh
+# Connected graph; two nonzero controls per observation; estimated AR(1).
+OPENBLAS_NUM_THREADS=1 julia --project=. benchmark/mean_profiling.jl 1000 128 1 ar1 sparse
+
+# Same dimensions, twenty disconnected components.
+OPENBLAS_NUM_THREADS=1 julia --project=. benchmark/mean_profiling.jl 1000 128 20 ar1 sparse
+
+# Small dense design, and a node-count comparison at fixed p.
+OPENBLAS_NUM_THREADS=1 julia --project=. benchmark/mean_profiling.jl 1000 3 1 iid dense
+OPENBLAS_NUM_THREADS=1 julia --project=. benchmark/mean_profiling.jl 2000 128 1 iid sparse
+```
+
+Instantiate the package environment first. For a historical comparison, run the
+same script with a temporary Julia environment developing that historical
+checkout; the script prints the source path and Git revision actually loaded.
+No application data or additional benchmark dependency is needed.
+
+Each operation is warmed before timing. The output separates preparation,
+observation-statistic combination, one network solve, numeric factorization,
+one block product, the dense coefficient solve, complete profiling, complete
+objective evaluation, final reconstruction, and a short five-iteration fit. The
+short fit is a runtime pilot, not a convergence or statistical-recovery claim.
+It also records dimensions, structural and numerical sparsity, retained sizes,
+Julia/package versions, CPU/RAM, seed, block size, and Julia/BLAS threads.
+
+Three different memory quantities must not be conflated:
+
+- `summarysize` estimates retained Julia objects; it excludes transient arrays
+  and does not reliably account for native factorization memory.
+- Reported allocations are cumulative bytes allocated during an operation,
+  **not** simultaneously live memory.
+- Fresh-process peak resident memory includes Julia, compilation, native
+  libraries, factors, and allocator high-water marks. On macOS, prefix the
+  command with `/usr/bin/time -l`; on Linux, use `/usr/bin/time -v`.
+
+The script rejects cases exceeding a conservative 512 MiB estimated dense-array
+budget, including when comparing the old implementation. This is not a process
+RSS guarantee or permission to extrapolate to production scale. Begin with small
+cases, vary `p` at fixed graph and sparse row support, then vary `n` at fixed
+`p`. Measure both connected and disconnected graphs.
+
+Before attempting a large graph with thousands of controls, set an explicit RAM
+and wall-clock budget. Use a representative pilot's actual `obj_evals` and
+warmed complete-objective time, then add preparation and final reconstruction.
+The benchmark prints this core-time projection alongside measured pilot time;
+it excludes optimizer and cache-initialization overhead. Finite-difference
+evaluations are already counted in `obj_evals`, so do not multiply them in again.
+Reassess the budget as dimensions, conditioning, or graph fill-in change.
+
+Coefficient-space conjugate gradients may eventually reduce the number of
+network solves when it converges in far fewer than `p` iterations. It is not
+enabled here: a potential speedup must first be checked against direct profiling
+for coefficient, objective, and finite-difference accuracy. No control columns
+are dropped or regularized to make the solve cheaper.
+
+### Interpretation and persistence
+
+The coefficient system is checked for finite values, symmetry, positive
+definiteness, and severe numerical ill-conditioning before its solution is
+accepted. A diagnostic can therefore expose a previously hidden collinearity,
+poor column scaling, or inaccurate iterative solve. The package does not repair
+such a problem with a ridge penalty, pseudoinverse, or dropped columns; inspect
+the design and scaling instead.
+
+Coefficient order and the original-outcome-unit convention are unchanged. With
+`Xobs` aligned to the package's observation mapping, the fitted mean is
+`result.stats.y_mean .+ Xobs * result.beta`; do not multiply `beta` by `y_std`
+again. Grouped matches continue to select the first member's control row rather
+than averaging member rows. Supplying constant-within-match controls makes that
+choice immaterial; this storage change does not impose new constancy validation.
+
+Julia's `Serialization` is not a stable cross-version interchange format for
+package structs. New-version result round trips are tested, but changing mean
+storage types can affect historical artifacts. Keep existing files and the
+environment that created them. If an old artifact cannot be loaded, recreate
+statistics and refit from the original inputs; do not overwrite the only copy.
+
 ## Warm starts
 
 The default starting point is a fixed heuristic — `sigma_a = 0.7`,

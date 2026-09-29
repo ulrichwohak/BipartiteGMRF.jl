@@ -151,7 +151,10 @@ result.sigma_epsilon # residual SD
 Pass a design matrix `X` (one row per observation) to profile out a
 linear mean $\mathbf{X}\boldsymbol{\beta}$. At each optimizer iteration
 $\hat{\boldsymbol{\beta}}(\theta)$ is computed in closed form from $p$
-extra solves against the same factorization &mdash; negligible cost:
+extra network solves and a dense $p \times p$ coefficient system. Sparse designs
+keep sparse cross-products where possible, and solved columns are streamed in
+bounded blocks. This reduces memory use, but many controls can still make each
+likelihood evaluation expensive; see the [performance guide](docs/src/performance.md).
 
 ```julia
 # Degree-dependent mean: y = β₀ + β_f·d_f + β_m·d_m + a + z + ε
