@@ -524,13 +524,15 @@ struct DesignStats
     WW::SparseMatrixCSC{Float64,Int}  # worker-worker block of V'V
 end
 
+const MeanCrossMatrix = Union{Matrix{Float64},SparseMatrixCSC{Float64,Int}}
+
 """
 Sufficient statistics for a profiled-out mean structure `y = Xβ + Vθ + ε`.
 Contains the cross-products V'X, X'X, X'y needed to compute β̂(θ) in closed
 form at each NLL evaluation.
 """
 struct MeanStats
-    VtX::Matrix{Float64}       # V'X  (n × p)
+    VtX::MeanCrossMatrix       # V'X  (n × p), dense or sparse with X
     XtX::Matrix{Float64}       # X'X  (p × p)
     Xty::Vector{Float64}       # X'y  (p × 1)
     p::Int                     # number of regressors

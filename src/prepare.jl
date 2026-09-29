@@ -207,139 +207,140 @@ end
 
 # ─── Mean-structure statistics ────────────────────────────────────────────
 
+function mean_cross_product(
+    V::SparseMatrixCSC{Float64,Int},
+    X::Matrix{Float64},
+)
+    return Matrix{Float64}(transpose(V) * X)
+end
+
+function mean_cross_product(
+    V::SparseMatrixCSC{Float64,Int},
+    X::SparseMatrixCSC{Float64,Int},
+)
+    return SparseMatrixCSC{Float64,Int}(transpose(V) * X)
+end
+
+function scale_mean_rows(X::Matrix{Float64}, weights::Vector{Float64})
+    size(X, 1) == length(weights) ||
+        throw(ArgumentError("weights length does not match X rows."))
+    return X .* reshape(weights, :, 1)
+end
+
+function scale_mean_rows(
+    X::SparseMatrixCSC{Float64,Int},
+    weights::Vector{Float64},
+)
+    size(X, 1) == length(weights) ||
+        throw(ArgumentError("weights length does not match X rows."))
+    out = copy(X)
+    rows = rowvals(out)
+    values = nonzeros(out)
+    @inbounds for j in 1:size(out, 2)
+        for ptr in nzrange(out, j)
+            values[ptr] *= weights[rows[ptr]]
+        end
+    end
+    return out
+end
+
+function mean_stats_from_design(
+    V::SparseMatrixCSC{Float64,Int},
+    y::Vector{Float64},
+    X::MeanCrossMatrix,
+)
+    size(V, 1) == length(y) ||
+        throw(ArgumentError("V rows do not match y."))
+    size(X, 1) == length(y) ||
+        throw(ArgumentError("X rows do not match y."))
+    p = size(X, 2)
+    return MeanStats(
+        mean_cross_product(V, X),
+        Matrix{Float64}(transpose(X) * X),
+        Vector{Float64}(transpose(X) * y),
+        p,
+    )
+end
+
+function weighted_mean_stats_from_design(
+    V::SparseMatrixCSC{Float64,Int},
+    y::Vector{Float64},
+    X::MeanCrossMatrix,
+    weights::Vector{Float64},
+)
+    size(V, 1) == length(y) ||
+        throw(ArgumentError("V rows do not match y."))
+    size(X, 1) == length(y) ||
+        throw(ArgumentError("X rows do not match y."))
+    length(weights) == length(y) ||
+        throw(ArgumentError("weights length does not match y."))
+    weighted_X = scale_mean_rows(X, weights)
+    p = size(X, 2)
+    return MeanStats(
+        mean_cross_product(V, weighted_X),
+        Matrix{Float64}(transpose(X) * weighted_X),
+        Vector{Float64}(transpose(X) * (weights .* y)),
+        p,
+    )
+end
+
+function edge_observation_design(
+    f_rows::Vector{Int},
+    w_cols::Vector{Int},
+    n_firms::Int,
+    n_workers::Int,
+)
+    k = length(f_rows)
+    length(w_cols) == k || throw(ArgumentError("f_rows and w_cols lengths differ."))
+    rows = vcat(collect(1:k), collect(1:k))
+    cols = vcat(f_rows, n_firms .+ w_cols)
+    return sparse(rows, cols, ones(Float64, 2k), k, n_firms + n_workers)
+end
+
 function build_mean_stats(
     f_rows::Vector{Int},
     w_cols::Vector{Int},
     y::Vector{Float64},
-    X::Matrix{Float64},
+    X::MeanCrossMatrix,
     n_firms::Int,
     n_workers::Int,
 )
-    k = length(y)
-    p = size(X, 2)
-    n = n_firms + n_workers
-    VtX = zeros(Float64, n, p)
-    Xty = zeros(Float64, p)
-
-    @inbounds for i in 1:k
-        f = f_rows[i]
-        w = w_cols[i]
-        for j in 1:p
-            xij = X[i, j]
-            VtX[f, j] += xij
-            VtX[n_firms + w, j] += xij
-            Xty[j] += xij * y[i]
-        end
-    end
-
-    XtX = X' * X
-    return MeanStats(VtX, XtX, Xty, p)
+    V = edge_observation_design(f_rows, w_cols, n_firms, n_workers)
+    return mean_stats_from_design(V, y, X)
 end
 
 function build_weighted_mean_stats(
     f_rows::Vector{Int},
     w_cols::Vector{Int},
     y::Vector{Float64},
-    X::Matrix{Float64},
+    X::MeanCrossMatrix,
     weights::Vector{Float64},
     n_firms::Int,
     n_workers::Int,
 )
-    k = length(y)
-    p = size(X, 2)
-    n = n_firms + n_workers
-    VtX = zeros(Float64, n, p)
-    Xty = zeros(Float64, p)
-    XtX = zeros(Float64, p, p)
-
-    @inbounds for i in 1:k
-        f = f_rows[i]
-        w = w_cols[i]
-        wi = weights[i]
-        for j in 1:p
-            wxij = wi * X[i, j]
-            VtX[f, j] += wxij
-            VtX[n_firms + w, j] += wxij
-            Xty[j] += wxij * y[i]
-            for j2 in 1:p
-                XtX[j, j2] += wxij * X[i, j2]
-            end
-        end
-    end
-
-    return MeanStats(VtX, XtX, Xty, p)
+    V = edge_observation_design(f_rows, w_cols, n_firms, n_workers)
+    return weighted_mean_stats_from_design(V, y, X, weights)
 end
 
 function build_match_mean_stats(
     f_rows::Vector{Int},
     w_cols::Vector{Int},
     y::Vector{Float64},
-    X::Matrix{Float64},
+    X::MeanCrossMatrix,
     match_ids::Vector{Int},
     n_firms::Int,
     n_workers::Int,
 )
-    k = length(y)
-    p = size(X, 2)
-    n = n_firms + n_workers
-    VtX = zeros(Float64, n, p)
-    Xty = zeros(Float64, p)
-
-    # Group by match
-    match_map = Dict{Int,Int}()
-    match_firms = Vector{Vector{Int}}()
-    match_workers = Vector{Vector{Int}}()
-    match_y = Float64[]
-    match_x = Vector{Vector{Float64}}()
-
-    for i in 1:k
-        mid = match_ids[i]
-        pos = get!(match_map, mid) do
-            push!(match_firms, Int[])
-            push!(match_workers, Int[])
-            push!(match_y, y[i])
-            push!(match_x, X[i, :])
-            length(match_y)
-        end
-        push!(match_firms[pos], f_rows[i])
-        push!(match_workers[pos], w_cols[i])
-    end
-
-    XtX = zeros(Float64, p, p)
-    for s in eachindex(match_y)
-        firms_s = unique(match_firms[s])
-        workers_s = unique(match_workers[s])
-        F_s = length(firms_s)
-        M_s = length(workers_s)
-        xs = match_x[s]
-
-        for fi in firms_s
-            for j in 1:p
-                VtX[fi, j] += xs[j] / F_s
-            end
-        end
-        for wj in workers_s
-            for j in 1:p
-                VtX[n_firms + wj, j] += xs[j] / M_s
-            end
-        end
-
-        for j in 1:p
-            Xty[j] += xs[j] * match_y[s]
-            for j2 in 1:p
-                XtX[j, j2] += xs[j] * xs[j2]
-            end
-        end
-    end
-
-    return MeanStats(VtX, XtX, Xty, p)
+    V, match_y, src = observation_rows(
+        f_rows, w_cols, y, match_ids, n_firms, n_workers)
+    return mean_stats_from_design(V, match_y, X[src, :])
 end
 
 function build_match_weight_mean_stats(
     f_rows::Vector{Int},
     w_cols::Vector{Int},
     y::Vector{Float64},
-    X::Matrix{Float64},
+    X::MeanCrossMatrix,
     T::Vector{Int},
     n_firms::Int,
     n_workers::Int,
@@ -569,10 +570,10 @@ R-weighted mean-structure products for the correlated error model. Storing
 `V'R⁻¹X`, `X'R⁻¹X` and `X'R⁻¹y` makes `mean_profile_correction` correct
 without modification: its `c` and `G` become the GLS versions automatically.
 """
-function build_correlated_mean_stats(aux, X_rows::Matrix{Float64})
+function build_correlated_mean_stats(aux, X_rows::MeanCrossMatrix)
     RX = aux.Rinv * X_rows
     return MeanStats(
-        Matrix{Float64}(transpose(aux.V) * RX),
+        mean_cross_product(aux.V, RX),
         Matrix{Float64}(transpose(X_rows) * RX),
         Vector{Float64}(transpose(X_rows) * (aux.Rinv * aux.y)),
         size(X_rows, 2),
@@ -833,7 +834,7 @@ model: `(full, adj, int)` hold `V'X`, `X'X`, `X'y` under the identity,
 `S_adj`, and `S_int` weightings respectively, so the per-evaluation products
 are the same three-way combination as the design.
 """
-function build_ar1_mean_stats(ar1_aux, X_rows::Matrix{Float64})
+function build_ar1_mean_stats(ar1_aux, X_rows::MeanCrossMatrix)
     V = ar1_aux.V
     SX = ar1_aux.Sadj * X_rows
     TX = ar1_aux.Sint * X_rows
@@ -841,13 +842,13 @@ function build_ar1_mean_stats(ar1_aux, X_rows::Matrix{Float64})
     Ty = ar1_aux.Sint * ar1_aux.y
     p = size(X_rows, 2)
     return (
-        full = MeanStats(Matrix{Float64}(transpose(V) * X_rows),
+        full = MeanStats(mean_cross_product(V, X_rows),
                          Matrix{Float64}(transpose(X_rows) * X_rows),
                          Vector{Float64}(transpose(X_rows) * ar1_aux.y), p),
-        adj = MeanStats(Matrix{Float64}(transpose(V) * SX),
+        adj = MeanStats(mean_cross_product(V, SX),
                         Matrix{Float64}(transpose(X_rows) * SX),
                         Vector{Float64}(transpose(X_rows) * Sy), p),
-        int = MeanStats(Matrix{Float64}(transpose(V) * TX),
+        int = MeanStats(mean_cross_product(V, TX),
                         Matrix{Float64}(transpose(X_rows) * TX),
                         Vector{Float64}(transpose(X_rows) * Ty), p),
     )

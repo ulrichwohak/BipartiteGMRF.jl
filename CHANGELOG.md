@@ -3,6 +3,53 @@
 All notable changes to BipartiteGMRF.jl are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Borrowed solve buffers in mean profiling** (issue #125, PR #127).
+  Consume the outcome solution before later control-column solves can
+  overwrite it. This corrects the profiled likelihood for affected
+  `HutchSLQ` fits with `X`; converged inner solves alone did not prevent the
+  defect. The verified ExactCholesky/CHOLMOD path and fits without `X` were
+  not affected by this aliasing issue. Re-evaluate and, where affected,
+  refit saved iterative mean fits; existing saved estimates are not repaired
+  by changing package code.
+
+### Changed
+
+- **Sparse-aware, bounded-workspace mean profiling** (issue #126).
+  Sparse controls retain sparse node-by-control products where the products
+  are mathematically sparse, including AR(1) and error-class combinations.
+  Profile solves retain at most eight dense solution columns by default
+  instead of every column. The already-computed outcome solve is reused,
+  and final ExactCholesky coefficients reuse the final factorization.
+  The dense coefficient matrix and its factorization remain quadratic and
+  cubic in the number of controls, respectively; network-factor fill-in and
+  the per-column vector solves remain potential limits.
+- Diagnose nonfinite effective control rows, too many controls, empty
+  columns, and unreliable coefficient systems without dropping controls or
+  adding regularization. Grouped matches still select the first member's
+  control row, including the existing order dependence when controls differ.
+- Add standalone synthetic benchmarking and memory/runtime guidance.
+  The shared kernel remains compatible with supported `HutchSLQ` paths,
+  but its final coefficient reconstruction still uses direct Cholesky; this
+  is not an end-to-end matrix-free mean-fit guarantee.
+
+### Compatibility and scope
+
+- The existing `X` API, profiled-ML convention and original-unit coefficients
+  are unchanged. Internal mean-stat storage changes can affect Julia-serialized
+  artifacts; keep the original environment/files and recompute statistics or
+  refit if a historical artifact cannot be loaded. No general cross-version
+  serialization guarantee is introduced.
+- Separate follow-ups track collapsed-edge control alignment (#128), stale
+  means with estimated effective error correlation (#129), the documented
+  ignored-`X` policy for EMIWBlocks (#130), and possible within-match constancy
+  validation (#131). This change does not silently redefine those semantics.
+- No release, dependency-pin change, new solver capability, production coefficient-CG
+  mode, or application-specific data processing is included.
+
 ## [v0.5.3] &mdash; 2026-09-25
 
 ### Fixed

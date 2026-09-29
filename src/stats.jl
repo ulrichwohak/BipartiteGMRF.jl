@@ -2,6 +2,40 @@
 # suffstats: compute sufficient statistics from raw data
 # ═══════════════════════════════════════════════════════════════════════════
 
+canonical_mean_matrix(X::Matrix{Float64}) = X
+canonical_mean_matrix(X::SparseMatrixCSC{Float64,Int}) = X
+canonical_mean_matrix(X::AbstractMatrix{<:Real}) = Matrix{Float64}(X)
+canonical_mean_matrix(X::SparseMatrixCSC{<:Real,<:Integer}) =
+    SparseMatrixCSC{Float64,Int}(X)
+
+mean_design_rows(X::AbstractMatrix{<:Real}, rows) =
+    canonical_mean_matrix(X[rows, :])
+
+function validate_mean_design(X::MeanCrossMatrix)
+    k, p = size(X)
+    p <= k || throw(ArgumentError(
+        "X has $p columns but only $k observations after observation grouping; " *
+        "the mean design cannot have full column rank."))
+
+    values = X isa SparseMatrixCSC ? nonzeros(X) : X
+    all(isfinite, values) || throw(ArgumentError(
+        "X contains a non-finite value in a row used by the likelihood."))
+
+    if X isa SparseMatrixCSC
+        nz = nonzeros(X)
+        for j in 1:p
+            any(ptr -> !iszero(nz[ptr]), nzrange(X, j)) ||
+                throw(ArgumentError("X column $j is zero after observation grouping."))
+        end
+    else
+        for j in 1:p
+            any(x -> !iszero(x), view(X, :, j)) ||
+                throw(ArgumentError("X column $j is zero after observation grouping."))
+        end
+    end
+    return X
+end
+
 """
     suffstats(::Type{<:AbstractBipartiteModel}, f_idx, w_idx, y;
               n_firms=maximum(f_idx), n_workers=maximum(w_idx),
@@ -415,36 +449,54 @@ function suffstats(
     grouped_mean = nothing
     ar1_mean = nothing
     mean_stats = if X !== nothing
-        X_obs = Matrix{Float64}(X[obs_mask, :])
+        X_obs = mean_design_rows(X, obs_mask)
+        validate_X = error_blocks === nothing
         if banded_aux !== nothing
-            build_correlated_mean_stats(banded_aux, X_obs[banded_aux.src, :])
+            X_rows = mean_design_rows(X_obs, banded_aux.src)
+            validate_X && validate_mean_design(X_rows)
+            build_correlated_mean_stats(banded_aux, X_rows)
         elseif grouped_aux !== nothing
-            Xg = Matrix{Float64}(grouped_aux.G * X_obs[grouped_aux.src, :])
+            X_rows = mean_design_rows(X_obs, grouped_aux.src)
+            Xg = canonical_mean_matrix(grouped_aux.G * X_rows)
+            validate_X && validate_mean_design(Xg)
             p_cols = size(Xg, 2)
             grouped_mean = map(grouped_aux.class_idx) do idx
                 Vc = grouped_aux.Vg[idx, :]
-                Xc = Xg[idx, :]
+                Xc = mean_design_rows(Xg, idx)
                 yc = grouped_aux.yg[idx]
-                MeanStats(Matrix{Float64}(transpose(Vc) * Xc),
-                          transpose(Xc) * Xc, vec(transpose(Xc) * yc), p_cols)
+                mean_stats_from_design(Vc, yc, Xc)
             end
-            MeanStats(sum(ms.VtX for ms in grouped_mean),
-                      sum(ms.XtX for ms in grouped_mean),
-                      sum(ms.Xty for ms in grouped_mean), p_cols)
+            MeanStats(
+                canonical_mean_matrix(sum(ms.VtX for ms in grouped_mean)),
+                Matrix{Float64}(sum(ms.XtX for ms in grouped_mean)),
+                Vector{Float64}(sum(ms.Xty for ms in grouped_mean)),
+                p_cols,
+            )
         elseif ar1_aux !== nothing
-            ar1_mean = build_ar1_mean_stats(ar1_aux, X_obs[ar1_aux.src, :])
+            X_rows = mean_design_rows(X_obs, ar1_aux.src)
+            validate_X && validate_mean_design(X_rows)
+            ar1_mean = build_ar1_mean_stats(ar1_aux, X_rows)
             ar1_mean.full
         elseif obs == :raw
             if match_id_obs !== nothing
-                build_match_mean_stats(f_obs, w_obs, y_obs_scaled, X_obs, match_id_obs, n_f, n_w)
+                V, match_y, src = observation_rows(
+                    f_obs, w_obs, y_obs_scaled, match_id_obs, n_f, n_w)
+                X_rows = mean_design_rows(X_obs, src)
+                validate_X && validate_mean_design(X_rows)
+                mean_stats_from_design(V, match_y, X_rows)
             else
+                validate_X && validate_mean_design(X_obs)
                 build_mean_stats(f_obs, w_obs, y_obs_scaled, X_obs, n_f, n_w)
             end
         elseif obs == :edge
-            build_weighted_mean_stats(edges.f, edges.w, edges.y_mean, X_obs[1:n_edges, :],
+            X_rows = mean_design_rows(X_obs, 1:n_edges)
+            validate_X && validate_mean_design(X_rows)
+            build_weighted_mean_stats(edges.f, edges.w, edges.y_mean, X_rows,
                 ones(Float64, n_edges), n_f, n_w)
         else  # :effective
-            build_match_weight_mean_stats(edges.f, edges.w, edges.y_mean, X_obs[1:n_edges, :],
+            X_rows = mean_design_rows(X_obs, 1:n_edges)
+            validate_X && validate_mean_design(X_rows)
+            build_match_weight_mean_stats(edges.f, edges.w, edges.y_mean, X_rows,
                 edges.T, n_f, n_w, weighting.rho_eps)
         end
     else

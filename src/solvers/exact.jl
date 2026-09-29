@@ -11,11 +11,14 @@ struct ExactWorkspace
     ws_M::GaussianMarkovRandomFields.GMRFWorkspace
     q_values::Vector{Float64}
     m_values::Vector{Float64}
+    mean::Union{Nothing,MeanProfileWorkspace}
 end
 
 ExactWorkspace(ws_Q::GaussianMarkovRandomFields.GMRFWorkspace,
-               ws_M::GaussianMarkovRandomFields.GMRFWorkspace) =
-    ExactWorkspace(ws_Q, ws_M, zeros(nnz(ws_Q.Q)), zeros(nnz(ws_M.Q)))
+               ws_M::GaussianMarkovRandomFields.GMRFWorkspace,
+               ms::Union{Nothing,MeanStats}=nothing) =
+    ExactWorkspace(ws_Q, ws_M, zeros(nnz(ws_Q.Q)), zeros(nnz(ws_M.Q)),
+                   ms === nothing ? nothing : MeanProfileWorkspace(ms))
 
 # Positive markers describe stored positions, including explicit zeros. They
 # are used only to build structural unions, never as numerical precisions.
@@ -48,6 +51,7 @@ function make_exact_workspace(model::AbstractBipartiteModel, stats::BipartiteGMR
     return ExactWorkspace(
         GaussianMarkovRandomFields.GMRFWorkspace(Q0),
         GaussianMarkovRandomFields.GMRFWorkspace(M0),
+        stats.mean_stats,
     )
 end
 
@@ -136,10 +140,11 @@ function nll_exact_value(
     if obs.mean_stats !== nothing
         try
             solve_M = v -> GaussianMarkovRandomFields.workspace_solve(ew.ws_M, v)
+            workspace = ew.mean === nothing ? MeanProfileWorkspace(obs.mean_stats) : ew.mean
             mean_corr, _ = mean_profile_correction(obs.mean_stats, lambda,
-                obs.design.projected_y, solve_M)
+                obs.design.projected_y, solve_M, workspace; solved_y=x)
         catch e
-            e isa PosDefException && return BIG_NLL
+            (e isa PosDefException || e isa MeanProfileError) && return BIG_NLL
             rethrow()
         end
     end
@@ -151,6 +156,15 @@ function nll_exact_value(
         (ldM - ldQ) + lambda * obs.design.ydot - lambda^2 * quad - mean_corr + rcorr
     )
     return finite_or_big(val)
+end
+
+# optimize_problem evaluates the final objective immediately before this call,
+# so the cached M factorization already corresponds to decoded/obs.
+function final_mean_profile(::ExactCholesky, model, stats, obs, decoded, cache::ExactWorkspace)
+    solve_M = v -> GaussianMarkovRandomFields.workspace_solve(cache.ws_M, v)
+    workspace = cache.mean === nothing ? MeanProfileWorkspace(obs.mean_stats) : cache.mean
+    return mean_profile_correction(obs.mean_stats, inv(decoded.sigma_epsilon^2),
+        obs.design.projected_y, solve_M, workspace)
 end
 
 # Workspace-free convenience wrapper (dense-reference tests, one-off values).
