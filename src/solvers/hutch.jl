@@ -10,6 +10,7 @@ mutable struct HutchCache{Q<:Union{QOp,QOpVS}}
     slqM::SLQWorkspace
     qop::Q
     mop::MOp{Q}
+    mean::Union{Nothing,MeanProfileWorkspace}
 end
 
 mutable struct VSHutchCache
@@ -22,6 +23,7 @@ mutable struct VSHutchCache
     mop::MOp{QOpVS}
     bop::QOpVS
     kop::ScaledMOp{QOpVS}
+    mean::Union{Nothing,MeanProfileWorkspace}
 end
 
 function make_hutch_cache(model::AbstractBipartiteModel, stats::BipartiteGMRFStats, solver::HutchSLQ)
@@ -41,6 +43,7 @@ function make_hutch_cache(model::AbstractBipartiteModel, stats::BipartiteGMRFSta
             mop,
             bop,
             kop,
+            stats.mean_stats === nothing ? nothing : MeanProfileWorkspace(stats.mean_stats),
         )
     end
     return HutchCache(
@@ -51,6 +54,7 @@ function make_hutch_cache(model::AbstractBipartiteModel, stats::BipartiteGMRFSta
         SLQWorkspace(n, solver.lanczos_iters),
         qop,
         mop,
+        stats.mean_stats === nothing ? nothing : MeanProfileWorkspace(stats.mean_stats),
     )
 end
 
@@ -157,7 +161,8 @@ function nll_hutch_value(
         end
         try
             mean_corr, _ = mean_profile_correction(ms, lambda,
-                obs.design.projected_y, pcg_solve_M)
+                obs.design.projected_y, pcg_solve_M, cache.mean::MeanProfileWorkspace;
+                solved_y=x, symmetry_rtol=max(1e-10, 10 * solver.cg_tol))
         catch
             return BIG_NLL
         end

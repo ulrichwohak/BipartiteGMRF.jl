@@ -157,33 +157,134 @@ end
 #   polish(solver, obj, res, verbose)                -> (res, elapsed_seconds)
 
 """
-Compute the profiled β correction term and β̂ from mean-structure statistics.
-Returns `(correction, beta)` where `correction` is the scalar to subtract
-from the NLL and `beta` is the profiled-out coefficient vector.
-Returns `(0.0, nothing)` when there is no mean structure.
+Reusable mean-profile scratch: at most eight dense solved columns by default,
+plus coefficient-sized arrays. The vector-only solve API is called once per
+column; blocking batches cross-products, not factor solves. One workspace is
+owned by one fit and must not be shared between concurrent evaluations.
 """
-function mean_profile_correction(
-    ms::MeanStats,
-    lambda::Float64,
-    projected_y::Vector{Float64},
-    solve_M::Function,   # v -> M^{-1}v
-)
-    # M^{-1} V'y (reuse if already computed, but solve_M is cheap here)
-    Minv_Vy = solve_M(projected_y)
-    # A solver may return borrowed workspace storage (as PCG does). Consume
-    # the y solution before a subsequent right-hand side overwrites it.
-    c = lambda .* ms.Xty .- lambda^2 .* (ms.VtX' * Minv_Vy)
-    # M^{-1} V'X
-    Minv_VtX = similar(ms.VtX)
-    for j in 1:ms.p
-        Minv_VtX[:, j] = solve_M(ms.VtX[:, j])
+mutable struct MeanProfileWorkspace
+    rhs::Vector{Float64}
+    solved::Matrix{Float64}
+    cross::Matrix{Float64}
+    G::Matrix{Float64}
+    c::Vector{Float64}
+    factor_rcond::Float64
+end
+
+function MeanProfileWorkspace(ms::MeanStats; block_size::Int=8)
+    block_size > 0 || throw(ArgumentError("mean-profile block_size must be positive"))
+    n, p = size(ms.VtX)
+    p == ms.p && p > 0 || throw(DimensionMismatch("invalid mean-stat column count"))
+    b = min(block_size, p)
+    return MeanProfileWorkspace(zeros(n), zeros(n, b), zeros(p, b),
+                                zeros(p, p), zeros(p), NaN)
+end
+
+struct MeanProfileError <: Exception
+    message::String
+end
+Base.showerror(io::IO, e::MeanProfileError) = print(io, e.message)
+
+_mean_rhs!(rhs::Vector{Float64}, B::Matrix{Float64}, j::Int) =
+    copyto!(rhs, view(B, :, j))
+
+function _mean_rhs!(rhs::Vector{Float64}, B::SparseMatrixCSC{Float64,Int}, j::Int)
+    fill!(rhs, 0.0)
+    rows, values = rowvals(B), nonzeros(B)
+    @inbounds for k in nzrange(B, j)
+        rhs[rows[k]] = values[k]
     end
-    # G = X'Ω^{-1}X = λX'X - λ²(V'X)'M^{-1}V'X
-    G = Symmetric(lambda .* ms.XtX .- lambda^2 .* (ms.VtX' * Minv_VtX))
-    G_chol = cholesky(G)
-    beta = G_chol \ c
+    return rhs
+end
+
+# Function barrier for the closed dense/sparse storage union. In particular,
+# never use similar(B) for solved columns: sparse RHSs generally solve dense.
+function _assemble_mean_profile!(ws::MeanProfileWorkspace, B::T,
+    XtX::Matrix{Float64}, Xty::Vector{Float64}, lambda::Float64,
+    solved_y::AbstractVector{Float64}, solve_M::F) where {T,F}
+    mul!(ws.c, transpose(B), solved_y)
+    @. ws.c = lambda * Xty - lambda^2 * ws.c
+    @. ws.G = lambda * XtX
+    p = length(ws.c)
+    capacity = size(ws.solved, 2)
+    for first in 1:capacity:p
+        width = min(capacity, p - first + 1)
+        for k in 1:width
+            _mean_rhs!(ws.rhs, B, first + k - 1)
+            # Consume borrowed results immediately, before the next solve.
+            copyto!(view(ws.solved, :, k), solve_M(ws.rhs))
+        end
+        U = view(ws.solved, :, 1:width)
+        C = view(ws.cross, :, 1:width)
+        mul!(C, transpose(B), U)
+        @inbounds for k in 1:width, i in 1:p
+            ws.G[i, first + k - 1] -= lambda^2 * C[i, k]
+        end
+    end
+    return nothing
+end
+
+function _solve_mean_profile!(ws::MeanProfileWorkspace, symmetry_rtol::Float64)
+    G, c = ws.G, ws.c
+    all(isfinite, G) && all(isfinite, c) || throw(MeanProfileError(
+        "Mean profiling produced nonfinite products; check X, scaling and solve accuracy."))
+    scale = maximum(abs, G)
+    asymmetry = 0.0
+    @inbounds for j in axes(G, 2), i in 1:(j - 1)
+        asymmetry = max(asymmetry, abs(G[i, j] - G[j, i]))
+    end
+    asymmetry <= symmetry_rtol * scale || throw(MeanProfileError(
+        "Mean coefficient matrix is not numerically symmetric; check network-solve accuracy."))
+    # Average only after checking both triangles, never hide large asymmetry.
+    @inbounds for j in axes(G, 2), i in 1:(j - 1)
+        G[i, j] = G[j, i] = 0.5 * G[i, j] + 0.5 * G[j, i]
+    end
+    factor = cholesky(Symmetric(G); check=false)
+    issuccess(factor) || throw(MeanProfileError(
+        "Mean coefficient matrix is not positive definite; X may be rank deficient after observation grouping, or the profile may suffer numerical cancellation."))
+    # An O(p²) triangular condition estimate; no dense design rank test or
+    # inverse is formed. A factor below sqrt(eps) is numerically unreliable.
+    ws.factor_rcond = LAPACK.trcon!('1', 'U', 'N', factor.factors)
+    ws.factor_rcond > sqrt(eps(Float64)) || throw(MeanProfileError(
+        "Mean coefficient matrix is numerically ill-conditioned; check collinear or poorly scaled X columns. No controls were dropped or regularized."))
+    beta = factor \ c
     correction = dot(c, beta)
+    isfinite(correction) && all(isfinite, beta) || throw(MeanProfileError(
+        "Mean coefficient solve is nonfinite; check X and covariance parameter scaling."))
     return correction, beta
+end
+
+"""
+Compute the profiled ML correction and coefficients, returning independently
+owned `(correction, beta)`. The NLL subtracts `correction / 2`; no logdet(G)
+term is added. `solved_y`, when supplied, is consumed before any column solve
+and may be borrowed storage. Dense solved columns never exceed block_size.
+"""
+function mean_profile_correction(ms::MeanStats, lambda::Float64,
+    projected_y::Vector{Float64}, solve_M::F,
+    ws::MeanProfileWorkspace=MeanProfileWorkspace(ms);
+    solved_y::Union{Nothing,AbstractVector{Float64}}=nothing,
+    symmetry_rtol::Float64=1e-10) where {F}
+    n, p = size(ms.VtX)
+    size(ws.G) == (p, p) && length(ws.rhs) == n && length(projected_y) == n ||
+        throw(DimensionMismatch("mean-profile workspace or outcome dimensions do not match"))
+    symmetry_rtol >= 0 && isfinite(symmetry_rtol) ||
+        throw(ArgumentError("mean-profile symmetry tolerance must be finite and nonnegative"))
+    x = solved_y === nothing ? solve_M(projected_y) : solved_y
+    _assemble_mean_profile!(ws, ms.VtX, ms.XtX, ms.Xty, lambda, x, solve_M)
+    return _solve_mean_profile!(ws, symmetry_rtol)
+end
+
+# This fallback preserves the historical HutchSLQ final-coefficient behavior.
+# ExactCholesky overrides it to reuse the final objective's factorization.
+# Do not advertise the fallback as end-to-end matrix-free mean estimation.
+function final_mean_profile(::AbstractGMRFSolver, model, stats, obs, decoded, cache)
+    lambda = inv(decoded.sigma_epsilon^2)
+    M = fitted_precision(model, obs.design.VtV, decoded.rho,
+                         decoded.sigma_a, decoded.sigma_z, decoded.sigma_epsilon)
+    ws_M = GaussianMarkovRandomFields.GMRFWorkspace(M)
+    solve_M = v -> GaussianMarkovRandomFields.workspace_solve(ws_M, v)
+    return mean_profile_correction(obs.mean_stats, lambda, obs.design.projected_y, solve_M)
 end
 
 function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothing,Float64})
@@ -384,14 +485,9 @@ function optimize_problem(
 
     # Compute profiled beta at final parameters
     beta_original = if final_stats.mean_stats !== nothing
-        lambda_final = 1.0 / decoded.sigma_epsilon^2
-        Q_final = model_precision(model, decoded.rho, decoded.sigma_a, decoded.sigma_z)
-        M_final = Q_final + lambda_final .* obs.design.VtV
-        ws_M = GaussianMarkovRandomFields.GMRFWorkspace(M_final)
-        GaussianMarkovRandomFields.ensure_numeric!(ws_M)
-        solve_M = v -> GaussianMarkovRandomFields.workspace_solve(ws_M, v)
-        _, beta_std = mean_profile_correction(final_stats.mean_stats, lambda_final,
-            obs.design.projected_y, solve_M)
+        isfinite(val) && val < BIG_NLL || throw(MeanProfileError(
+            "Final mean-profile likelihood is invalid; check rank/conditioning of X after grouping and network-solve accuracy."))
+        _, beta_std = final_mean_profile(solver, model, final_stats, obs, decoded, cache)
         beta_std .* final_stats.y_std
     else
         nothing
