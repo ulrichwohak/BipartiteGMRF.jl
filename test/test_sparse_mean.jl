@@ -142,11 +142,13 @@ end
                 end
             end
         end
-        for Xreal in (SparseMatrixCSC{Float32,Int32}(sparse(designs.fractional)),
+        for Xreal in (Float32.(designs.fractional),
+                      SparseMatrixCSC{Float32,Int32}(sparse(designs.fractional)),
                       sparse(Int.(indicators)), sparse(Bool.(indicators)))
             ssreal = suffstats(BipartiteNormalizedModel, f, w, y;
                 standardize=false, X=Xreal)
-            @test ssreal.mean_stats.VtX isa SparseMatrixCSC{Float64,Int}
+            expected_type = Xreal isa SparseMatrixCSC ? SparseMatrixCSC{Float64,Int} : Matrix{Float64}
+            @test ssreal.mean_stats.VtX isa expected_type
             modelreal = BipartiteNormalizedModel(ssreal.A_prior; rho_limit=0.8)
             V, yo, Xo, _ = sparse_mean_rows(f, w, y, Xreal)
             sparse_mean_check(modelreal, ssreal, V, yo, Float64.(Xo), Matrix{Float64}(I, K, K))
@@ -360,11 +362,26 @@ end
                     obs.design.projected_y, borrowed_pcg, cache.mean)
                 @test correction ≈ ref.correction atol=1e-9 rtol=1e-9
                 @test beta ≈ ref.beta atol=1e-9 rtol=1e-9
+
+                # HutchSLQ still uses the historical direct factorization
+                # for its final beta. Check that separate integration path
+                # explicitly without claiming end-to-end matrix-free fitting.
+                decoded = bg.unpack_params(theta; rho_limit=bg.rho_limit(model))
+                final_correction, final_beta = bg.final_mean_profile(
+                    solver, model, sss, obs, decoded, cache)
+                @test final_correction ≈ ref.correction atol=1e-9 rtol=1e-9
+                @test final_beta ≈ ref.beta atol=1e-9 rtol=1e-9
+                saved_beta = copy(final_beta)
+                _, later_beta = bg.final_mean_profile(solver, model, sss, obs, decoded, cache)
+                fill!(later_beta, NaN)
+                @test final_beta == saved_beta
             end
         end
     end
 
     @testset "bounded storage and explicit numerical failures" begin
+        @test sprint(showerror, bg.MeanProfileError("rank deficient mean design")) ==
+            "rank deficient mean design"
         n, p = 200, 30
         B = sparse(1:p, 1:p, fill(0.1, p), n, p)
         ms = bg.MeanStats(B, Matrix{Float64}(I, p, p), ones(p), p)
