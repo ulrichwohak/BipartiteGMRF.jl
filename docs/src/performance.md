@@ -113,6 +113,19 @@ enabled here: a potential speedup must first be checked against direct profiling
 for coefficient, objective, and finite-difference accuracy. No control columns
 are dropped or regularized to make the solve cheaper.
 
+The opt-in `benchmark/mean_profile_cg.jl` preserves the exploratory comparison:
+
+```sh
+OPENBLAS_NUM_THREADS=1 julia --project=. benchmark/mean_profile_cg.jl
+```
+
+On its single well-conditioned `n = 2000, p = 256` exact-solve fixture, CG used
+38 iterations (40 total network solves including the outcome and achieved
+correction) instead of 257 direct-profile solves. Relative coefficient error
+was about `1.1e-12`; the NLL finite-difference discrepancy in eta was about
+`1.4e-9`. This is promising evidence for a follow-up, not validation of a
+production solver across conditioning, priors, or approximate inner solves.
+
 ### Scope of the measured improvement
 
 Synthetic comparisons on Julia 1.12.6, GaussianMarkovRandomFields 0.12.4, an
@@ -129,6 +142,27 @@ at `p = 32`, and from 14.69 to 2.61 MB at `p = 256` (`n = 2000`, decimal MB).
 Across the small comparison grid, fixed-parameter NLL differences were at most
 `2.3e-13`. The package's independent dense-GLS tests, rather than agreement with
 the historical implementation alone, establish numerical correctness.
+
+The larger connected AR(1) case (`n = K = 10000`, `p = 512`) gave the following
+representative results. Timings are warmed minima except the separately warmed
+pilot; memory units here are decimal MB/GB.
+
+| Measurement | Dense baseline | Sparse, streamed profile |
+|:--|--:|--:|
+| Retained statistics | 133.23 MB | 11.40 MB |
+| Preparation | 424 ms | 5.0 ms |
+| Complete objective | 170 ms | 78.6 ms |
+| Final coefficient reconstruction | 170 ms | 78.0 ms |
+| Five-iteration pilot (16 objective evaluations) | 3.74 s | 1.48 s |
+| Fresh-process peak RSS | 1.64 GB | 1.17 GB |
+
+Both pilots were deliberately iteration-limited and did not converge. Their NLLs
+and the fixed-parameter NLLs matched; maximum coefficient differences were below
+`2e-15`. The new profiling workspace occupied 2.85 MB. The final measurement used
+the source change set through `c4a17ad`. Repeated fresh
+processes varied in RSS and timing; the figures are evidence for this fixture,
+not promised ratios for other graph structures. In particular, these cycle
+graphs have limited factorization fill-in.
 
 Sparse storage is not always smaller. In the `p = 3` fixture, the node-by-control
 product was fully populated: representing it sparsely increased retained

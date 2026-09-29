@@ -166,4 +166,6 @@ function main(args)
     return (; beta, pilot_beta=result.beta, nll, pilot_nll=result.nll)
 end
 
-main(ARGS)
+if abspath(PROGRAM_FILE) == @__FILE__
+    main(ARGS)
+end

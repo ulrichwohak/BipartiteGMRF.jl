@@ -47,7 +47,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   means with estimated effective error correlation (#129), the documented
   ignored-`X` policy for EMIWBlocks (#130), and possible within-match constancy
   validation (#131). This change does not silently redefine those semantics.
-- No release, dependency-pin change, new solver capability, coefficient-CG
+- No release, dependency-pin change, new solver capability, production coefficient-CG
   mode, or application-specific data processing is included.
 
 ## [v0.5.3] &mdash; 2026-09-25
