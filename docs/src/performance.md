@@ -181,6 +181,14 @@ poor column scaling, or inaccurate iterative solve. The package does not repair
 such a problem with a ridge penalty, pseudoinverse, or dropped columns; inspect
 the design and scaling instead.
 
+There is also a known cancellation-related limit: at extreme variance ratios,
+forming the coefficient matrix subtracts nearly equal terms. The fixed relative
+symmetry check can then reject a mathematically valid trial even when the small
+coefficient matrix is reasonably conditioned. This can occur on small graphs;
+it is not solely a production-scale concern. A verified reproducer and a
+cancellation-aware numerical follow-up are tracked in
+[issue #133](https://github.com/ulrichwohak/BipartiteGMRF.jl/issues/133).
+
 Coefficient order and the original-outcome-unit convention are unchanged. With
 `Xobs` aligned to the package's observation mapping, the fitted mean is
 `result.stats.y_mean .+ Xobs * result.beta`; do not multiply `beta` by `y_std`
