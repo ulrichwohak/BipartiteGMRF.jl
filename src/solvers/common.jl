@@ -219,9 +219,10 @@ function _assemble_mean_profile!(ws::MeanProfileWorkspace, B::T,
             solution = solve_M(ws.rhs)
             length(solution) == length(ws.rhs) ||
                 throw(DimensionMismatch("mean-profile solve returned the wrong vector length"))
-            @inbounds for i in eachindex(ws.rhs)
-                ws.solved[i, k] = solution[i]
-            end
+            # Linear bulk copy avoids both a SubArray and per-element dynamic
+            # dispatch when a backend's workspace field has an abstract type.
+            copyto!(ws.solved, (k - 1) * length(ws.rhs) + 1,
+                    solution, 1, length(ws.rhs))
         end
         # Concrete full-width buffers avoid widened SubArray types on Julia
         # 1.13. On a short final block, extra product columns are unused;

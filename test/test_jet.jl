@@ -29,6 +29,11 @@ function jet_mean_profile_flow(ms, factor, projected_y, workspace)
     return BipartiteGMRF.mean_profile_correction(ms, 1.0, projected_y, solve_M, workspace)
 end
 
+function jet_workspace_mean_profile_flow(ms, gmrf_workspace, projected_y, workspace)
+    solve_M = v -> BipartiteGMRF.GaussianMarkovRandomFields.workspace_solve(gmrf_workspace, v)
+    return BipartiteGMRF.mean_profile_correction(ms, 1.0, projected_y, solve_M, workspace)
+end
+
 @testset "JET" begin
     model, ss, result = setup_jet_fixture()
 
@@ -42,5 +47,9 @@ end
         workspace = BipartiteGMRF.MeanProfileWorkspace(ms; block_size=1)
         JET.@test_opt target_modules=(BipartiteGMRF,) jet_mean_profile_flow(
             ms, factor, [0.3, -0.4, 0.1], workspace)
+        gmrf_workspace = BipartiteGMRF.GaussianMarkovRandomFields.GMRFWorkspace(
+            sparse([2.0 0.1 0.0; 0.1 2.0 0.1; 0.0 0.1 2.0]))
+        JET.@test_opt target_modules=(BipartiteGMRF,) jet_workspace_mean_profile_flow(
+            ms, gmrf_workspace, [0.3, -0.4, 0.1], workspace)
     end
 end

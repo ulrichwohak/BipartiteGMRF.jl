@@ -395,6 +395,14 @@ end
         factor = cholesky(Symmetric(Q + 4 .* Matrix(obs.design.VtV)))
         @test_throws bg.MeanProfileError bg.mean_profile_correction(
             obs.mean_stats, 4.0, obs.design.projected_y, v -> factor \ v)
+        # Rank failure must not become a fitted result with BIG_NLL or an
+        # arbitrary coefficient vector after the optimizer stops.
+        for solver in (ExactCholesky(optim_iters=1, polish=false),
+                       HutchSLQ(logdet_probes=4, lanczos_iters=7,
+                           cg_tol=1e-12, cg_maxiter=100, optim_iters=1))
+            @test_throws bg.MeanProfileError fit_mle(BipartiteNormalizedModel,
+                singular; solver=solver, seed=17)
+        end
         illscaled = bg.MeanStats(zeros(2, 2), [1.0 0; 0 1e-40], ones(2), 2)
         @test_throws bg.MeanProfileError bg.mean_profile_correction(
             illscaled, 1.0, ones(2), identity)
