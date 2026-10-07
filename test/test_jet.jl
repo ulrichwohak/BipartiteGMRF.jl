@@ -34,6 +34,10 @@ function jet_workspace_mean_profile_flow(ms, gmrf_workspace, projected_y, worksp
     return BipartiteGMRF.mean_profile_correction(ms, 1.0, projected_y, solve_M, workspace)
 end
 
+function jet_hutch_final_mean_flow(model, ss, obs, decoded, cache, solver)
+    return BipartiteGMRF.final_mean_profile(solver, model, ss, obs, decoded, cache)
+end
+
 @testset "JET" begin
     model, ss, result = setup_jet_fixture()
 
@@ -51,5 +55,21 @@ end
             sparse([2.0 0.1 0.0; 0.1 2.0 0.1; 0.0 0.1 2.0]))
         JET.@test_opt target_modules=(BipartiteGMRF,) jet_workspace_mean_profile_flow(
             ms, gmrf_workspace, [0.3, -0.4, 0.1], workspace)
+    end
+
+    for M in (BipartiteNormalizedModel, BipartiteVarianceStableModel)
+        arss = suffstats(M, [1,1,2,2,3,3], [1,2,2,3,3,4],
+            [0.2,0.8,-0.3,0.4,1.1,-0.5]; standardize=false,
+            X=sparse(hcat(ones(6), [-1.0,0,1,-1,0,1])),
+            error_eta=:estimate, edge_index=[1,2,1,2,1,2],
+            weighting=Weighting(observations=:raw))
+        arm = M(arss.A_prior; rho_limit=0.8)
+        arsolver = HutchSLQ(cg_tol=1e-10, cg_maxiter=100)
+        theta = [atanh(0.2/0.8), log(0.7), log(0.5), log(0.4), atanh(-0.3)]
+        obs = BipartiteGMRF.objective_stats(arm, arss, theta)
+        decoded = BipartiteGMRF.unpack_params(theta; rho_limit=0.8)
+        cache = BipartiteGMRF.make_nll_cache(arsolver, arm, arss)
+        JET.@test_opt target_modules=(BipartiteGMRF,) jet_hutch_final_mean_flow(
+            arm, arss, obs, decoded, cache, arsolver)
     end
 end

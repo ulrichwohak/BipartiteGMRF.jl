@@ -121,9 +121,12 @@ rank_t|` over the firm's matches ranked by `edge_index` (which must be
 constant within each match; matches tile a firm's timeline disjointly, so
 ties are structurally impossible and validation is strict). Each match must
 span a single firm. Requires `Weighting(observations=:raw)` and the
-`ExactCholesky` solver; composes with `X` (read at each match's first row);
+`ExactCholesky` or `HutchSLQ` solver; composes with `X` (read at each match's first row);
 mutually exclusive with `error_cov` and `error_groups`. Fitted `eta` is
-reported as `result.eta`.
+reported as `result.eta`. Nonfinite-outcome rows retain prior graph links but
+do not supply AR observations or time steps. Ranks index successive observed
+matches, not calendar-year distances. HutchSLQ uses iterative network solves
+through final coefficient reconstruction; its likelihood is approximate.
 
 ## Integrated per-firm error blocks
 

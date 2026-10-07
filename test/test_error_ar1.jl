@@ -138,12 +138,13 @@
         @test_throws ArgumentError suffstats(BipartiteNormalizedModel, f, w, y;
             weighting = Weighting(observations = :raw),
             error_eta = 0.3, edge_index = eidx_gap)
-        # ExactCholesky only
+        # Both likelihood solvers support AR(1); unrelated solvers still fail.
         ss = suffstats(BipartiteNormalizedModel, f, w, y;
             weighting = Weighting(observations = :raw),
             error_eta = 0.3, edge_index = eidx)
-        @test_throws ArgumentError fit_mle(BipartiteNormalizedModel, ss;
-            solver = HutchSLQ())
+        model = BipartiteNormalizedModel(ss.A_prior)
+        @test isnothing(BipartiteGMRF.validate_capability(model, ss, HutchSLQ()))
+        @test_throws ArgumentError BipartiteGMRF.validate_capability(model, ss, EMIWBlocks())
     end
 
     @testset "match-grouped spells (issue #120)" begin

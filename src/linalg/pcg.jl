@@ -26,6 +26,7 @@ function pcg_solve!(
 
     nb = norm(r)
     nb == 0.0 && return x, true, 0, 0.0
+    isfinite(nb) || return x, false, 0, Inf
 
     if Mdiag === nothing
         z .= r
@@ -53,7 +54,33 @@ function pcg_solve!(
         end
 
         relres = norm(r) / nb
-        relres <= tol && return x, true, it, relres
+        if relres <= tol
+            # Recursive residuals can drift from b - A*x in finite precision.
+            # A successful solve must satisfy the requested true residual,
+            # including final coefficient reconstruction. Reuse Ap and r so
+            # verification adds one matvec but no network-sized allocation.
+            mulA!(Ap, x)
+            @inbounds @simd for i in 1:n
+                r[i] = Float64(b[i]) - Ap[i]
+            end
+            relres = norm(r) / nb
+            isfinite(relres) || return x, false, it, Inf
+            relres <= tol && return x, true, it, relres
+            # Restart PCG from the verified residual if recursive convergence
+            # was optimistic. Keep x and count this work within maxiter.
+            if Mdiag === nothing
+                z .= r
+            else
+                @inbounds for i in 1:n
+                    d = max(Float64(Mdiag[i]), Float64(diag_floor))
+                    z[i] = r[i] / d
+                end
+            end
+            rz = dot(r, z)
+            isfinite(rz) && rz > 0.0 || return x, false, it, Inf
+            p .= z
+            continue
+        end
 
         if Mdiag === nothing
             z .= r

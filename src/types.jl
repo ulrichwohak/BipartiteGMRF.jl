@@ -347,6 +347,21 @@ end
 Matrix-free stochastic solver using Hutchinson stochastic Lanczos quadrature
 for log determinants and preconditioned conjugate gradients for linear solves.
 
+Supports fixed and estimated `error_eta` under raw observation weighting,
+including grouped matches and sparse or dense controls. Final mean coefficients
+also use PCG; no network Cholesky factorization is used in this fitting path.
+Each successful solve verifies the true relative residual against `cg_tol`.
+Failure at the final likelihood or coefficient solve raises an error rather
+than returning a successful fit. The small dense coefficient system is still
+factored. Optional `covariance` extraction still uses network Cholesky;
+`decompose` is not yet implemented for AR(1) residual fits.
+Numerically unresolved AR trials with `1 - eta^2 <= sqrt(eps(Float64))`
+are rejected, rather than substituting another eta or accepting cancellation.
+
+The same `seed` reuses random probes across likelihood evaluations and fits.
+Optimizer convergence is not a guarantee of likelihood or parameter accuracy;
+compare probe counts, Lanczos steps, solve tolerances, and independent seeds.
+
 # The initial simplex
 
 Nelder-Mead starts from a simplex built around the starting point `x`: vertex

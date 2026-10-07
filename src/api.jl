@@ -14,6 +14,10 @@ and total variance components.
 `kind` selects the decomposition type:
 - `:model` — decomposition from the GMRF's precision structure alone
 - `:fitted` — includes fitted effects (posterior mode + trace correction)
+
+AR(1) residual fits are currently rejected: the decomposition targets do not
+yet account for correlated grouped intervals. Fitting and likelihood/parameter
+accessors remain supported. This API is not invoked automatically by `fit_mle`.
 """
 function decompose(
     result::GMRFResult;
@@ -23,6 +27,8 @@ function decompose(
     target::Symbol=result.stats.weighting.target,
     verbose::Bool=false,
 )
+    result.stats.error_ar1 === nothing || throw(ArgumentError(
+        "decompose is not implemented for AR(1) residual fits: grouped target weights and correlated residual contributions require a separate decomposition. Use parameter/likelihood accessors; covariance is available but requires a network Cholesky factorization."))
     if kind == :model
         return _decompose_model(result; probes=probes, seed=seed, target=target, verbose=verbose)
     elseif kind == :fitted
@@ -47,6 +53,9 @@ Factor the fitted precision matrix for covariance extraction.
 
 `units` may be `:original` or `:scaled`. Pass the returned
 `CovarianceOperator` to `cov_block` to extract selected entity blocks.
+
+This optional API uses a network Cholesky factorization even after a `HutchSLQ`
+fit. It is not part of the factorization-free estimation path.
 """
 function covariance(
     result::GMRFResult;
@@ -115,11 +124,10 @@ params(result::GMRFResult) = (
     beta = result.beta,
 )
 
-# Gaussian dimensions entering the fitted likelihood: person-year rows for
-# :raw and :effective (full-data likelihoods), collapsed edges for :edge
-# (edge-mean likelihood).
+# Raw grouping supplies one outcome per match, not per member row. Only
+# effective weighting adds the within-edge contrasts to the K means.
 _loglikelihood_dims(stats::BipartiteGMRFStats) =
-    stats.weighting.observations == :edge ? stats.K : stats.personyear_rows
+    stats.weighting.observations == :effective ? stats.personyear_rows : stats.K
 
 """
     loglikelihood(result::GMRFResult)

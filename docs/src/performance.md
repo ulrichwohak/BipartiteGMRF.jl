@@ -15,6 +15,140 @@ For larger graphs, prefer `HutchSLQ()` and tune `logdet_probes`,
 `lanczos_iters`, `cg_tol`, and `cg_maxiter` against the desired runtime and
 stochastic tolerance.
 
+## AR(1) HutchSLQ: accuracy and scaling
+
+`benchmark/hutch_ar1.jl` measures the iterative AR(1) path without application
+data or extra dependencies. Its connected tree has grouped co-managers,
+graph-only leaves, successive observed ranks, raw weighting, and sparse
+controls. Simulation uses tree recursions, not a network factorization.
+Accuracy mode compares with both ExactCholesky and an independently assembled
+observation-space Gaussian likelihood. Scaling mode never constructs either
+reference and includes eta-changing statistics and final coefficient solves.
+
+From the repository root, after instantiating the package environment:
+
+```sh
+# Fixed-parameter sensitivity, independent seeds, two starts and rho profiles.
+OPENBLAS_NUM_THREADS=1 julia --startup-file=no --project=. benchmark/hutch_ar1.jl accuracy
+
+# Larger probe and optimizer budgets on the same small fixture.
+OPENBLAS_NUM_THREADS=1 julia --startup-file=no --project=. benchmark/hutch_ar1.jl accuracy fit-iters=400 probes=512 probe-counts=128,512
+
+# Fresh-process peak RSS, warmed evaluations, and a bounded full fit on macOS.
+/usr/bin/time -l env OPENBLAS_NUM_THREADS=1 julia --startup-file=no --project=. benchmark/hutch_ar1.jl scaling firms=1000 observations=3000 nodes=15000 controls=8 probes=16 steps=16 tol=1e-8 fit-iters=2
+```
+
+Use `/usr/bin/time -v` instead on Linux. Other `key=value` options include
+`data-seed`, `seed`, `lanczos-steps`, `solve-tols`, `independent-seeds`, and
+`cg-maxiter`. Output records the loaded source/revision, dimensions, hardware,
+threads, seeds, solver settings, every measured likelihood difference and fit
+candidate, and all timing repetitions. It distinguishes retained object size,
+cumulative allocations, and external peak process RSS. The accuracy reference
+is limited to 512 nodes/observations to avoid accidental dense large runs.
+
+### Measured approximation quality
+
+The following synthetic measurements used Julia 1.12.6, an Apple M3 Pro with
+18 GiB RAM, and one Julia/BLAS thread, on 2026-10-07. The small fixture has
+64 nodes, 32 grouped observations, eight firms and three controls; data seed
+`20261006`, common probe seed `20261007`. The fixed-parameter grid visits
+rho `(-0.3, 0, 0.3)` and eta `(-0.45, 0, 0.45, -0.45)`, including a repeated
+eta after crossing zero in the same cache. Exact and dense NLLs agree within
+`6.3e-14`. NLLs omit the shared Gaussian constant.
+
+With 32 Lanczos steps and `cg_tol=1e-10`:
+
+| Probes | Maximum absolute NLL error | RMS NLL error |
+|--:|--:|--:|
+| 8 | 1.48780 | 0.81059 |
+| 32 | 0.65134 | 0.36606 |
+| 128 | 0.34593 | 0.17277 |
+| 512 | 0.06520 | 0.04079 |
+
+At 512 probes, raising Lanczos steps from 6 to 16 to 32 gives maximum errors
+`0.06525`, `0.06520`, `0.06520`. With 32 steps, tightening `cg_tol` from
+`1e-4` to `1e-7` to `1e-10` gives `0.06478`, `0.06520`, `0.06520`.
+Probe error dominates on this fixture; numerical errors can cancel, so a
+slightly smaller total error with a looser solve is not evidence of a better
+solve. The table is a measured seed-specific trend, not a monotonicity guarantee.
+
+The 400-iteration fit comparison shows why optimizer convergence alone is
+insufficient. At 128 probes, both starts report convergence but yield
+`(rho, eta) = (-0.4509, 0.8120)` and `(0.1916, -0.0658)`. The first candidate's
+exact NLL is `14.4583`, versus `13.7997` for the corresponding exact-fit
+candidate: an objective gap of `0.6586`.
+
+At 512 probes, the two starts agree closely within each probe seed, but not
+across seeds:
+
+| Probe seed | Rho from the two starts | Eta (approximately) | Reported convergence |
+|--:|:--|--:|:--|
+| 20261007 | -0.093913, -0.093896 | -0.0644 | Both true |
+| 20261008 | +0.097961, +0.097978 | -0.0646 | Both hit 400 iterations |
+| 20261009 | -0.032117, -0.032103 | -0.0643 | First hits 400; second true |
+
+The respective NLL approximation errors at these candidates are about
+`-0.0161`, `-0.0202`, and `-0.00223`. Firm and residual scales are similar
+across these runs, while the worker scale approaches zero. This is a weakly
+identified, near-boundary example, **not** parameter-recovery evidence.
+Exact fixed-rho candidates at `(-0.3, 0, 0.3)` have NLLs
+`(13.8938, 13.7966, 13.9022)`: a profile span of only `0.1057`, comparable to
+approximation error. The common-seed Hutch profile prefers `+0.3` at 128
+probes and `0` at 512 probes on this three-point grid.
+
+Exact-fit candidates are finite optimizer runs, not certified global minima;
+ExactCholesky's `1e-3` absolute simplex-spread floor is still active. Some
+Hutch candidates therefore have a slightly lower exact NLL than their exact
+reference candidate. A negative candidate gap is not a correctness failure.
+For a flat application profile, use common probes for comparisons, then
+independent seeds and larger budgets; require stability in likelihood
+differences and parameters before interpreting the optimum.
+
+### Measured process memory and evaluation time
+
+Fresh, serial processes on the same machine used eight sparse controls,
+16 probes, 16 Lanczos steps, `cg_tol=1e-8`, `cg_maxiter=2000`, and the seeds
+above. Each process prepares the graph, warms the objective, records three
+evaluation repetitions and three eta-cycle repetitions, and runs a full fit
+capped at **two optimizer iterations**. The fits include estimated eta and
+final beta reconstruction. All produce finite likelihoods, perform 13
+objective evaluations, and report `converged=false`; they are execution and
+memory checks, not converged estimates.
+
+| Latent nodes | Grouped observations | Firms | Warm evaluation (minimum of 3) | Bounded fit | Peak RSS | Peak footprint |
+|--:|--:|--:|--:|--:|--:|--:|
+| 15,000 | 3,000 | 1,000 | 0.0549 s | 1.19 s | 1.012 GiB | 0.781 GiB |
+| 75,000 | 15,000 | 5,000 | 0.2719 s | 4.17 s | 1.116 GiB | 0.878 GiB |
+| 300,000 | 60,000 | 20,000 | 1.0865 s | 15.12 s | 1.417 GiB | 1.187 GiB |
+| 1,679,537 | 329,642 | 50,000 | 7.0161 s | 94.81 s | 2.503 GiB | 2.976 GiB |
+
+Change `firms`, `observations`, and `nodes` in the scaling command above to
+reproduce each row. RSS is macOS `/usr/bin/time -l`'s **maximum resident set
+size**, converted from bytes to GiB; the last column separately reports that
+tool's "peak memory footprint" metric. Neither metric should be substituted
+for the other. The process includes Julia, JIT compilation, simulation,
+preparation, all evaluations, finalization and allocator high-water marks.
+The script creates an evaluation cache before starting the separate fit;
+these are combined-benchmark process peaks, not isolated fit-only memory.
+The 300,000-node case retains approximately 75.0 MB of statistics and 97.4 MB
+of cache objects (decimal units; shared references mean these are not simply
+additive). These quantities are not substitutes for measured process RSS.
+
+The largest case deliberately matches the application's node and observation
+counts, but uses **synthetic** firms, matches and links. It retains 1,249,896
+graph-only leaf rows. Its three warmed evaluations take 7.0445, 7.0161 and
+7.1128 seconds; a three-eta cycle takes 21.0993 seconds at minimum. The whole
+fresh process takes 247.75 seconds. The bounded optimizer remains at its
+initial parameter values in this case, so it demonstrates execution of the
+entire fitting path, not successful parameter estimation.
+
+The tree fixture is connected and retains graph-only leaves, but has limited
+fill-in and relatively benign iterative conditioning. These are **measured
+synthetic results**, not a DE/AT measurement, a comparison with its reported
+16.3G exact-solver footprint, or an extrapolation to a production optimum.
+The low probe budget used for scaling is deliberately separate from the
+accuracy study; it is not recommended as sufficient for a flat rho profile.
+
 ## Mean controls: memory and runtime
 
 Supplying `X` estimates a linear mean jointly with the covariance parameters.
@@ -45,12 +179,14 @@ one outcome solve, reused for the profile, and one per control column. Sparse
 storage and streaming do not remove that work. ExactCholesky final coefficient
 reconstruction reuses the final likelihood factorization.
 
-The shared streamed kernel also supports `HutchSLQ` on its existing supported
-model/error combinations and safely consumes solvers' reusable output buffers.
-However, **final coefficient reconstruction after a HutchSLQ fit still uses a
-direct Cholesky factorization**. This implementation therefore does not provide an
-end-to-end matrix-free mean fit on arbitrarily large graphs. AR(1) and multiple
-error classes still require `ExactCholesky`.
+The shared streamed kernel also supports `HutchSLQ` and safely consumes solvers'
+reusable output buffers. Final HutchSLQ coefficients now use convergence-checked
+PCG with the fitted observation statistics, including AR(1), rather than a
+network Cholesky factorization. Sparse-product fill-in, iterative conditioning,
+per-control solves, and the dense coefficient system remain limits; this is
+not a guarantee of production feasibility on arbitrary graphs. Multiple error
+classes still require `ExactCholesky`. Optional covariance extraction still
+factors network matrices, and AR(1) decomposition is explicitly unsupported.
 
 ### Reproducible synthetic benchmark and runtime gate
 

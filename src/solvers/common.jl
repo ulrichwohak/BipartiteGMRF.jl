@@ -10,8 +10,8 @@ function validate_capability(model::AbstractBipartiteModel, stats::BipartiteGMRF
        !(solver isa ExactCholesky)
         throw(ArgumentError("error_groups currently supports only the ExactCholesky solver."))
     end
-    if stats.error_ar1 !== nothing && !(solver isa ExactCholesky)
-        throw(ArgumentError("error_eta currently supports only the ExactCholesky solver."))
+    if stats.error_ar1 !== nothing && !(solver isa Union{ExactCholesky,HutchSLQ})
+        throw(ArgumentError("error_eta supports only ExactCholesky and HutchSLQ."))
     end
     if stats.error_blocks !== nothing
         solver isa EMIWBlocks ||
@@ -75,6 +75,12 @@ function q_diag(model::BipartiteVarianceStableModel, rho::Float64, sigma_a::Floa
 end
 
 # ─── Observation stats ─────────────────────────────────────────────────────
+
+# Reject nonfinite optimizer trials before residual-parameter decoding and
+# observation-statistic assembly. Solver-specific numerical guards may add
+# stricter checks without changing the statistical parameter codecs.
+objective_parameters_valid(::AbstractGMRFSolver, ::BipartiteGMRFStats,
+    params_full::Vector{Float64}) = all(isfinite, params_full)
 
 function objective_stats(model::AbstractBipartiteModel, stats::BipartiteGMRFStats, params_full::Vector{Float64})
     w = stats.weighting
@@ -286,9 +292,8 @@ function mean_profile_correction(ms::MeanStats, lambda::Float64,
     return _solve_mean_profile!(ws, symmetry_rtol)
 end
 
-# This fallback preserves the historical HutchSLQ final-coefficient behavior.
-# ExactCholesky overrides it to reuse the final objective's factorization.
-# Do not advertise the fallback as end-to-end matrix-free mean estimation.
+# Fallback for other solvers. ExactCholesky reuses its final factorization;
+# HutchSLQ overrides this with convergence-checked iterative reconstruction.
 function final_mean_profile(::AbstractGMRFSolver, model, stats, obs, decoded, cache)
     lambda = inv(decoded.sigma_epsilon^2)
     M = fitted_precision(model, obs.design.VtV, decoded.rho,
@@ -460,6 +465,7 @@ function optimize_problem(
     function obj(pfree)
         evals[] += 1
         pfull = full_params(Vector{Float64}(pfree), fix_rho, estimate_rho_eps; rho_limit=limit)
+        objective_parameters_valid(solver, stats, pfull) || return BIG_NLL
         obs = objective_stats(model, stats, pfull)
         return nll_value(solver, model, stats, pfull, obs, cache; seed=seed)
     end
@@ -475,6 +481,22 @@ function optimize_problem(
 
     pfree = Vector{Float64}(minimizer(res))
     pfull = full_params(pfree, fix_rho, estimate_rho_eps; rho_limit=limit)
+    val = obj(pfree)
+    # Validate before rebuilding final statistics: a nonfinite coordinate or
+    # numerically unresolved AR(1) boundary must not reach that assembly, even
+    # if Nelder-Mead declares convergence on a constant penalty plateau.
+    if !(isfinite(val) && val < BIG_NLL)
+        detail = if !all(isfinite, pfull)
+            "The final optimizer coordinates are nonfinite."
+        elseif !objective_parameters_valid(solver, stats, pfull)
+            "The AR(1) eta is too close to +/-1 for reliable floating-point sufficient statistics (1 - eta^2 must exceed sqrt(eps(Float64))). No alternative eta or direct-solver fallback was used."
+        else
+            "Check covariance feasibility, iterative-solve convergence, and control rank/conditioning."
+        end
+        message = "Final likelihood is invalid. " * detail * " No fitted result was produced."
+        stats.mean_stats !== nothing && throw(MeanProfileError(message))
+        error(message)
+    end
     obs = objective_stats(model, stats, pfull)
     final_stats = if estimate_rho_eps
         replace_stats(stats;
@@ -490,14 +512,11 @@ function optimize_problem(
     else
         stats
     end
-    val = obj(pfree)
     decoded = unpack_params(pfull; rho_limit=limit)
     rho_eps = estimate_rho_eps ? obs.rho_eps : stats.rho_eps_likelihood
 
     # Compute profiled beta at final parameters
     beta_original = if final_stats.mean_stats !== nothing
-        isfinite(val) && val < BIG_NLL || throw(MeanProfileError(
-            "Final mean-profile likelihood is invalid; check rank/conditioning of X after grouping and network-solve accuracy."))
         _, beta_std = final_mean_profile(solver, model, final_stats, obs, decoded, cache)
         beta_std .* final_stats.y_std
     else

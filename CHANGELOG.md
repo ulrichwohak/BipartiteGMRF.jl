@@ -5,6 +5,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- AR(1) residual support for HutchSLQ, including fixed/estimated eta, grouped
+  matches and optional controls under raw weighting (issue #137). Reuse the
+  existing observed-rank AR statistics and exact residual log determinant.
+- Iterative final control reconstruction for HutchSLQ, with no network
+  factorization fallback. Small dense coefficient factorizations remain.
+- Independent dense likelihood tests and an opt-in AR/Hutch accuracy/scaling
+  benchmark, including probe/seed sensitivity, reoptimized rho profiles,
+  iterative failure handling and fresh-process memory measurements.
+
+### Fixed
+
+- Refresh Hutch operators/preconditioners from current weighted values even
+  when a sparse matrix object is reused. Preserve worker–worker support.
+- Verify true PCG residuals before accepting solves; reject invalid final
+  likelihoods also without X. Reject nonpositive SLQ Ritz values rather than
+  flooring them, and remove implicit default jitter.
+- Reject nonfinite optimizer trials and numerically unresolved HutchSLQ AR
+  trials extremely close to eta = +/-1, rather than accepting cancellation-
+  corrupted statistics as a likelihood.
+- Use grouped observation counts for raw Gaussian constants and the
+  standardization Jacobian, including AR(1) fits.
+
+### Limitations
+
+- Optional covariance extraction still uses network Cholesky. AR(1)
+  decompositions are now explicitly rejected because their grouped target and
+  correlated residual semantics are not implemented. No graph pruning, rho
+  domain changes, inverse-duration weighting, or dropped controls are added.
+
 ## [v0.5.4] &mdash; 2026-09-29
 
 ### Fixed
