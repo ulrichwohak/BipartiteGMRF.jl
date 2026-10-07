@@ -363,9 +363,8 @@ end
                 @test correction ≈ ref.correction atol=1e-9 rtol=1e-9
                 @test beta ≈ ref.beta atol=1e-9 rtol=1e-9
 
-                # HutchSLQ still uses the historical direct factorization
-                # for its final beta. Check that separate integration path
-                # explicitly without claiming end-to-end matrix-free fitting.
+                # Final beta uses the same convergence-checked iterative
+                # network solver, without a hidden Cholesky factorization.
                 decoded = bg.unpack_params(theta; rho_limit=bg.rho_limit(model))
                 final_correction, final_beta = bg.final_mean_profile(
                     solver, model, sss, obs, decoded, cache)

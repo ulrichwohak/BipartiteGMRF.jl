@@ -23,8 +23,8 @@ function slq_logdet_spd_mul_cached!(
     m::Int=30,
     k::Int=30,
     seed::Int=1,
-    jitter::Real=1e-12,
-    ritz_floor::Real=1e-14,
+    jitter::Real=0.0,
+    ritz_floor::Real=0.0,
 )
     k_eff = min(k, n)
     rng = MersenneTwister(seed)
@@ -46,12 +46,16 @@ function slq_logdet_spd_mul_cached!(
             mulA!(ws.w, ws.q)
             jitter != 0 && (@. ws.w = ws.w + jitter * ws.q)
             ws.alpha[t] = dot(ws.q, ws.w)
+            isfinite(ws.alpha[t]) || return NaN
             @. ws.w = ws.w - ws.alpha[t] * ws.q - beta_prev * ws.q0
             if t < k_eff
+                recurrence_scale = max(abs(ws.alpha[t]), abs(beta_prev))
                 beta_prev = norm(ws.w)
                 isfinite(beta_prev) || return NaN
                 ws.beta[t] = beta_prev
-                if beta_prev < 1e-14
+                # Relative breakdown is invariant to uniform precision
+                # scaling; an absolute threshold truncates small SPD inputs.
+                if beta_prev <= 1e-14 * recurrence_scale
                     t_stop = t
                     break
                 end
@@ -71,7 +75,11 @@ function slq_logdet_spd_mul_cached!(
         u1 = @view E.vectors[1, :]
         s = 0.0
         @inbounds for j in 1:length(vals)
-            lambda_j = vals[j] > ritz_floor ? vals[j] : ritz_floor
+            # Never turn an indefinite/singular precision into a covariance
+            # by flooring negative Ritz values. A failed trial is rejected by
+            # the likelihood, without changing the graph or rho domain.
+            lambda_j = vals[j]
+            isfinite(lambda_j) && lambda_j > max(0.0, ritz_floor) || return NaN
             s += log(lambda_j) * (u1[j]^2)
         end
         total += (nz^2) * s

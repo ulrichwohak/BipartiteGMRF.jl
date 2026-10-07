@@ -61,6 +61,21 @@ end
 make_nll_cache(solver::HutchSLQ, model::AbstractBipartiteModel, stats::BipartiteGMRFStats) =
     make_hutch_cache(model, stats, solver)
 
+function objective_parameters_valid(::HutchSLQ, stats::BipartiteGMRFStats,
+    params_full::Vector{Float64})
+    all(isfinite, params_full) || return false
+    ar = stats.error_ar1
+    ar === nothing && return true
+    eta = ar.eta_fixed === nothing ? eta_from_unconstrained(params_full[5]) : ar.eta_fixed
+    # The three-component AR assembly subtracts terms amplified by
+    # 1/(1-eta^2). At this threshold cancellation can consume at least half
+    # Float64's significant digits, even for an eta-independent singleton
+    # product. Reject numerically unresolved trials; do not clamp eta to a
+    # different fitted model or rely on a small PCG residual to detect damaged
+    # statistics. ExactCholesky retains its existing finite-eta behavior.
+    return 1.0 - eta^2 > sqrt(eps(Float64))
+end
+
 # Q and M log-determinants use independent probe streams (seed offset); the
 # VS path instead evaluates B and K with common random numbers, which reduces
 # the variance of the ldK - ldB difference where the congruence scaling makes
@@ -119,6 +134,59 @@ function set_q_params!(qop::QOpVS, rho::Float64, sigma_a::Float64, sigma_z::Floa
     return qop
 end
 
+# Assemble the diagonal from the same operator used by PCG. This avoids a
+# temporary network-sized q_diag vector on every objective evaluation.
+function hutch_preconditioner!(out::Vector{Float64}, qop::QOp,
+    dV::Vector{Float64}, lambda::Float64)
+    nf = qop.n_firms
+    @inbounds for i in 1:nf
+        out[i] = qop.inv_sa2 * qop.diag_f[i] + lambda * dV[i]
+    end
+    @inbounds for j in eachindex(qop.diag_w)
+        out[nf + j] = qop.inv_sz2 * qop.diag_w[j] + lambda * dV[nf + j]
+    end
+    return out
+end
+
+function hutch_preconditioner!(out::Vector{Float64}, qop::QOpVS,
+    dV::Vector{Float64}, lambda::Float64)
+    nf = qop.n_firms
+    @inbounds for i in 1:nf
+        out[i] = (1.0 + qop.rho_sq * (qop.d_f[i] - 1.0)) * qop.inv_sa2 + lambda * dV[i]
+    end
+    @inbounds for j in eachindex(qop.d_w)
+        out[nf + j] = (1.0 + qop.rho_sq * (qop.d_w[j] - 1.0)) * qop.inv_sz2 + lambda * dV[nf + j]
+    end
+    return out
+end
+
+function refresh_hutch_cache!(cache::Union{HutchCache,VSHutchCache},
+    obs::ObservationStats, p::NamedTuple)
+    lambda = inv(p.sigma_epsilon^2)
+    set_q_params!(cache.qop, p.rho, p.sigma_a, p.sigma_z)
+    cache.mop.lambda = lambda
+    cache.mop.VtV = obs.design.VtV
+    # eta and other residual parameters change values, not necessarily sparse
+    # support or matrix identity. Read the current diagonal unconditionally;
+    # indexed CSC lookup also avoids allocating a network-sized diag vector.
+    @inbounds for i in eachindex(cache.dV)
+        cache.dV[i] = obs.design.VtV[i, i]
+    end
+    hutch_preconditioner!(cache.Mdiag, cache.qop, cache.dV, lambda)
+    return lambda
+end
+
+function hutch_mean_solve!(cache::Union{HutchCache,VSHutchCache},
+    solver::HutchSLQ, v::AbstractVector{<:Real})
+    solution, ok, iterations, relres = pcg_solve!(cache.pcg, cache.mop, v;
+        tol=solver.cg_tol, maxiter=solver.cg_maxiter, Mdiag=cache.Mdiag)
+    ok || throw(MeanProfileError(
+        "Mean-profile PCG did not converge after $(iterations) iterations " *
+        "(relative residual=$(relres), tolerance=$(solver.cg_tol)); " *
+        "increase cg_maxiter or improve scaling. No direct-factorization fallback was used."))
+    return solution
+end
+
 function nll_hutch_value(
     model::AbstractBipartiteModel,
     stats::BipartiteGMRFStats,
@@ -128,21 +196,13 @@ function nll_hutch_value(
     cache::Union{HutchCache,VSHutchCache};
     seed::Int,
 )
+    objective_parameters_valid(solver, stats, params_full) || return BIG_NLL
     p = unpack_params(params_full; rho_limit=rho_limit(model))
     all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
     p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
 
-    lambda = 1.0 / p.sigma_epsilon^2
-    set_q_params!(cache.qop, p.rho, p.sigma_a, p.sigma_z)
-    cache.mop.lambda = lambda
-    # VtV only changes across evaluations when rho_eps is re-estimated;
-    # skip the O(n) diagonal extraction otherwise.
-    if cache.mop.VtV !== obs.design.VtV
-        cache.mop.VtV = obs.design.VtV
-        cache.dV .= diag(obs.design.VtV)
-    end
-    Qdiag = q_diag(model, p.rho, p.sigma_a, p.sigma_z)
-    @. cache.Mdiag = Qdiag + lambda * cache.dV
+    lambda = refresh_hutch_cache!(cache, obs, p)
+    isfinite(lambda) && lambda > 0.0 || return BIG_NLL
 
     x, ok, _, _ = pcg_solve!(cache.pcg, cache.mop, obs.design.projected_y;
         tol=solver.cg_tol, maxiter=solver.cg_maxiter, Mdiag=cache.Mdiag)
@@ -153,12 +213,7 @@ function nll_hutch_value(
     mean_corr = 0.0
     if obs.mean_stats !== nothing
         ms = obs.mean_stats
-        function pcg_solve_M(v)
-            sol, ok_s, _, _ = pcg_solve!(cache.pcg, cache.mop, v;
-                tol=solver.cg_tol, maxiter=solver.cg_maxiter, Mdiag=cache.Mdiag)
-            ok_s || error("PCG failed for mean-structure solve")
-            return sol
-        end
+        pcg_solve_M = v -> hutch_mean_solve!(cache, solver, v)
         try
             mean_corr, _ = mean_profile_correction(ms, lambda,
                 obs.design.projected_y, pcg_solve_M, cache.mean::MeanProfileWorkspace;
@@ -182,6 +237,22 @@ end
 
 nll_value(solver::HutchSLQ, model, stats, params_full, obs, cache::Union{HutchCache,VSHutchCache}; seed) =
     nll_hutch_value(model, stats, solver, params_full, obs, cache; seed=seed)
+
+# Final coefficient reconstruction uses exactly the fitted observation
+# weighting, including eta-dependent AR(1) control products. Every network
+# solve is iterative, and failures are explicit rather than silently falling
+# back to Cholesky. mean_profile_correction consumes borrowed PCG results
+# before the next solve and returns independently owned coefficient storage.
+function final_mean_profile(solver::HutchSLQ, model, stats, obs, decoded,
+    cache::Union{HutchCache,VSHutchCache})
+    lambda = refresh_hutch_cache!(cache, obs, decoded)
+    isfinite(lambda) && lambda > 0.0 || throw(MeanProfileError(
+        "Final mean-profile residual precision is nonfinite or nonpositive."))
+    solve_M = v -> hutch_mean_solve!(cache, solver, v)
+    return mean_profile_correction(obs.mean_stats, lambda,
+        obs.design.projected_y, solve_M, cache.mean::MeanProfileWorkspace;
+        symmetry_rtol=max(1e-10, 10 * solver.cg_tol))
+end
 
 nelder_g_abstol(::HutchSLQ, g_rel::Float64) = g_rel
 
