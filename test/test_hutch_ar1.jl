@@ -73,6 +73,23 @@ BipartiteGMRF.model_precision(::BipartiteVarianceStableModel{HutchAR1NoFactorAlg
     ::Float64, ::Float64, ::Float64) =
     error("Network precision assembly/factorization is forbidden in this test")
 
+# Fault injection at the optimizer/finalization boundary. This intentionally
+# corrupts the optimizer's returned coordinates after finite evaluations, so
+# the final guard is tested independently of user-input validation or PCG.
+struct NonfiniteFinalTestSolver <: BipartiteGMRF.AbstractGMRFSolver
+    optim_iters::Int
+    g_reltol::Float64
+end
+BipartiteGMRF.make_nll_cache(::NonfiniteFinalTestSolver, model, stats) = nothing
+BipartiteGMRF.nll_value(::NonfiniteFinalTestSolver, model, stats, theta, obs, cache; seed) = sum(abs2, theta)
+BipartiteGMRF.nelder_g_abstol(::NonfiniteFinalTestSolver, tolerance::Float64) = tolerance
+BipartiteGMRF.nelder_simplexer(::NonfiniteFinalTestSolver) =
+    BipartiteGMRF.nelder_simplexer(HutchSLQ())
+function BipartiteGMRF.polish(::NonfiniteFinalTestSolver, obj, res, verbose)
+    BipartiteGMRF.minimizer(res)[1] = NaN
+    return res, 0.0
+end
+
 @testset "HutchSLQ AR(1): dense oracles and factorization-free fitting" begin
     bg = BipartiteGMRF
     data = hutch_ar1_fixture()
@@ -368,6 +385,24 @@ BipartiteGMRF.model_precision(::BipartiteVarianceStableModel{HutchAR1NoFactorAlg
                 theta[5] = coordinate
                 @test !bg.objective_parameters_valid(solver_kind, ss, theta)
             end
+        end
+    end
+
+    @testset "nonfinite optimizer output cannot become a fitted result" begin
+        for X in (nothing, data.X)
+            ss = suffstats(BipartiteNormalizedModel, data.f, data.w, data.y;
+                weighting=Weighting(observations=:raw), standardize=false,
+                match_id=data.match, X)
+            model = BipartiteNormalizedModel(ss.A_prior; rho_limit=limit)
+            failure = try
+                fit_mle(model, ss; solver=NonfiniteFinalTestSolver(1, 1e-7), seed)
+                nothing
+            catch err
+                err
+            end
+            @test failure isa (X === nothing ? ErrorException : bg.MeanProfileError)
+            @test occursin("final optimizer coordinates are nonfinite", sprint(showerror, failure))
+            @test occursin("No fitted result", sprint(showerror, failure))
         end
     end
 
