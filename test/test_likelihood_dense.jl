@@ -1,10 +1,10 @@
 @testset "dense likelihood reference" begin
-    problem = GMRFProblem(
-        synthetic_df();
-        prior=NormalizedPrior(),
+    d = synthetic_data()
+    ss = suffstats(BipartiteNormalizedModel, d.f, d.w, d.y;
         weighting=Weighting(observations=:raw),
         standardize=false,
     )
+    model = BipartiteNormalizedModel(ss.A_prior; rho_limit=0.99)
 
     rho = 0.25
     sigma_a = 0.8
@@ -17,21 +17,21 @@
         log(sigma_epsilon),
     ]
 
-    stats = BipartiteGMRF.objective_stats(problem, params)
-    exact_nll = BipartiteGMRF.nll_exact_value(problem, params, stats)
+    obs_stats = BipartiteGMRF.objective_stats(model, ss, params)
+    exact_nll = BipartiteGMRF.nll_exact_value(model, ss, params, obs_stats)
 
-    k = problem.K
-    n = problem.N_firms + problem.N_workers
+    k = ss.K
+    n = ss.N_firms + ss.N_workers
     obs_rows = repeat(1:k, 2)
-    entity_cols = vcat(problem.base_f_rows, problem.N_firms .+ problem.base_w_cols)
+    entity_cols = vcat(ss.base.f, ss.N_firms .+ ss.base.w)
     V = sparse(obs_rows, entity_cols, ones(Float64, 2k), k, n)
 
-    Q = BipartiteGMRF.precision_matrix(problem, rho, sigma_a, sigma_z)
+    Q = BipartiteGMRF.model_precision(model, rho, sigma_a, sigma_z)
     prior_cov = inv(Matrix(Q))
     Sigma_y = Matrix(V * prior_cov * transpose(V)) + sigma_epsilon^2 * Matrix{Float64}(I, k, k)
     dense_nll = 0.5 * (
         logdet(Symmetric(Sigma_y)) +
-        dot(problem.y, Sigma_y \ problem.y)
+        dot(ss.base.y, Sigma_y \ ss.base.y)
     )
 
     @test exact_nll ≈ dense_nll atol=1e-8 rtol=1e-8
@@ -39,12 +39,12 @@ end
 
 
 @testset "variance-stable paired HutchSLQ logdet" begin
-    problem = @test_warn "contains a cycle" GMRFProblem(
-        synthetic_df();
-        prior=VarianceStablePrior(),
+    d_vs = synthetic_data()
+    ss = suffstats(BipartiteVarianceStableModel, d_vs.f, d_vs.w, d_vs.y;
         weighting=Weighting(observations=:raw),
         standardize=false,
     )
+    model = @test_warn "contains a cycle" BipartiteVarianceStableModel(ss.A_prior)
     solver = HutchSLQ(
         logdet_probes=4096,
         lanczos_iters=20,
@@ -60,14 +60,15 @@ end
             log(sigma_z),
             log(0.4),
         ]
-        stats = BipartiteGMRF.objective_stats(problem, params)
-        exact_nll = BipartiteGMRF.nll_exact_value(problem, params, stats)
-        cache = BipartiteGMRF.make_hutch_cache(problem, solver)
+        obs_stats = BipartiteGMRF.objective_stats(model, ss, params)
+        exact_nll = BipartiteGMRF.nll_exact_value(model, ss, params, obs_stats)
+        cache = BipartiteGMRF.make_hutch_cache(model, ss, solver)
         hutch_nll = BipartiteGMRF.nll_hutch_value(
-            problem,
+            model,
+            ss,
             solver,
             params,
-            stats,
+            obs_stats,
             cache;
             seed=17,
         )

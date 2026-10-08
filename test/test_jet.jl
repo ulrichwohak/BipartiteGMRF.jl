@@ -1,35 +1,26 @@
 using JET
 
 function setup_jet_fixture()
-    problem = GMRFProblem(synthetic_df())
-    problem_values = Tuple(BipartiteGMRF.problem_fields(problem))
-    result = solve(
-        problem,
-        ExactCholesky(optim_iters=2, polish=false);
-        decompose=nothing,
-    )
-    return problem, problem_values, result
+    ss = suffstats_synthetic()
+    model = BipartiteNormalizedModel(ss.A_prior; rho_limit=0.99)
+    result = solve(model, ss, ExactCholesky(optim_iters=2, polish=false))
+    return model, ss, result
 end
 
-function jet_problem_flow(problem_values)
-    return GMRFProblem(problem_values...)
-end
-
-function jet_exact_solve_flow(problem)
-    Q = BipartiteGMRF.precision_matrix(problem, 0.3, 0.8, 0.6)
-    M = Q + (1.0 / 0.25^2) .* problem.VtV
-    return cholesky(Symmetric(M)) \ problem.projected_y
+function jet_exact_solve_flow(model, ss)
+    Q = BipartiteGMRF.model_precision(model, 0.3, 0.8, 0.6)
+    M = Q + (1.0 / 0.25^2) .* ss.design.VtV
+    return cholesky(Symmetric(M)) \ ss.design.projected_y
 end
 
 function jet_covariance_flow(result)
-    op = prior_covariance(result)
-    return cov_block(op; firms=(1,), workers=(10,))
+    op = covariance(result; kind=:model)
+    return cov_block(op; firms=(1,), workers=(1,))
 end
 
 @testset "JET" begin
-    problem, problem_values, result = setup_jet_fixture()
+    model, ss, result = setup_jet_fixture()
 
-    JET.@test_opt target_modules=(BipartiteGMRF,) jet_problem_flow(problem_values)
-    JET.@test_opt target_modules=(BipartiteGMRF,) jet_exact_solve_flow(problem)
+    JET.@test_opt target_modules=(BipartiteGMRF,) jet_exact_solve_flow(model, ss)
     JET.@test_opt target_modules=(BipartiteGMRF,) jet_covariance_flow(result)
 end

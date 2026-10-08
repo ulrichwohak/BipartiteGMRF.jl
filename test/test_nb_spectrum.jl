@@ -89,13 +89,13 @@ complete_bipartite_edges(n_firms, n_workers; firm_offset=0, worker_offset=0) = [
     @test irregular_first.node_scores ≈ irregular_second.node_scores atol=1e-14
     @test maximum(irregular_first.node_scores) - minimum(irregular_first.node_scores) > 0.01
 
-    df = DataFrame(
-        firm_id=first.(complete_bipartite_edges(3, 3)),
-        worker_id=last.(complete_bipartite_edges(3, 3)),
-        y=collect(1.0:9.0),
+    A_complete33 = sparse(
+        first.(complete_bipartite_edges(3, 3)),
+        last.(complete_bipartite_edges(3, 3)),
+        ones(Float64, 9),
+        3, 3,
     )
-    problem = GMRFProblem(df; standardize=false)
-    @test nb_spectrum(problem; seed=3).lambda_nb ≈ 2.0 atol=1e-10
+    @test nb_spectrum(A_complete33; seed=3).lambda_nb ≈ 2.0 atol=1e-10
 
     @test_throws ArgumentError nb_spectrum(cycle; nev=0)
     @test_throws ArgumentError nb_spectrum(cycle; tol=0.0)

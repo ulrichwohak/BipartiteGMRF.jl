@@ -1,394 +1,256 @@
-function validate_capability(problem::GMRFProblem, solver::AbstractGMRFSolver)
-    if problem.prior isa VarianceStablePrior
-        problem.weighting.observations == :raw ||
-            throw(ArgumentError("VarianceStablePrior currently supports only raw observation weighting."))
-        # ExactCholesky is exact and cheap on acyclic graphs (no fill-in) and
-        # avoids stochastic log-det error when the graph is small. HutchSLQ uses a
-        # congruence-scaled common-probe ratio for the VS objective (issue #82).
-        # ExactCholesky is also permitted on *cyclic* graphs:
-        # the VS precision is positive-definite while |rho| * lambda_NB < 1 (the
-        # caller enforces this via rho_limit), an indefinite precision is rejected
-        # per-evaluation (the cholesky in nll_exact_value returns BIG_NLL on
-        # failure), and fill-in is acceptable on mildly cyclic / NB-pruned graphs.
-        # Cyclic VS input is already warned about at construction (prepare.jl), and
-        # strict_forest=true errors there. An automatic safeguard that sets/checks
-        # rho_limit from lambda_NB is tracked in issues #79 (spectral analysis) and
-        # #78 (graph pruning).
+function validate_capability(model::AbstractBipartiteModel, stats::BipartiteGMRFStats, solver::AbstractGMRFSolver)
+    if model isa BipartiteVarianceStableModel
+        stats.weighting.observations == :raw ||
+            throw(ArgumentError("BipartiteVarianceStableModel currently supports only raw observation weighting."))
     end
-    if problem.prior isa SpectralPrior && solver isa ExactCholesky
-        throw(ArgumentError("ExactCholesky for SpectralPrior is not implemented; use HutchSLQ."))
+    if model isa BipartiteSpectralModel && solver isa ExactCholesky
+        throw(ArgumentError("ExactCholesky for BipartiteSpectralModel is not implemented; use HutchSLQ."))
     end
     return nothing
 end
 
-function q_operator(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    if problem.prior isa VarianceStablePrior
-        return make_qop_vs(problem, rho, sigma_a, sigma_z)
-    end
-    return make_qop(problem, rho, sigma_a, sigma_z)
+# ─── Precision matrix via model dispatch ──────────────────────────────────
+
+"""
+Build the model precision matrix Q at given parameters.
+Delegates to the `LatentModel` interface.
+"""
+function model_precision(model::AbstractBipartiteModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    return GaussianMarkovRandomFields.precision_matrix(model; ρ=rho, σ_a=sigma_a, σ_z=sigma_z)
 end
 
-function q_diag(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    inv_sa2 = 1.0 / sigma_a^2
-    inv_sz2 = 1.0 / sigma_z^2
-    n = problem.N_firms + problem.N_workers
-    out = Vector{Float64}(undef, n)
-    if problem.prior isa VarianceStablePrior
-        @inbounds for i in 1:problem.N_firms
-            out[i] = (1.0 + rho^2 * (problem.d_f[i] - 1.0)) * inv_sa2
-        end
-        @inbounds for j in 1:problem.N_workers
-            out[problem.N_firms + j] = (1.0 + rho^2 * (problem.d_w[j] - 1.0)) * inv_sz2
-        end
-    else
-        @inbounds for i in 1:problem.N_firms
-            out[i] = problem.diag_f[i] * inv_sa2
-        end
-        @inbounds for j in 1:problem.N_workers
-            out[problem.N_firms + j] = problem.diag_w[j] * inv_sz2
-        end
-    end
-    return out
+"""
+Build the data-augmented precision M = Q + λV'V.
+"""
+function fitted_precision(model::AbstractBipartiteModel, VtV::SparseMatrixCSC, rho::Float64, sigma_a::Float64, sigma_z::Float64, sigma_epsilon::Float64)
+    Q = model_precision(model, rho, sigma_a, sigma_z)
+    return Q + (1.0 / sigma_epsilon^2) .* VtV
 end
 
-function precision_matrix(problem::GMRFProblem, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    inv_sa2 = 1.0 / sigma_a^2
-    inv_sz2 = 1.0 / sigma_z^2
-    cross = rho / (sigma_a * sigma_z)
-    nf = problem.N_firms
-    nw = problem.N_workers
+# ─── Matrix-free operators (HutchSLQ path) ────────────────────────────────
 
-    if problem.prior isa VarianceStablePrior
-        diag_f = (1.0 .+ rho^2 .* (problem.d_f .- 1.0)) .* inv_sa2
-        diag_w = (1.0 .+ rho^2 .* (problem.d_w .- 1.0)) .* inv_sz2
-        W = problem.A_prior
-        Wt = problem.At_prior
-    else
-        diag_f = problem.diag_f .* inv_sa2
-        diag_w = problem.diag_w .* inv_sz2
-        W = spdiagm(0 => problem.df_is) * problem.A_prior * spdiagm(0 => problem.dw_is)
-        Wt = copy(transpose(W))
-    end
+q_operator(model::BipartiteVarianceStableModel, rho::Float64, sigma_a::Float64, sigma_z::Float64) =
+    make_qop_vs(model, rho, sigma_a, sigma_z)
+q_operator(model::AbstractBipartiteModel, rho::Float64, sigma_a::Float64, sigma_z::Float64) =
+    make_qop(model, rho, sigma_a, sigma_z)
 
-    return [spdiagm(0 => diag_f) (-cross .* W); (-cross .* Wt) spdiagm(0 => diag_w)]
-end
-
-function posterior_precision_matrix(
-    problem::GMRFProblem,
-    rho::Float64,
-    sigma_a::Float64,
-    sigma_z::Float64,
-    sigma_epsilon::Float64,
+# Q has a constant diagonal for the normalized and spectral models.
+function q_diag(
+    model::Union{BipartiteNormalizedModel,BipartiteSpectralModel},
+    rho::Float64, sigma_a::Float64, sigma_z::Float64,
 )
-    Q = precision_matrix(problem, rho, sigma_a, sigma_z)
-    return Q + (1.0 / sigma_epsilon^2) .* problem.VtV
-end
-
-function objective_stats(problem::GMRFProblem, params_full::Vector{Float64})
-    if problem.weighting.observations == :effective && problem.weighting.rho_eps == :estimate
-        rho_eps = rhoeps_from_unconstrained(params_full[5])
-        stats = build_match_weight_stats(
-            problem.base_f_rows,
-            problem.base_w_cols,
-            problem.base_y,
-            problem.base_T,
-            problem.N_firms,
-            problem.N_workers,
-            rho_eps,
-        )
-        return merge(stats, (rho_eps = rho_eps,))
-    end
-    return (
-        ydot = problem.ydot,
-        projected_y = problem.projected_y,
-        VtV = problem.VtV,
-        cnt_f = problem.cnt_f,
-        cnt_w = problem.cnt_w,
-        A_obs = problem.A_obs,
-        At_obs = problem.At_obs,
-        log_weight_sum = problem.log_weight_sum,
-        effective_weight_sum = problem.effective_weight_sum,
-        mean_effective_weight = problem.mean_effective_weight,
-        max_effective_weight = problem.max_effective_weight,
-        effective_weight_over_T_sum = problem.effective_weight_over_T_sum,
-        rho_eps = problem.rho_eps_likelihood,
+    g = model.graph
+    return vcat(
+        fill(1.0 / sigma_a^2, g.n_firms),
+        fill(1.0 / sigma_z^2, g.n_workers),
     )
 end
 
-function residual_corr_term(problem::GMRFProblem, sigma_epsilon::Float64, rho_eps::Union{Nothing,Float64})
+function q_diag(model::BipartiteUnnormalizedModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    g = model.graph
+    return vcat(g.d_f ./ sigma_a^2, g.d_w ./ sigma_z^2)
+end
+
+function q_diag(model::BipartiteVarianceStableModel, rho::Float64, sigma_a::Float64, sigma_z::Float64)
+    g = model.graph
+    rho_sq = rho^2
+    inv_one_minus_rho_sq = 1.0 / (1.0 - rho_sq)
+    return vcat(
+        (1.0 .+ rho_sq .* (g.d_f .- 1.0)) .* (inv_one_minus_rho_sq / sigma_a^2),
+        (1.0 .+ rho_sq .* (g.d_w .- 1.0)) .* (inv_one_minus_rho_sq / sigma_z^2),
+    )
+end
+
+# ─── Observation stats ─────────────────────────────────────────────────────
+
+function objective_stats(model::AbstractBipartiteModel, stats::BipartiteGMRFStats, params_full::Vector{Float64})
+    w = stats.weighting
+    if w.observations == :effective && w.estimate_rho_eps
+        rho_eps = rhoeps_from_unconstrained(params_full[5])
+        design, weight_stats = build_match_weight_stats(
+            stats.base.f,
+            stats.base.w,
+            stats.base.y,
+            stats.base.T,
+            model.graph.n_firms,
+            model.graph.n_workers,
+            rho_eps,
+        )
+        return ObservationStats(design, weight_stats, rho_eps, stats.mean_stats)
+    end
+    return ObservationStats(stats.design, stats.weights, stats.rho_eps_likelihood, stats.mean_stats)
+end
+
+function residual_corr_term(stats::BipartiteGMRFStats, sigma_epsilon::Float64, rho_eps::Union{Nothing,Float64})
     rho_eps === nothing && return 0.0
     0.0 <= rho_eps < 1.0 || return BIG_NLL
     omr = 1.0 - rho_eps
     lambda = 1.0 / sigma_epsilon^2
-    return Float64(problem.within_df) * (2.0 * log(sigma_epsilon) + log(omr)) +
-        lambda * Float64(problem.within_ss) / omr
+    return Float64(stats.within_df) * (2.0 * log(sigma_epsilon) + log(omr)) +
+        lambda * Float64(stats.within_ss) / omr
 end
 
-function nll_exact_value(problem::GMRFProblem, params_full::Vector{Float64}, stats)
-    p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
-    all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
-    p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
-    lambda = 1.0 / p.sigma_epsilon^2
-    Q = precision_matrix(problem, p.rho, p.sigma_a, p.sigma_z)
-    M = Q + lambda .* stats.VtV
-    FQ = try
-        cholesky(Symmetric(Q))
-    catch
-        return BIG_NLL
-    end
-    FM = try
-        cholesky(Symmetric(M))
-    catch
-        return BIG_NLL
-    end
-    ldQ = logdet(FQ)
-    ldM = logdet(FM)
-    isfinite(ldQ) && isfinite(ldM) || return BIG_NLL
-    x = FM \ stats.projected_y
-    quad = dot(stats.projected_y, x)
-    isfinite(quad) || return BIG_NLL
-    rcorr = residual_corr_term(problem, p.sigma_epsilon, stats.rho_eps)
-    rcorr == BIG_NLL && return BIG_NLL
-    val = 0.5 * (
-        problem.K * 2.0 * log(p.sigma_epsilon) - Float64(stats.log_weight_sum) +
-        (ldM - ldQ) + lambda * stats.ydot - lambda^2 * quad + rcorr
-    )
-    return finite_or_big(val)
-end
+# ═══════════════════════════════════════════════════════════════════════════
+# Optimization loop
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Solver-specific behavior enters through four methods, each dispatching on
+# the solver type (implemented in exact.jl and hutch.jl):
+#
+#   make_nll_cache(solver, model, stats)             -> cache
+#   nll_value(solver, model, stats, p, obs, cache; seed) -> Float64
+#   nelder_g_abstol(solver, g_rel)                   -> Float64
+#   polish(solver, obj, res, verbose)                -> (res, elapsed_seconds)
 
-mutable struct HutchCache{Q<:Union{QOp,QOpVS}}
-    dV::Vector{Float64}
-    Mdiag::Vector{Float64}
-    pcg::PCGWorkspace
-    slqQ::SLQWorkspace
-    slqM::SLQWorkspace
-    qop::Q
-    mop::MOp{Q}
-end
-
-mutable struct VSHutchCache
-    dV::Vector{Float64}
-    Mdiag::Vector{Float64}
-    pcg::PCGWorkspace
-    slqB::SLQWorkspace
-    slqK::SLQWorkspace
-    qop::QOpVS
-    mop::MOp{QOpVS}
-    bop::QOpVS
-    kop::ScaledMOp{QOpVS}
-end
-
-function make_hutch_cache(problem::GMRFProblem, solver::HutchSLQ)
-    n = problem.N_firms + problem.N_workers
-    qop = q_operator(problem, 0.0, 1.0, 1.0)
-    mop = MOp(qop, problem.VtV, zeros(n), 1.0)
-    if problem.prior isa VarianceStablePrior
-        bop = make_qop_vs(problem, 0.0, 1.0, 1.0)
-        kop = ScaledMOp(bop, problem.VtV, ones(n), zeros(n), zeros(n), 1.0)
-        return VSHutchCache(
-            Vector{Float64}(diag(problem.VtV)),
-            zeros(n),
-            PCGWorkspace(n),
-            SLQWorkspace(n, solver.lanczos_iters),
-            SLQWorkspace(n, solver.lanczos_iters),
-            qop,
-            mop,
-            bop,
-            kop,
-        )
-    end
-    return HutchCache(
-        Vector{Float64}(diag(problem.VtV)),
-        zeros(n),
-        PCGWorkspace(n),
-        SLQWorkspace(n, solver.lanczos_iters),
-        SLQWorkspace(n, solver.lanczos_iters),
-        qop,
-        mop,
-    )
-end
-
-function hutch_logdet_difference!(
-    cache::HutchCache,
-    solver::HutchSLQ,
-    n::Int,
-    seed::Int,
-    ::NamedTuple,
-    ::Float64,
-)
-    ldQ = slq_logdet_spd_mul_cached!(cache.qop, n, cache.slqQ;
-        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed)
-    ldM = slq_logdet_spd_mul_cached!(cache.mop, n, cache.slqM;
-        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed + 10_000)
-    return ldM - ldQ
-end
-
-function hutch_logdet_difference!(
-    cache::VSHutchCache,
-    solver::HutchSLQ,
-    n::Int,
-    seed::Int,
-    p::NamedTuple,
+"""
+Compute the profiled β correction term and β̂ from mean-structure statistics.
+Returns `(correction, beta)` where `correction` is the scalar to subtract
+from the NLL and `beta` is the profiled-out coefficient vector.
+Returns `(0.0, nothing)` when there is no mean structure.
+"""
+function mean_profile_correction(
+    ms::MeanStats,
     lambda::Float64,
+    projected_y::Vector{Float64},
+    solve_M::Function,   # v -> M^{-1}v
 )
-    set_q_params!(cache.bop, p.rho, 1.0, 1.0)
-    cache.kop.lambda = lambda
-    cache.kop.VtV = cache.mop.VtV
-    nf = cache.bop.n_firms
-    @views fill!(cache.kop.scale[1:nf], p.sigma_a)
-    @views fill!(cache.kop.scale[(nf + 1):n], p.sigma_z)
-
-    # Resetting the local RNG to the same seed gives B and K identical
-    # Rademacher probes, substantially reducing variance in their difference.
-    ldB = slq_logdet_spd_mul_cached!(cache.bop, n, cache.slqB;
-        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed)
-    ldK = slq_logdet_spd_mul_cached!(cache.kop, n, cache.slqK;
-        m=solver.logdet_probes, k=solver.lanczos_iters, seed=seed)
-    return ldK - ldB
+    # M^{-1} V'y (reuse if already computed, but solve_M is cheap here)
+    Minv_Vy = solve_M(projected_y)
+    # M^{-1} V'X
+    Minv_VtX = similar(ms.VtX)
+    for j in 1:ms.p
+        Minv_VtX[:, j] = solve_M(ms.VtX[:, j])
+    end
+    # c = X'Ω^{-1}y = λX'y - λ²(V'X)'M^{-1}V'y
+    c = lambda .* ms.Xty .- lambda^2 .* (ms.VtX' * Minv_Vy)
+    # G = X'Ω^{-1}X = λX'X - λ²(V'X)'M^{-1}V'X
+    G = Symmetric(lambda .* ms.XtX .- lambda^2 .* (ms.VtX' * Minv_VtX))
+    G_chol = cholesky(G)
+    beta = G_chol \ c
+    correction = dot(c, beta)
+    return correction, beta
 end
 
-function set_q_params!(qop::QOp, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    qop.inv_sa2 = 1.0 / sigma_a^2
-    qop.inv_sz2 = 1.0 / sigma_z^2
-    qop.cross = rho / (sigma_a * sigma_z)
-    return qop
-end
-
-function set_q_params!(qop::QOpVS, rho::Float64, sigma_a::Float64, sigma_z::Float64)
-    qop.inv_sa2 = 1.0 / sigma_a^2
-    qop.inv_sz2 = 1.0 / sigma_z^2
-    qop.cross = rho / (sigma_a * sigma_z)
-    qop.rho_sq = rho^2
-    return qop
-end
-
-function nll_hutch_value(
-    problem::GMRFProblem,
-    solver::HutchSLQ,
-    params_full::Vector{Float64},
-    stats,
-    cache::Union{HutchCache,VSHutchCache};
-    seed::Int,
-)
-    p = unpack_params(params_full; rho_limit=rho_limit(problem.prior))
-    all(isfinite, (p.rho, p.sigma_a, p.sigma_z, p.sigma_epsilon)) || return BIG_NLL
-    p.sigma_a > 0 && p.sigma_z > 0 && p.sigma_epsilon > 0 || return BIG_NLL
-
-    lambda = 1.0 / p.sigma_epsilon^2
-    set_q_params!(cache.qop, p.rho, p.sigma_a, p.sigma_z)
-    cache.mop.lambda = lambda
-    cache.mop.VtV = stats.VtV
-    cache.dV .= Vector{Float64}(diag(stats.VtV))
-    Qdiag = q_diag(problem, p.rho, p.sigma_a, p.sigma_z)
-    @. cache.Mdiag = Qdiag + lambda * cache.dV
-
-    x, ok, _, _ = pcg_solve!(cache.pcg, cache.mop, stats.projected_y;
-        tol=solver.cg_tol, maxiter=solver.cg_maxiter, Mdiag=cache.Mdiag)
-    ok || return BIG_NLL
-    quad = dot(stats.projected_y, x)
-    isfinite(quad) || return BIG_NLL
-
-    n = length(stats.projected_y)
-    ld_difference = hutch_logdet_difference!(cache, solver, n, seed, p, lambda)
-    isfinite(ld_difference) || return BIG_NLL
-    rcorr = residual_corr_term(problem, p.sigma_epsilon, stats.rho_eps)
-    rcorr == BIG_NLL && return BIG_NLL
-    val = 0.5 * (
-        problem.K * 2.0 * log(p.sigma_epsilon) - Float64(stats.log_weight_sum) +
-        ld_difference + lambda * stats.ydot - lambda^2 * quad + rcorr
+function build_gmrf_result(fit, solver::AbstractGMRFSolver, fix_rho::Union{Nothing,Float64})
+    return GMRFResult(
+        fit.rho,
+        fit.sigma_a,
+        fit.sigma_z,
+        fit.sigma_epsilon,
+        fit.rho_eps,
+        fit.beta,
+        fit.nll,
+        fit.converged,
+        fit.iterations,
+        fit.obj_evals,
+        fit.optimization_time,
+        fit.model,
+        fit.stats,
+        solver,
+        fit.theta_unconstrained,
+        fit_result_metadata(fit.model, fit.rho, fix_rho),
     )
-    return finite_or_big(val)
 end
 
 function optimize_problem(
-    problem::GMRFProblem,
+    model::AbstractBipartiteModel,
+    stats::BipartiteGMRFStats,
     solver::AbstractGMRFSolver;
     fix_rho::Union{Nothing,Float64}=nothing,
     seed::Int=42,
     verbose::Bool=false,
 )
-    validate_capability(problem, solver)
-    limit = rho_limit(problem.prior)
+    validate_capability(model, stats, solver)
+    limit = rho_limit(model)
     if fix_rho !== nothing && !(abs(fix_rho) < limit)
         throw(ArgumentError("fix_rho must lie in (-$(limit), $(limit))."))
     end
 
-    estimate_rho_eps = problem.weighting.observations == :effective &&
-        problem.weighting.rho_eps == :estimate
+    estimate_rho_eps = stats.weighting.observations == :effective &&
+        stats.weighting.estimate_rho_eps
     p0 = initial_params(fix_rho, estimate_rho_eps; rho_limit=limit)
     evals = Ref(0)
-    cache = solver isa HutchSLQ ? make_hutch_cache(problem, solver) : nothing
+    cache = make_nll_cache(solver, model, stats)
 
     function obj(pfree)
         evals[] += 1
         pfull = full_params(Vector{Float64}(pfree), fix_rho, estimate_rho_eps; rho_limit=limit)
-        stats = objective_stats(problem, pfull)
-        if solver isa ExactCholesky
-            return nll_exact_value(problem, pfull, stats)
-        else
-            return nll_hutch_value(problem, solver, pfull, stats, cache; seed=seed)
-        end
+        obs = objective_stats(model, stats, pfull)
+        return nll_value(solver, model, stats, pfull, obs, cache; seed=seed)
     end
 
-    iterations = solver.optim_iters
-    # NelderMead's convergence metric is the absolute spread of objective values,
-    # which grows with the problem size (nll scales with the number of
-    # observations), so a fixed absolute tolerance is unreachable on large graphs
-    # (see #80, #84). Scale it by the objective magnitude at the start point.
-    # HutchSLQ uses the pure relative tolerance; ExactCholesky keeps a 1e-3 floor
-    # (its calibrated small-problem behaviour, against which the solver-agreement
-    # tests are tuned) and only loosens above it on large problems.
     f0 = obj(p0)
     fscale = (isfinite(f0) && f0 < BIG_NLL) ? max(1.0, abs(f0)) : 1.0
-    g_rel = solver.g_reltol * fscale
-    g_abstol = solver isa ExactCholesky ? max(1e-3, g_rel) : g_rel
-    opts = Options(iterations=iterations, show_trace=verbose, g_tol=g_abstol)
+    g_abstol = nelder_g_abstol(solver, solver.g_reltol * fscale)
+    opts = Options(iterations=solver.optim_iters, show_trace=verbose, g_tol=g_abstol)
     elapsed = @elapsed res = optimize(obj, p0, NelderMead(), opts)
-    if solver isa ExactCholesky && solver.polish && solver.autodiff == :finitediff
-        p_start = Vector{Float64}(minimizer(res))
-        function fg!(F, G, x)
-            if G !== nothing
-                finite_difference_gradient!(G, obj, x)
-            end
-            return F === nothing ? nothing : obj(x)
-        end
-        # Stop the polish when the objective stops improving (relative change <
-        # g_reltol), not only on the default g_abstol=1e-8: the finite-difference
-        # gradient floors well above 1e-8 on large problems, so g_abstol is
-        # unreachable and LBFGS would otherwise grind to the iteration cap (#86).
-        polish_opts = Options(iterations=solver.optim_iters, show_trace=verbose,
-                              f_reltol=solver.g_reltol)
-        polish_elapsed = @elapsed begin
-            polished = try
-                optimize(only_fg!(fg!), p_start, LBFGS(), polish_opts)
-            catch
-                nothing
-            end
-            if polished !== nothing && optim_minimum(polished) <= optim_minimum(res)
-                res = polished
-            end
-        end
-        elapsed += polish_elapsed
-    end
+    res, polish_elapsed = polish(solver, obj, res, verbose)
+    elapsed += polish_elapsed
+
     pfree = Vector{Float64}(minimizer(res))
     pfull = full_params(pfree, fix_rho, estimate_rho_eps; rho_limit=limit)
-    stats = objective_stats(problem, pfull)
-    final_problem = estimate_rho_eps ? with_observation_stats(problem, stats, stats.rho_eps) : problem
+    obs = objective_stats(model, stats, pfull)
+    final_stats = estimate_rho_eps ?
+        replace_stats(stats;
+            design=obs.design, weights=obs.weights, rho_eps_likelihood=obs.rho_eps) :
+        stats
     val = obj(pfree)
     decoded = unpack_params(pfull; rho_limit=limit)
-    rho_eps = estimate_rho_eps ? stats.rho_eps : problem.rho_eps_likelihood
+    rho_eps = estimate_rho_eps ? obs.rho_eps : stats.rho_eps_likelihood
+
+    # Compute profiled beta at final parameters
+    beta_original = if final_stats.mean_stats !== nothing
+        lambda_final = 1.0 / decoded.sigma_epsilon^2
+        Q_final = model_precision(model, decoded.rho, decoded.sigma_a, decoded.sigma_z)
+        M_final = Q_final + lambda_final .* obs.design.VtV
+        ws_M = GaussianMarkovRandomFields.GMRFWorkspace(M_final)
+        GaussianMarkovRandomFields.ensure_numeric!(ws_M)
+        solve_M = v -> GaussianMarkovRandomFields.workspace_solve(ws_M, v)
+        _, beta_std = mean_profile_correction(final_stats.mean_stats, lambda_final,
+            obs.design.projected_y, solve_M)
+        beta_std .* final_stats.y_std
+    else
+        nothing
+    end
+
     return (
         rho = decoded.rho,
-        sigma_a = decoded.sigma_a * final_problem.y_std,
-        sigma_z = decoded.sigma_z * final_problem.y_std,
-        sigma_epsilon = decoded.sigma_epsilon * final_problem.y_std,
+        sigma_a = decoded.sigma_a * final_stats.y_std,
+        sigma_z = decoded.sigma_z * final_stats.y_std,
+        sigma_epsilon = decoded.sigma_epsilon * final_stats.y_std,
         rho_eps = rho_eps,
+        beta = beta_original,
         nll = val,
-        converged = optim_converged(res),
+        converged = converged(res),
         iterations = optim_iterations(res),
         obj_evals = evals[],
         optimization_time = elapsed,
         theta_unconstrained = pfull,
-        problem = final_problem,
+        model = model,
+        stats = final_stats,
     )
+end
+
+"""
+    solve(model::AbstractBipartiteModel, stats::BipartiteGMRFStats, solver::AbstractGMRFSolver;
+          fix_rho=nothing, seed=42, verbose=false)
+
+Fit a bipartite GMRF by maximum likelihood with the given solver. Extends
+`CommonSolve.solve`, so it composes with `using LinearSolve` or other
+SciML-style packages without name clashes. [`fit_mle`](@ref) is the
+higher-level entry point and delegates here.
+
+`fix_rho` fixes the local-dependence parameter during optimization. Use
+[`decompose`](@ref) on the returned result for variance decompositions.
+"""
+function solve(
+    model::AbstractBipartiteModel,
+    stats::BipartiteGMRFStats,
+    solver::AbstractGMRFSolver;
+    fix_rho::Union{Nothing,Float64}=nothing,
+    seed::Int=42,
+    verbose::Bool=false,
+)
+    fit = optimize_problem(model, stats, solver; fix_rho=fix_rho, seed=seed, verbose=verbose)
+    return build_gmrf_result(fit, solver, fix_rho)
 end

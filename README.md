@@ -7,11 +7,16 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Julia tools for fitting bipartite-graph Gaussian Markov random-field
-random-effects models. The library places a joint Gaussian prior on two sets
+random-effects models. The library places a joint Gaussian model on two sets
 of latent node effects on a bipartite graph &mdash; firm and worker effects
 in the canonical labor-economics application, but applicable to any matched
-bipartite structure &mdash; and exposes prior and posterior variance
-decompositions plus covariance-block extraction over the latent field.
+bipartite structure &mdash; and exposes model and fitted variance
+decompositions, covariance-block extraction, and simulation over the latent
+field.
+
+Built on [GaussianMarkovRandomFields.jl](https://github.com/timweiland/GaussianMarkovRandomFields.jl):
+the bipartite model types implement the `LatentModel` interface, giving you
+`rand`, `var`, `logpdf`, workspace reuse, and selected inversion for free.
 
 The parameter $\rho$ governs the *local conditional dependence* between
 adjacent nodes in the graph and admits an interpretation as local,
@@ -39,10 +44,12 @@ a bipartite pairing). For each observed spell $k$, the outcome $y_{im}$ is
 modeled as
 
 $$
-y_{im} = a_i + z_m + \varepsilon_{im},
+y_{im} = \mathbf{x}_{im}'\boldsymbol{\beta} + a_i + z_m + \varepsilon_{im},
 $$
 
-with $a_i$ and $z_m$ jointly Gaussian on the bipartite graph and
+where $\mathbf{x}_{im}$ are observation-level covariates whose coefficients
+$\boldsymbol{\beta}$ are profiled out of the likelihood in closed form,
+$a_i$ and $z_m$ are jointly Gaussian on the bipartite graph and
 parametrized by $(\rho, \sigma_a, \sigma_z, \sigma_\varepsilon)$. Stacking
 the latent effects as
 
@@ -50,10 +57,10 @@ $$
 \mathbf{x} = (a_1, \ldots, a_{N_f}, z_1, \ldots, z_{N_m})^\top,
 $$
 
-the prior precision matrix is
+the precision matrix is
 
 $$
-\mathbf{Q} = \mathbf{S}^{-1}\\left(\mathbf{D} - \rho\mathbf{A}\right)\mathbf{S}^{-1},
+\mathbf{Q} = \mathbf{S}^{-1}\left(\mathbf{D} - \rho\mathbf{A}\right)\mathbf{S}^{-1},
 $$
 
 where $\mathbf{A}$ is the bipartite adjacency matrix, $\mathbf{D}$ is the
@@ -81,7 +88,7 @@ parameters has three practical consequences:
 Applied to the universe of Hungarian CEO&ndash;firm spells, 1990&ndash;2018
 ($N_f = 530{,}213$, $N_m = 617{,}613$, $K = 1{,}131{,}996$), the baseline
 local-dependence estimate is $\hat{\rho} = 0.706$ &mdash; strong positive
-local sorting in the GMRF prior, not an AKM/KSS-style sorting correlation.
+local sorting in the GMRF, not an AKM/KSS-style sorting correlation.
 For comparison, the corresponding two-way fixed-effects estimate on the same
 sample is $-0.64$; the leave-one-out (Kline&ndash;Saggio&ndash;S&oslash;lvsten)
 bias correction reduces the magnitude to $-0.39$ but does not resolve the
@@ -102,65 +109,170 @@ Pkg.develop(path = ".")
 Pkg.test("BipartiteGMRF")
 ```
 
-The library requires Julia 1.10 or newer and depends on `DataFrames`, `Optim`,
-and `FiniteDiff`. It deliberately does not read or write Parquet, CSV, JSON,
-or `estimates.txt` files &mdash; pass it a `DataFrame`, receive typed results.
+The library requires Julia 1.10 or newer and depends on
+`GaussianMarkovRandomFields`, `Distributions`, `Optim`, `LinearSolve`, and
+`FiniteDiff`. It is an estimator, not a data manipulator: it does not read or
+write files and does not know about tables or column names &mdash; pass it
+integer-indexed observation vectors, receive typed results.
 
 ## Quick Start
 
-```julia
-using BipartiteGMRF, DataFrames
+### Estimation
 
-result = gmrf_mle(
-    df;
-    outcome    = :y,
-    firm_id    = :firm_id,
-    worker_id  = :worker_id,
-    prior      = NormalizedPrior(),
-    solver     = ExactCholesky(),
-    decompose  = 200,
-    seed       = 42,
+The package extends the [Distributions.jl](https://juliastats.org/Distributions.jl/stable/fit/)
+`suffstats` / `fit_mle` generic functions (so `using Distributions,
+BipartiteGMRF` involves no name clashes). Data enters as three parallel
+vectors: 1-based firm index, 1-based worker index, and outcome, one entry per
+observed spell. Non-finite values in `y` (NaN) mark *graph-only* edges that
+enter the prior graph but not the likelihood. Mapping entity identifiers to
+dense indices is the caller's job:
+
+```julia
+using BipartiteGMRF
+
+f = [1, 1, 2, 2, 3, 3]      # firm index per observation
+w = [1, 2, 2, 3, 3, 4]      # worker index per observation
+y = [1.2, 0.7, 0.9, 1.5, 1.1, 0.4]
+
+# One-step
+result = fit_mle(BipartiteNormalizedModel, f, w, y;
+    solver = ExactCholesky(),
+    seed   = 42,
 )
 
-result.rho           # local dependence parameter; local sorting, not AKM/KSS sorting
+result.rho           # local dependence parameter
 result.sigma_a       # firm effect SD
 result.sigma_z       # worker effect SD
-result.sigma_epsilon # match-specific noise SD
-
-posterior = posterior_decomposition(result; probes = 200, seed = 42)
-block     = cov_block(prior_covariance(result); firms = [1, 2], workers = [10, 11])
+result.sigma_epsilon # residual SD
 ```
 
-`gmrf_mle` returns a `GMRFResult` containing point estimates, the `GMRFProblem`
-the result was fit against, optimization diagnostics, and (optionally) prior
-and posterior decompositions. Accessors `coef`, `nll`, `converged`, and
-`prior_decomposition` are also exported.
+#### Mean structure
 
-## Priors and Solvers
+Pass a design matrix `X` (one row per observation) to profile out a
+linear mean $\mathbf{X}\boldsymbol{\beta}$. At each optimizer iteration
+$\hat{\boldsymbol{\beta}}(\theta)$ is computed in closed form from $p$
+extra solves against the same factorization &mdash; negligible cost:
 
-The library separates the **prior precision model** (the shape of
-$\mathbf{Q}$) from the **numerical solver** (how the likelihood is evaluated
-and optimized).
+```julia
+# Degree-dependent mean: y = β₀ + β_f·d_f + β_m·d_m + a + z + ε
+X = hcat(ones(length(f)), Float64.(f), Float64.(w))  # K × 3
 
-Prior models:
+result = fit_mle(BipartiteNormalizedModel, f, w, y;
+    X      = X,
+    solver = ExactCholesky(),
+)
 
-- `NormalizedPrior()` &mdash; degree-normalized Laplacian (default).
-- `UnnormalizedPrior()` &mdash; the $\mathbf{D} - \rho\mathbf{A}$ precision
-  used in the paper.
-- `SpectralPrior()` &mdash; spectral normalization by $\sigma_1(\mathbf{A})$.
-- `VarianceStablePrior()` &mdash; variance-stable $\mathbf{Q}$ with diagonal
-  $[1 + \rho^2 (d_i - 1)] / \sigma_i^2$, intended for spanning-tree
-  subgraphs where it gives degree-independent marginal variances.
+result.beta          # profiled-out [β₀, β_f, β_m]
+```
 
-Solvers:
+Or separate sufficient-statistics computation from estimation:
 
-- `ExactCholesky()` &mdash; deterministic sparse CHOLMOD factorization, with
-  finite-difference gradients fed to L-BFGS / Nelder-Mead.
+```julia
+# Precompute sufficient statistics (reusable across model types)
+ss = suffstats(BipartiteNormalizedModel, f, w, y)
+
+# Fit
+result = fit_mle(BipartiteNormalizedModel, ss; solver = ExactCholesky())
+```
+
+`GMRFResult` implements `StatsAPI.StatisticalModel`:
+
+```julia
+using StatsAPI
+
+coef(result)          # [rho, sigma_a, sigma_z, sigma_epsilon]  (+ rho_eps, beta... if used)
+coefnames(result)     # ["rho", "sigma_a", "sigma_z", "sigma_epsilon", ...]
+params(result)        # (rho=..., sigma_a=..., sigma_z=..., sigma_epsilon=..., rho_eps=..., beta=...)
+loglikelihood(result) # original-units log-likelihood (constants included)
+nobs(result)
+dof(result)           # number of *estimated* parameters
+aic(result)
+bic(result)
+```
+
+### Variance Decomposition
+
+```julia
+model_vd  = decompose(result; kind = :model,  probes = 200)
+fitted_vd = decompose(result; kind = :fitted, probes = 200)
+```
+
+`kind = :model` decomposes variance using the GMRF's precision structure
+alone. `kind = :fitted` includes fitted effects (mode + trace correction).
+
+### Covariance Extraction
+
+```julia
+op    = covariance(result; kind = :model, units = :original)
+block = cov_block(op; firms = [1, 2], workers = [1, 2])  # node indices
+```
+
+### Simulation
+
+```julia
+using Random
+
+# Simulate from index vectors (same format as estimation input)
+model = BipartiteNormalizedModel(sparse([1,1,2,2,3], [1,2,2,3,3],
+                                       ones(5), 3, 3))
+
+sim = simulate(model, f, w; ρ = 0.5, σ_a = 1.0, σ_z = 0.8, σ_ε = 0.3,
+               rng = Xoshiro(42))
+sim.y               # outcome vector
+sim.firm_effects    # sampled α
+sim.worker_effects  # sampled z
+
+# With a mean structure: y = Xβ + a + z + ε
+X = hcat(ones(length(f)), Float64.(f))
+sim = simulate(model, f, w; ρ = 0.5, σ_a = 1.0, σ_z = 0.8, σ_ε = 0.3,
+               X = X, β = [1.0, 0.5], rng = Xoshiro(42))
+```
+
+An adjacency-matrix overload `simulate(model, A; ...)` is also available.
+
+### Direct GMRF Access
+
+The model types implement `GaussianMarkovRandomFields.LatentModel`, so you
+get the full GMRF.jl interface:
+
+```julia
+using GaussianMarkovRandomFields: var, logpdf
+
+gmrf = model(; ρ = 0.5, σ_a = 1.0, σ_z = 0.8)
+x = rand(gmrf)        # sparse Cholesky sampling
+v = var(gmrf)          # marginal variances via selected inversion
+l = logpdf(gmrf, x)    # log-density
+```
+
+## Models and Solvers
+
+The library separates the **model type** (the shape of $\mathbf{Q}$) from
+the **numerical solver** (how the likelihood is evaluated and optimized).
+
+Model types (`AbstractBipartiteModel <: LatentModel` subtypes):
+
+- `BipartiteNormalizedModel` &mdash; degree-normalized Laplacian (default).
+- `BipartiteUnnormalizedModel` &mdash; the $\mathbf{D} - \rho\mathbf{A}$
+  precision used in the paper.
+- `BipartiteSpectralModel` &mdash; spectral normalization by
+  $\sigma_1(\mathbf{A})$.
+- `BipartiteVarianceStableModel` &mdash; variance-stable $\mathbf{Q}$ with
+  marginal-SD parametrization: $\sigma_a$ and $\sigma_z$ are the marginal
+  standard deviations on a forest, so $\text{Cov}(a_i, a_j) = \sigma_a^2
+  \rho^{d(i,j)}$ without a $1/(1-\rho^2)$ correction factor. The precision
+  is $\mathbf{Q} = \frac{1}{1-\rho^2}\,\mathbf{S}^{-1}[(1-\rho^2)\mathbf{I}
+  + \rho^2\mathbf{D} - \rho\mathbf{A}]\,\mathbf{S}^{-1}$.
+
+Solvers (`AbstractGMRFSolver` subtypes):
+
+- `ExactCholesky()` &mdash; deterministic sparse CHOLMOD factorization with
+  symbolic reuse via `GMRFWorkspace`; gradient-free Nelder-Mead search
+  followed by an optional finite-difference L-BFGS polish.
 - `HutchSLQ()` &mdash; Hutchinson trace estimator plus stochastic Lanczos
   quadrature for the log-determinant, preconditioned conjugate gradient for
   the quadratic form, and Nelder-Mead for optimization.
 
-Unsupported prior/solver combinations throw `ArgumentError` before fitting.
+Unsupported model/solver combinations throw `ArgumentError` before fitting.
 
 ## Observation Weighting
 
@@ -180,33 +292,60 @@ estimated jointly).
 
 Decomposition targets are `:estimation`, `:personyear`, and `:edge`.
 
-## Covariance Extraction
+## Graph-Only Edges and Match Grouping
+
+### Graph-only edges
+
+An edge whose outcome is unknown can stay in the graph (affecting the
+precision matrix `Q` and node degrees) without contributing to the
+likelihood. Pass `NaN` as the outcome:
 
 ```julia
-prior_op = prior_covariance(result; units = :original)
-post_op  = posterior_covariance(result; units = :original)
+f = [1, 1, 2, 2, 3]
+w = [1, 2, 2, 3, 1]
+y = [1.2, 0.7, 0.9, 1.5, NaN]   # edge (3,1) is graph-only
 
-firm_worker = cov_block(prior_op; row_firms = [1, 2], col_workers = [10, 11])
-principal   = cov_block(post_op;  firms = [1, 2],     workers = [10, 11])
+result = fit_mle(BipartiteNormalizedModel, f, w, y; solver = ExactCholesky())
 ```
 
-`CovarianceOperator` owns the relevant sparse factorization. `CovarianceBlock`
-stores the numeric matrix together with the row and column entity IDs and a
-record of whether values are in standardized or original units.
+### Match-grouped observations
+
+When multiple edges share a single outcome (e.g. a firm managed by two
+CEOs simultaneously), pass a `match_id` vector. Edges with the same
+match id form one observation whose design row averages `1/F_s` over
+firms and `1/M_s` over workers:
+
+```julia
+f   = [1, 2, 1]        # match 1 has firms {1,2}; match 2 has firm {1}
+w   = [1, 1, 2]        # match 1 has worker {1};  match 2 has worker {2}
+y   = [1.0, 1.0, 0.5]  # same outcome within a match (enforced)
+mid = [1, 1, 2]
+
+result = fit_mle(BipartiteNormalizedModel, f, w, y;
+    match_id = mid, solver = ExactCholesky())
+```
+
+Outcomes must be identical within a match; disagreement raises
+`ArgumentError`. Currently requires `Weighting(observations = :raw)`.
 
 ## Repository Layout
 
 ```
 src/
 ├── BipartiteGMRF.jl       # module entry point
-├── types.jl
-├── prepare.jl, util.jl
-├── operators/             # Q-operators per prior model
+├── types.jl               # LatentModel subtypes, BipartiteGraph, stats structs, GMRFResult
+├── stats.jl               # suffstats(): arrays → BipartiteGMRFStats
+├── fit.jl                 # fit_mle(): type-based and model-based entry points
+├── prepare.jl             # edge collapse, V'V construction, weighting helpers
+├── util.jl                # replace_stats, scaled_params, shared helpers
+├── operators/             # QOp/QOpVS per model type
 ├── linalg/                # PCG, SLQ
-├── solvers/               # exact and Hutch/SLQ likelihood
-├── decomposition/         # prior, posterior
+├── solvers/               # shared optimize loop + ExactCholesky / HutchSLQ methods
+├── decomposition/         # model.jl, fitted.jl
+├── nonbacktracking/       # NB spectrum, feasibility
 ├── covariance/            # operator, block extraction
-└── api.jl                 # gmrf_mle, solve, accessors
+├── simulate.jl            # Monte Carlo simulation
+└── api.jl                 # decompose, covariance, StatsAPI methods
 ```
 
 Project-specific data preparation, estimation, and post-estimation scripts
@@ -276,19 +415,20 @@ and the underlying paper.
 
 ## Related Packages
 
+- [`GaussianMarkovRandomFields.jl`](https://github.com/timweiland/GaussianMarkovRandomFields.jl)
+  &mdash; the GMRF framework this package builds on. Provides `LatentModel`,
+  workspace reuse, selected inversion, and AD support.
 - [`VarianceComponentsHDFE.jl`](https://github.com/HighDimensionalEconLab/VarianceComponentsHDFE.jl)
   &mdash; fixed-effects AKM with leave-one-out (Kline&ndash;Saggio&ndash;S&oslash;lvsten)
   bias correction. Complementary point of comparison; see Section 4 of the
   paper.
 - [`Optim.jl`](https://github.com/JuliaNLSolvers/Optim.jl) &mdash; underlying
   optimizer.
-- [`Graphs.jl`](https://github.com/JuliaGraphs/Graphs.jl) &mdash; bipartite
-  graph utilities, used by the legacy preparation pipeline.
 
 ## Contributing
 
 Issues and pull requests are welcome. For substantive changes, please open an
-issue first to discuss scope. New prior models, solver back-ends, and
+issue first to discuss scope. New model specifications, solver back-ends, and
 observation-weighting schemes are particularly welcome contributions; please
 include tests against a dense reference on small synthetic networks.
 

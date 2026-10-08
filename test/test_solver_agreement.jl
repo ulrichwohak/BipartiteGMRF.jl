@@ -1,19 +1,18 @@
 @testset "solver agreement" begin
     @testset "fixed rho" begin
-        df = repeated_df()
+        rep = repeated_data()
         weighting = Weighting(observations=:edge)
         fixed_rho = 0.25
 
-        exact = gmrf_mle(
-            df;
+        exact = fit_mle(
+            BipartiteNormalizedModel, rep.f, rep.w, rep.y;
             solver=ExactCholesky(optim_iters=80, polish=true),
             weighting=weighting,
             fix_rho=fixed_rho,
-            decompose=false,
             seed=11,
         )
-        hutch = gmrf_mle(
-            df;
+        hutch = fit_mle(
+            BipartiteNormalizedModel, rep.f, rep.w, rep.y;
             solver=HutchSLQ(
                 logdet_probes=300,
                 lanczos_iters=8,
@@ -23,7 +22,6 @@
             ),
             weighting=weighting,
             fix_rho=fixed_rho,
-            decompose=false,
             seed=11,
         )
 
@@ -42,7 +40,7 @@
         # free-rho optimum with nonzero sigma_a on a panel small enough for CI.
         # The distinct truth tuple keeps this separate from recovery debt.
         truth = (rho=0.35, sigma_a=0.8, sigma_z=0.6, sigma_epsilon=0.25)
-        df, _ = simulate_gmrf_panel(
+        data, _ = simulate_gmrf_panel(
             52;
             n_firms=150,
             n_workers=150,
@@ -50,15 +48,17 @@
             reps=4,
             truth=truth,
         )
-        problem = GMRFProblem(df; standardize=false)
+        ss = suffstats(BipartiteNormalizedModel, data.f, data.w, data.y; standardize=false)
+        model = BipartiteNormalizedModel(ss.A_prior; rho_limit=0.99)
         exact = solve(
-            problem,
+            model,
+            ss,
             ExactCholesky(optim_iters=160, polish=true);
-            decompose=false,
             seed=52,
         )
         hutch = solve(
-            problem,
+            model,
+            ss,
             HutchSLQ(
                 # Finite probes trade stochastic precision for CI runtime.
                 logdet_probes=400,
@@ -67,7 +67,6 @@
                 cg_maxiter=300,
                 optim_iters=220,
             );
-            decompose=false,
             seed=52,
         )
 

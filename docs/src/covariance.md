@@ -1,14 +1,19 @@
 # Covariance
 
-Covariance extraction factors the fitted prior or posterior precision matrix
-and extracts requested entity blocks by batched solves.
+Covariance extraction factors the fitted model or data-augmented precision
+matrix and extracts requested entity blocks by batched solves.
 
-- `prior_covariance(result; units=:original)`: factor fitted prior precision.
-- `posterior_covariance(result; units=:original)`: factor fitted posterior
-  precision.
+- `covariance(result; kind=:model, units=:original)`: factor the fitted
+  model precision `Q`.
+- `covariance(result; kind=:fitted, units=:original)`: factor the
+  data-augmented precision `Q + λV'V`.
 - `cov_block(op; ..., batch_size=16)`: extract principal or rectangular blocks
-  by firm and worker IDs.
+  by firm and worker node indices (the same 1-based indices passed to
+  `suffstats`).
 - `CovarianceOperator`: cached factorization and metadata for extraction.
+
+`units=:original` reports covariances in original outcome units;
+`units=:scaled` reports them in internal standardized units.
 
 ## Batch Size And Memory
 
@@ -23,9 +28,9 @@ limits.
 Examples:
 
 ```julia
-prior_op = prior_covariance(result; units=:original)
-post_op = posterior_covariance(result; units=:scaled)
+model_op = covariance(result; kind=:model, units=:original)
+fitted_op = covariance(result; kind=:fitted, units=:scaled)
 
-principal = cov_block(prior_op; firms=[1, 2], workers=[10, 11])
-rect = cov_block(post_op; row_firms=[1], col_workers=[10, 11])
+principal = cov_block(model_op; firms=[1, 2], workers=[1, 2])
+rect = cov_block(fitted_op; row_firms=[1], col_workers=[1, 2])
 ```

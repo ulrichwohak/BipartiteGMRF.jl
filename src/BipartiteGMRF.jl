@@ -1,60 +1,87 @@
 module BipartiteGMRF
 
 using ArnoldiMethod: partialeigen, partialschur
-using DataFrames: DataFrame, combine, groupby, nrow
+import CommonSolve: solve
+import Distributions: SufficientStats, fit_mle, params, suffstats
 using FiniteDiff: finite_difference_gradient!
+import GaussianMarkovRandomFields
+import GaussianMarkovRandomFields: LatentModel, precision_matrix, model_name, hyperparameters, constraints
 using LinearAlgebra: Symmetric, SymTridiagonal, cholesky, diag, dot, eigen, logdet, mul!, norm
+using LinearSolve: CHOLMODFactorization
 import Optim:
     LBFGS,
     NelderMead,
     Options,
-    converged as optim_converged,
+    converged,
     iterations as optim_iterations,
     minimum as optim_minimum,
     minimizer,
     only_fg!,
     optimize
 using Printf: @sprintf
-using Random: MersenneTwister, rand, randn
+import Random
+using Random: AbstractRNG, MersenneTwister, rand, randn
 using SparseArrays: SparseMatrixCSC, findnz, nnz, sparse, spdiagm, spzeros
-import StatsAPI: coef, loglikelihood, nobs
+import StatsAPI: StatisticalModel, aic, bic, coef, coefnames, dof, isfitted, islinear, loglikelihood, nobs
 using Statistics: mean, std
 
-export AbstractGMRFPrior,
-    AbstractGMRFSolver,
-    NormalizedPrior,
-    UnnormalizedPrior,
-    SpectralPrior,
-    VarianceStablePrior,
-    Weighting,
-    GMRFProblem,
+# Model types (LatentModel subtypes)
+export AbstractBipartiteModel,
+    BipartiteNormalizedModel,
+    BipartiteUnnormalizedModel,
+    BipartiteSpectralModel,
+    BipartiteVarianceStableModel,
+    BipartiteGraph,
+    Weighting
+
+# Solver types
+export AbstractGMRFSolver,
     HutchSLQ,
-    ExactCholesky,
-    GMRFResult,
+    ExactCholesky
+
+# Sufficient statistics (extends the Distributions.jl fit_mle/suffstats API)
+export SufficientStats,
+    BipartiteGMRFStats,
+    suffstats,
+    fit_mle
+
+# Data and result types
+export GMRFResult,
     VarianceDecomposition,
     CovarianceOperator,
-    CovarianceBlock,
-    NBSpectrum,
+    CovarianceBlock
+
+# Non-backtracking spectrum
+export NBSpectrum,
     nb_spectrum,
     feasibility,
-    rho_at_bound,
-    gmrf_mle,
-    solve,
+    rho_at_bound
+
+# Public API
+export solve,
+    decompose,
+    covariance,
+    cov_block,
+    simulate,
     coef,
+    coefnames,
+    params,
+    dof,
     loglikelihood,
     nobs,
+    aic,
+    bic,
+    isfitted,
+    islinear,
     nll,
-    converged,
-    prior_decomposition,
-    posterior_decomposition,
-    prior_covariance,
-    posterior_covariance,
-    cov_block
+    converged
 
-include("types.jl")
 include("util.jl")
+# graph.jl/spectrum.jl come before types.jl: BipartiteVarianceStableModel
+# stores an NBSpectrum field.
 include("nonbacktracking/graph.jl")
 include("nonbacktracking/spectrum.jl")
+include("types.jl")
 include("nonbacktracking/feasibility.jl")
 include("prepare.jl")
 include("operators/qop.jl")
@@ -65,10 +92,13 @@ include("linalg/slq.jl")
 include("solvers/common.jl")
 include("solvers/exact.jl")
 include("solvers/hutch.jl")
-include("decomposition/prior.jl")
-include("decomposition/posterior.jl")
+include("decomposition/model.jl")
+include("decomposition/fitted.jl")
 include("covariance/operator.jl")
 include("covariance/extract.jl")
+include("stats.jl")
+include("simulate.jl")
 include("api.jl")
+include("fit.jl")
 
 end

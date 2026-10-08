@@ -8,68 +8,24 @@ function nb_recommended_limit(lambda_nb::Float64)
     return min(0.99, 0.98 / lambda_nb)
 end
 
-function prepare_vs_feasibility(
-    prior::VarianceStablePrior,
-    A_prior::SparseMatrixCSC{Float64,Int},
-)
-    if prior.rho_limit isa Float64
-        return (
-            prior=prior,
-            metadata=(
-                nb_spectrum=nothing,
-                rho_limit_source=:explicit,
-                rho_ceiling=nothing,
-                resolved_rho_limit=prior.rho_limit,
-            ),
-        )
-    end
-
-    spectrum = nb_spectrum(A_prior)
-    spectrum.converged || throw(ArgumentError(
-        "Automatic VS feasibility could not be resolved because the non-backtracking eigensolver did not converge.",
-    ))
-    ceiling = nb_rho_ceiling(spectrum.lambda_nb)
-    limit = nb_recommended_limit(spectrum.lambda_nb)
-    resolved_prior = VarianceStablePrior(
-        strict_forest=prior.strict_forest,
-        rho_limit=limit,
-    )
-    @info @sprintf(
-        "VS feasibility resolved: lambda_NB=%.4f, rho_ceiling=%.4f, rho_limit=%.4f, source=auto",
-        spectrum.lambda_nb,
-        ceiling,
-        limit,
-    )
-    return (
-        prior=resolved_prior,
-        metadata=(
-            nb_spectrum=spectrum,
-            rho_limit_source=:auto,
-            rho_ceiling=ceiling,
-            resolved_rho_limit=limit,
-        ),
-    )
-end
 
 """
-    feasibility(problem; seed=12345, kwargs...)
+    feasibility(model::BipartiteVarianceStableModel; seed=12345, kwargs...)
 
-Report variance-stable feasibility for a prepared problem. The result contains
-the non-backtracking radius, the model-theoretic `rho_ceiling`, the active
-numeric `rho_limit`, the recommended guarded limit, its source, and whether the
-active limit is below the ceiling.
+Report variance-stable feasibility for a model. The result contains the
+non-backtracking spectrum and radius, the model-theoretic `rho_ceiling`, the
+active numeric `rho_limit`, the recommended guarded limit, its source, and
+whether the active limit is below the ceiling.
 
-Automatic problems reuse their preparation-time spectrum. Explicit numeric
-limits are audited without being changed; an unsafe explicit limit emits a
-warning and remains active for estimation.
+A model constructed with `rho_limit=:auto` reuses its construction-time
+spectrum. Explicit numeric limits are audited without being changed; an
+unsafe explicit limit emits a warning and remains active for estimation.
 """
-function feasibility(problem::GMRFProblem; seed::Int=12345, kwargs...)
-    problem.prior isa VarianceStablePrior ||
-        throw(ArgumentError("feasibility is defined only for VarianceStablePrior problems."))
-    cached = get(problem.metadata, :nb_spectrum, nothing)
-    spectrum = cached isa NBSpectrum ? cached : nb_spectrum(problem; seed=seed, kwargs...)
-    source = get(problem.metadata, :rho_limit_source, :explicit)
-    limit = rho_limit(problem.prior)
+function feasibility(model::BipartiteVarianceStableModel; seed::Int=12345, kwargs...)
+    spectrum = model.spectrum === nothing ?
+        nb_spectrum(model.graph.A; seed=seed, kwargs...) : model.spectrum
+    source = model.rho_limit_source
+    limit = rho_limit(model)
     ceiling = spectrum.converged ? nb_rho_ceiling(spectrum.lambda_nb) : NaN
     recommended = spectrum.converged ? nb_recommended_limit(spectrum.lambda_nb) : NaN
     safe = spectrum.converged && limit < ceiling
@@ -95,6 +51,9 @@ function feasibility(problem::GMRFProblem; seed::Int=12345, kwargs...)
     )
 end
 
+feasibility(model::AbstractBipartiteModel; kwargs...) =
+    throw(ArgumentError("feasibility is defined only for BipartiteVarianceStableModel."))
+
 """
     rho_at_bound(result)
 
@@ -103,21 +62,21 @@ of its active optimization limit. Fixed-rho and non-variance-stable fits return
 `false`.
 """
 function rho_at_bound(result::GMRFResult)
-    result.prior isa VarianceStablePrior || return false
+    result.model isa BipartiteVarianceStableModel || return false
     fixed = get(result.metadata, :fix_rho, nothing)
     fixed === nothing || return false
-    return abs(result.rho) / rho_limit(result.prior) >= 0.98
+    return abs(result.rho) / rho_limit(result.model) >= 0.98
 end
 
 function fit_result_metadata(
-    problem::GMRFProblem,
+    model::AbstractBipartiteModel,
     rho::Float64,
     fix_rho::Union{Nothing,Float64},
 )
     base = (fix_rho=fix_rho,)
-    problem.prior isa VarianceStablePrior || return base
+    model isa BipartiteVarianceStableModel || return base
 
-    limit = rho_limit(problem.prior)
+    limit = rho_limit(model)
     utilization = abs(rho) / limit
     at_bound = fix_rho === nothing && utilization >= 0.98
     status = fix_rho !== nothing ? :fixed : at_bound ? :bound_censored : :interior

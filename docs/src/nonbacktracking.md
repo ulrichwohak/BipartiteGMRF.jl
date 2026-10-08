@@ -1,11 +1,11 @@
 # Non-Backtracking Diagnostics
 
-`nb_spectrum(problem)` computes the non-backtracking radius and localization
-diagnostics of the binary prior graph. It can also operate directly on the
-rectangular sparse matrix `problem.A_prior`.
+`nb_spectrum(A_prior)` computes the non-backtracking radius and localization
+diagnostics of the binary prior graph from a rectangular sparse adjacency
+matrix (for a computed sufficient-statistics object, pass `ss.A_prior`).
 
 ```julia
-spectrum = nb_spectrum(problem; seed=12345)
+spectrum = nb_spectrum(ss.A_prior; seed=12345)
 spectrum.lambda_nb
 spectrum.in_two_core
 spectrum.node_scores
@@ -24,6 +24,9 @@ Large core components use Arnoldi iteration with a local seeded start vector.
 Always check `spectrum.converged` before using the radius: a failed component
 sets the global `lambda_nb` to `NaN` rather than returning a partial bound.
 
-For `VarianceStablePrior(rho_limit=:auto)`, problem preparation uses this
-diagnostic to resolve a guarded optimization limit. The default
-`VarianceStablePrior()` remains the explicit numeric `0.99` behavior.
+For `BipartiteVarianceStableModel(A; rho_limit=:auto)` (or
+`fit_mle(BipartiteVarianceStableModel, f, w, y; rho_limit=:auto)`), model
+construction uses this diagnostic to resolve a guarded optimization limit
+and stores the spectrum on the model. The default numeric `rho_limit=0.99`
+remains the explicit behavior. `feasibility(model)` audits an explicit limit
+against the ceiling after the fact.

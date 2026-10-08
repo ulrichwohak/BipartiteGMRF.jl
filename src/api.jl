@@ -1,90 +1,201 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Variance decomposition: unified API
+# ═══════════════════════════════════════════════════════════════════════════
+
 """
-    gmrf_mle(df; outcome=:y, firm_id=:firm_id, worker_id=:worker_id,
-             prior=NormalizedPrior(), solver=ExactCholesky(),
-             weighting=Weighting(), decompose=200, fix_rho=nothing,
-             max_degree=nothing, standardize=true, on_missing=:drop,
-             seed=42, verbose=false)
+    decompose(result::GMRFResult; kind=:model, probes=200, seed=42,
+              target=result.stats.weighting.target, verbose=false)
 
-Construct and fit a bipartite-GMRF model from a `DataFrame`.
+Estimate the variance decomposition implied by a fitted bipartite GMRF.
 
-This is the high-level entry point: it prepares a `GMRFProblem`, fits it with
-`solve`, and optionally computes a prior variance decomposition. The result is
-a `GMRFResult` with parameters in original outcome units when
-`standardize=true`.
+Returns a `VarianceDecomposition` containing firm, worker, cross, residual,
+and total variance components.
 
-See also [`coef`](@ref), [`loglikelihood`](@ref), [`nobs`](@ref), [`converged`](@ref).
+`kind` selects the decomposition type:
+- `:model` — decomposition from the GMRF's precision structure alone
+- `:fitted` — includes fitted effects (posterior mode + trace correction)
 """
-function gmrf_mle(
-    df::DataFrame;
-    outcome::Symbol=:y,
-    firm_id::Symbol=:firm_id,
-    worker_id::Symbol=:worker_id,
-    prior::AbstractGMRFPrior=NormalizedPrior(),
-    solver::AbstractGMRFSolver=ExactCholesky(),
-    weighting::Weighting=Weighting(),
-    decompose::Union{Bool,Nothing,Int}=200,
-    fix_rho::Union{Nothing,Float64}=nothing,
-    max_degree::Union{Nothing,Int}=nothing,
-    standardize::Bool=true,
-    on_missing::Symbol=:drop,
+function decompose(
+    result::GMRFResult;
+    kind::Symbol=:model,
+    probes::Int=200,
     seed::Int=42,
+    target::Symbol=result.stats.weighting.target,
     verbose::Bool=false,
 )
-    problem = GMRFProblem(
-        df;
-        outcome=outcome,
-        firm_id=firm_id,
-        worker_id=worker_id,
-        prior=prior,
-        weighting=weighting,
-        max_degree=max_degree,
-        standardize=standardize,
-        on_missing=on_missing,
-        verbose=verbose,
-    )
-    return solve(problem, solver; decompose=decompose, fix_rho=fix_rho, seed=seed, verbose=verbose)
+    if kind == :model
+        return _decompose_model(result; probes=probes, seed=seed, target=target, verbose=verbose)
+    elseif kind == :fitted
+        return _decompose_fitted(result; probes=probes, seed=seed, target=target, verbose=verbose)
+    else
+        throw(ArgumentError("decompose kind must be :model or :fitted; got $(kind)."))
+    end
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Covariance extraction: unified API
+# ═══════════════════════════════════════════════════════════════════════════
+
+"""
+    covariance(result::GMRFResult; kind=:model, units=:original)
+
+Factor the fitted precision matrix for covariance extraction.
+
+`kind` selects the precision matrix:
+- `:model` — the GMRF's precision Q
+- `:fitted` — the data-augmented precision Q + λV'V
+
+`units` may be `:original` or `:scaled`. Pass the returned
+`CovarianceOperator` to `cov_block` to extract selected entity blocks.
+"""
+function covariance(
+    result::GMRFResult;
+    kind::Symbol=:model,
+    units::Symbol=:original,
+)
+    if kind == :model
+        return _covariance_model(result; units=units)
+    elseif kind == :fitted
+        return _covariance_fitted(result; units=units)
+    else
+        throw(ArgumentError("covariance kind must be :model or :fitted; got $(kind)."))
+    end
+end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# StatsAPI and accessors
+# ═══════════════════════════════════════════════════════════════════════════
 
 """
     coef(result::GMRFResult)
 
-Return fitted model coefficients as a named tuple.
-
-The tuple contains `rho`, `sigma_a`, `sigma_z`, `sigma_epsilon`, and `rho_eps`.
+Return the fitted parameters as a vector `[rho, sigma_a, sigma_z, sigma_epsilon]`,
+with `rho_eps` appended when it was part of the likelihood. Labels are available
+from [`coefnames`](@ref); a named view from [`params`](@ref).
 """
-coef(result::GMRFResult) = (
+function coef(result::GMRFResult)
+    c = [result.rho, result.sigma_a, result.sigma_z, result.sigma_epsilon]
+    result.rho_eps === nothing || push!(c, result.rho_eps)
+    result.beta !== nothing && append!(c, result.beta)
+    return c
+end
+
+"""
+    coefnames(result::GMRFResult)
+
+Return the names of the entries of [`coef`](@ref).
+"""
+function coefnames(result::GMRFResult)
+    names = ["rho", "sigma_a", "sigma_z", "sigma_epsilon"]
+    result.rho_eps === nothing || push!(names, "rho_eps")
+    if result.beta !== nothing
+        for j in 1:length(result.beta)
+            push!(names, "beta_$j")
+        end
+    end
+    return names
+end
+
+"""
+    params(result::GMRFResult)
+
+Return the fitted parameters as a named tuple
+`(rho=..., sigma_a=..., sigma_z=..., sigma_epsilon=..., rho_eps=...)`,
+where `rho_eps` is `nothing` unless effective weighting was used.
+"""
+params(result::GMRFResult) = (
     rho = result.rho,
     sigma_a = result.sigma_a,
     sigma_z = result.sigma_z,
     sigma_epsilon = result.sigma_epsilon,
     rho_eps = result.rho_eps,
+    beta = result.beta,
 )
+
+# Gaussian dimensions entering the fitted likelihood: person-year rows for
+# :raw and :effective (full-data likelihoods), collapsed edges for :edge
+# (edge-mean likelihood).
+_loglikelihood_dims(stats::BipartiteGMRFStats) =
+    stats.weighting.observations == :edge ? stats.K : stats.personyear_rows
 
 """
     loglikelihood(result::GMRFResult)
 
-Return the fitted log-likelihood value.
+Return the maximized log-likelihood of the (mean-centered) data in original
+outcome units, including the Gaussian normalizing constant and the Jacobian of
+the internal standardization. Unlike [`nll`](@ref) — the raw optimizer
+objective — this value is invariant to the `standardize` option and comparable
+across fits of the same data.
 """
-loglikelihood(result::GMRFResult) = -result.nll
+function loglikelihood(result::GMRFResult)
+    n = _loglikelihood_dims(result.stats)
+    return -(result.nll + n * log(result.stats.y_std) + 0.5 * n * log(2.0 * pi))
+end
 
 """
     nobs(result::GMRFResult)
 
 Return the number of model observations used by the likelihood.
 """
-nobs(result::GMRFResult) = result.problem.K
+nobs(result::GMRFResult) = result.stats.K
+
+"""
+    dof(result::GMRFResult)
+
+Return the number of *estimated* parameters. The baseline (ρ, σ_a, σ_z, σ_ε)
+counts four; a `fix_rho` fit counts one fewer, and a jointly estimated
+`rho_eps=:estimate` counts one more. Parameters held fixed do not count.
+"""
+function dof(result::GMRFResult)
+    k = 4
+    get(result.metadata, :fix_rho, nothing) === nothing || (k -= 1)
+    w = result.stats.weighting
+    w.observations == :effective && w.estimate_rho_eps && (k += 1)
+    result.beta !== nothing && (k += length(result.beta))
+    return k
+end
+
+"""
+    aic(result::GMRFResult)
+
+Akaike Information Criterion: -2logℓ + 2k.
+"""
+aic(result::GMRFResult) = -2.0 * loglikelihood(result) + 2.0 * dof(result)
+
+"""
+    bic(result::GMRFResult)
+
+Bayesian Information Criterion: -2logℓ + k⋅log(n).
+"""
+bic(result::GMRFResult) = -2.0 * loglikelihood(result) + dof(result) * log(nobs(result))
+
+"""
+    isfitted(result::GMRFResult)
+
+Return `true`; a `GMRFResult` always represents a completed fit.
+"""
+isfitted(::GMRFResult) = true
+
+"""
+    islinear(result::GMRFResult)
+
+Return `false`; the bipartite GMRF likelihood is not linear in its parameters.
+"""
+islinear(::GMRFResult) = false
 
 """
     nll(result::GMRFResult)
 
-Return the fitted negative log-likelihood objective value.
+Return the fitted value of the internal optimizer objective: the negative
+log-likelihood of the standardized data with additive constants dropped.
+Use [`loglikelihood`](@ref) for the constant-complete, original-units value.
 """
 nll(result::GMRFResult) = result.nll
 
 """
     converged(result::GMRFResult)
 
-Return whether the optimizer reported convergence.
+Return whether the optimizer reported convergence. Extends `Optim.converged`.
 """
 converged(result::GMRFResult) = result.converged
 
@@ -94,7 +205,7 @@ function Base.show(io::IO, result::GMRFResult)
         "sigma_z=$(result.sigma_z), sigma_epsilon=$(result.sigma_epsilon), ",
         "nll=$(result.nll), converged=$(result.converged)",
     )
-    result.prior isa VarianceStablePrior &&
+    result.model isa BipartiteVarianceStableModel &&
         print(io, ", rho_status=$(get(result.metadata, :rho_status, :unknown))")
     print(io, ")")
 end
@@ -105,8 +216,8 @@ function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
     println(io, "  nll: ", result.nll)
     println(io, "  parameters:")
     println(io, "    rho: ", result.rho)
-    if result.prior isa VarianceStablePrior
-        println(io, "    rho limit: ", rho_limit(result.prior))
+    if result.model isa BipartiteVarianceStableModel
+        println(io, "    rho limit: ", rho_limit(result.model))
         println(io, "    rho utilization: ", get(result.metadata, :rho_utilization, NaN))
         println(io, "    rho status: ", get(result.metadata, :rho_status, :unknown))
     end
@@ -114,11 +225,12 @@ function Base.show(io::IO, ::MIME"text/plain", result::GMRFResult)
     println(io, "    sigma_z: ", result.sigma_z)
     println(io, "    sigma_epsilon: ", result.sigma_epsilon)
     result.rho_eps !== nothing && println(io, "    rho_eps: ", result.rho_eps)
+    result.beta !== nothing && println(io, "    beta: ", result.beta)
     println(io, "  model:")
-    println(io, "    prior: ", nameof(typeof(result.prior)))
+    println(io, "    model: ", nameof(typeof(result.model)))
     println(io, "    solver: ", nameof(typeof(result.solver)))
-    println(io, "    observations: ", result.problem.K)
-    println(io, "    person-year rows: ", result.problem.personyear_rows)
-    println(io, "    firms: ", result.problem.N_firms)
-    print(io, "    workers: ", result.problem.N_workers)
+    println(io, "    observations: ", result.stats.K)
+    println(io, "    person-year rows: ", result.stats.personyear_rows)
+    println(io, "    firms: ", result.stats.N_firms)
+    print(io, "    workers: ", result.stats.N_workers)
 end
