@@ -27,3 +27,19 @@ sets the global `lambda_nb` to `NaN` rather than returning a partial bound.
 For `VarianceStablePrior(rho_limit=:auto)`, problem preparation uses this
 diagnostic to resolve a guarded optimization limit. The default
 `VarianceStablePrior()` remains the explicit numeric `0.99` behavior.
+
+## Edge Pruning
+
+`nb_prune_edges` can reduce the radius while preserving every graph component.
+It protects a spanning forest and removes only cycle-closing edges from the
+currently binding 2-core component.
+
+```julia
+prune = nb_prune_edges(df; target=3.0, seed=12345)
+reduced = pruned_dataframe(df, prune)
+```
+
+`prune.keep` aligns with the original DataFrame rows, including repeated rows
+for one edge. `prune.dropped_edges` reports unique removed edges and
+`prune.audit` records the radius before and after each round. Check
+`prune.target_met` before using the reduced graph.
