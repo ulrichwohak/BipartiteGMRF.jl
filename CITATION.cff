@@ -7,8 +7,6 @@ title: "BipartiteGMRF.jl: Bipartite-graph GMRF random-effects estimation in Juli
 version: "0.1.0"
 date-released: 2026-05-15
 license: MIT
-doi: 10.5281/zenodo.19048278
-url: "https://zenodo.org/records/19048278"
 repository-code: "https://github.com/ulrichwohak/BipartiteGMRF.jl"
 keywords:
   - Gaussian Markov random field
@@ -37,6 +35,8 @@ preferred-citation:
     Markets
   year: 2026
   month: 3
+  doi: 10.5281/zenodo.19048278
+  url: "https://doi.org/10.5281/zenodo.19048278"
   notes: "Working paper, manuscript compiled March 16, 2026"
   authors:
     - family-names: Koren

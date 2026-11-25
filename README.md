@@ -3,7 +3,7 @@
 [![CI](https://github.com/ulrichwohak/BipartiteGMRF.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/ulrichwohak/BipartiteGMRF.jl/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/ulrichwohak/BipartiteGMRF.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/ulrichwohak/BipartiteGMRF.jl)
 [![Docs](https://img.shields.io/badge/docs-stable-blue.svg)](https://ulrichwohak.github.io/BipartiteGMRF.jl/stable)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19048278.svg)](https://doi.org/10.5281/zenodo.19048278)
+[![Paper](https://img.shields.io/badge/paper-10.5281%2Fzenodo.19048278-blue.svg)](https://doi.org/10.5281/zenodo.19048278)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Julia tools for fitting bipartite-graph Gaussian Markov random-field
@@ -210,8 +210,8 @@ src/
 ```
 
 Project-specific data preparation, estimation, and post-estimation scripts
-from the original research codebase are archived with the reproducibility
-compendium rather than tracked in this reusable library repository.
+from the original research codebase are not tracked in this reusable library
+repository.
 
 ## Performance
 
@@ -229,15 +229,13 @@ session. The library does not mutate global BLAS state itself.
 
 ## Reproducibility
 
-The original research compendium &mdash; data preparation pipeline,
-estimation scripts, paper artifacts, and run logs &mdash; is archived on
-Zenodo:
+This repository hosts the reusable library extracted from the original
+research project. The project-specific data preparation and estimation scripts
+are not part of it. The March 2026 working paper is available on Zenodo:
 
-> [https://zenodo.org/records/19048278](https://zenodo.org/records/19048278)
+> [https://doi.org/10.5281/zenodo.19048278](https://doi.org/10.5281/zenodo.19048278)
 
-This repository hosts the reusable library extracted from that compendium.
-The project-specific pipeline scripts are available in the Zenodo archive for
-direct reproducibility.
+That record contains the paper only, not the software or the research pipeline.
 
 ## Citation
 
@@ -253,6 +251,8 @@ and the underlying paper.
     title   = {A Random-Effects Model Reveals Strong Positive Sorting in
                {CEO} Labor Markets},
     year    = {2026},
+    doi     = {10.5281/zenodo.19048278},
+    url     = {https://doi.org/10.5281/zenodo.19048278},
     note    = {Working paper, March 16, 2026}
 }
 ```
@@ -265,8 +265,7 @@ and the underlying paper.
     title   = {{BipartiteGMRF.jl}: Bipartite-graph {GMRF} random-effects
                estimation in {J}ulia},
     year    = {2026},
-    doi     = {10.5281/zenodo.19048278},
-    url     = {https://zenodo.org/records/19048278},
+    url     = {https://github.com/ulrichwohak/BipartiteGMRF.jl},
     version = {0.1.0}
 }
 ```
